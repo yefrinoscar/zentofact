@@ -60,7 +60,8 @@ test('la bandeja inicia mostrando todos los plazos', () => {
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
   assert.equal(logisticsChannelLabel('manual'), 'Propios');
-  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'manual']);
+  assert.equal(logisticsChannelLabel('mercado_libre'), 'Mercado Libre');
+  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'mercado_libre', 'manual']);
   assert.equal(visibleLogisticsChannels().some((item) => item.value === 'ripley'), true);
   assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
@@ -80,6 +81,11 @@ test('manual imprime siempre; Falabella imprime listo; Ripley confirma pero no i
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'mercado_libre', fulfillmentStatus: 'preparing', companyId: 1, metadata: { shippingId: 'S1' } }), false);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: 'S1', shippingMode: 'me2', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' } }), true);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: 'S1', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' } }), false);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: 'S1', shippingMode: 'me2', logisticType: 'cross_docking', shippingSubstatus: 'waiting_for_label_generation' } }), false);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: 'S1', shippingMode: 'me2', logisticType: 'fulfillment', shippingSubstatus: 'ready_to_print' } }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'shipped', companyId: 1 }), false);
   assert.equal(RIPLEY_LABEL_SOON_COPY, 'Muy pronto.');
@@ -97,6 +103,9 @@ test('manual imprime siempre; Falabella imprime listo; Ripley confirma pero no i
   }), true);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 2, externalOrderId: 'R-1',
+  }), false);
+  assert.equal(canMarkLogisticsReady({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'preparing', companyId: 2, externalOrderId: 'ML-1',
   }), false);
   assert.equal(logisticsRipleyLabelSoon({
     channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
@@ -173,6 +182,14 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
     { kind: 'wait', label: 'Gestionar en Ripley' },
+  );
+  assert.deepEqual(
+    logisticsNextStep({ channelCode: 'mercado_libre', fulfillmentStatus: 'preparing', companyId: 1, metadata: { shippingId: 'S1' } }),
+    { kind: 'wait', label: 'Esperando etiqueta' },
+  );
+  assert.deepEqual(
+    logisticsNextStep({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: 'S1', shippingMode: 'me2', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' } }),
+    { kind: 'print', label: 'Imprimir' },
   );
   assert.equal(labelWasPrinted({ labelPrint: { printCount: 1 } }), true);
   assert.equal(labelWasPrinted({ labelPrint: null }), false);
