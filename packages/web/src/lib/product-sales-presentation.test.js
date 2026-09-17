@@ -20,6 +20,8 @@ import {
   sellerChannelLabel,
   splitSalesBuyers,
   productSalesKpis,
+  productRestockAction,
+  productRestockExplanation,
   publishedLabel,
   restockFormula,
   restockWhyLabel,
@@ -130,6 +132,9 @@ test('agrupa compradores de más de 5 unidades y arma el detalle', () => {
 test('explica qué traer y qué no tocar', () => {
   assert.equal(stockIsLow(3), true);
   assert.equal(stockIsLow(20), false);
+  assert.equal(productRestockAction({ restockQty: 12, unitsPerDay: 1.5 }), 'bringBack');
+  assert.equal(productRestockAction({ restockQty: 12, unitsPerDay: 0.3 }), 'doNotBring');
+  assert.equal(productRestockAction({ restockQty: 0, unitsPerDay: 1.5 }), 'doNotBring');
   const normalize = (value) => String(value).replace(/\u00a0/g, ' ').replace(',', '.');
   assert.equal(
     normalize(restockWhyLabel({ unitsPerDay: 2.4, available: 8, coverDays: 3.3, pace: 'stable' })),
@@ -181,4 +186,39 @@ test('explica qué traer y qué no tocar', () => {
   assert.equal(week.find((day) => day.label === 'Jue')?.units, 2);
   assert.equal(week.find((day) => day.label === 'Vie')?.units, 5);
   assert.equal(week.find((day) => day.label === 'Sáb')?.units, 1);
+});
+
+test('explica la recomendación de reposición con stock, cobertura y venta', () => {
+  const normalize = (value) => String(value).replace(/\u00a0/g, ' ').replace(/(\d),(\d)/g, '$1.$2');
+
+  assert.equal(
+    normalize(productRestockExplanation({
+      available: 66,
+      coverDays: 50,
+      horizonDays: 30,
+      restockQty: 0,
+      unitsPerDay: 1.3,
+    })),
+    'No traer. Vende 1.3 u/día, pero tienes 66 unidades: cubren 50 días.',
+  );
+  assert.equal(
+    normalize(productRestockExplanation({
+      available: 10,
+      coverDays: 9,
+      horizonDays: 30,
+      restockQty: 25,
+      unitsPerDay: 1.2,
+    })),
+    'Volver a traer. Tienes 10 unidades: cubren 9 días. Trae 25 para cubrir 30 días.',
+  );
+  assert.equal(
+    normalize(productRestockExplanation({
+      available: 0,
+      coverDays: 0,
+      horizonDays: 30,
+      restockQty: 9,
+      unitsPerDay: 0.3,
+    })),
+    'No traer. Se vende 0.3 u/día. Espera más movimiento antes de reponer.',
+  );
 });
