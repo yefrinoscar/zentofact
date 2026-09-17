@@ -83,6 +83,7 @@ export type ProductAssociationCandidate = {
   channelCode: 'falabella' | 'ripley' | 'mercado_libre';
   sellerSku: string;
   shopSku: string | null;
+  externalProductId?: string | null;
   title: string | null;
   status: 'active' | 'inactive';
   marketplaceQuantity: number | null;

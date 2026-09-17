@@ -101,6 +101,7 @@ type Listing = {
   companyName?: string;
   sellerSku: string;
   shopSku?: string | null;
+  externalProductId?: string | null;
   title?: string | null;
   status: string;
   marketplaceQuantity?: number | null;
@@ -118,7 +119,7 @@ type AssociationCandidate = Listing & {
 };
 
 type AssociationAvailability = 'recommended' | 'all';
-type AssociationChannel = 'all' | 'falabella' | 'ripley';
+type AssociationChannel = 'all' | 'falabella' | 'ripley' | 'mercado_libre';
 type Product = {
   id: number;
   mainSku: string;
@@ -776,7 +777,7 @@ export default function Productos() {
         productId: associationProduct.id,
         search: associationSubmittedSearch,
         channelCode: associationChannel === 'all' ? undefined : associationChannel,
-        channelCodes: associationChannel === 'all' ? 'falabella,ripley' : undefined,
+        channelCodes: associationChannel === 'all' ? 'falabella,ripley,mercado_libre' : undefined,
         availability: associationAvailability,
         limit: ASSOCIATION_PAGE_SIZE,
         offset: associationPage * ASSOCIATION_PAGE_SIZE,
@@ -1034,6 +1035,7 @@ export default function Productos() {
               companyId: listing.companyId,
               sellerSku: listing.sellerSku,
               shopSku: listing.shopSku,
+              externalProductId: listing.externalProductId,
               title: listing.title,
               marketplaceQuantity: listing.marketplaceQuantity,
               metadata: { ...listing.metadata, imageUrl: listing.imageUrl },
@@ -1558,11 +1560,16 @@ export default function Productos() {
                   autoFocus
                 />
               </div>
-              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem></SelectContent></Select>
+              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem><SelectItem value="mercado_libre">Mercado Libre</SelectItem></SelectContent></Select>
               <Select value={associationAvailability} onValueChange={(value: AssociationAvailability) => { setAssociationAvailability(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por disponibilidad"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recommended">Activos con stock</SelectItem><SelectItem value="all">Cualquier estado</SelectItem></SelectContent></Select>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Productos disponibles para asociar">
-              {unlinkedListingsQuery.isPending ? <AssociationCandidatesSkeleton />
+              {unlinkedListingsQuery.isPending ? (
+                <AssociationCandidatesSkeleton
+                  search={associationSubmittedSearch}
+                  channel={associationChannel}
+                />
+              )
                 : unlinkedListingsQuery.isError ? <div className="px-5 py-10 text-sm text-red-700">No se pudieron cargar los productos de los canales.</div>
                   : unlinkedListings.length === 0 ? <div className="px-5 py-10 text-center"><Store className="mx-auto h-7 w-7 text-muted-foreground" />
                     {hiddenAssociationCandidateTotal > 0
@@ -2462,8 +2469,33 @@ function CatalogTableSkeleton() {
   </div>;
 }
 
-function AssociationCandidatesSkeleton() {
+function associationSearchChannels(channel: AssociationChannel) {
+  if (channel === 'falabella') return ['Falabella'];
+  if (channel === 'ripley') return ['Ripley'];
+  if (channel === 'mercado_libre') return ['Mercado Libre'];
+  return ['Falabella', 'Ripley', 'Mercado Libre'];
+}
+
+function AssociationCandidatesSkeleton({ search, channel }: { search: string; channel: AssociationChannel }) {
+  const channels = associationSearchChannels(channel);
   return <div aria-label="Cargando productos" aria-busy="true">
+    <div className="flex items-start gap-3 border-b border-border bg-muted/30 px-5 py-4" role="status" aria-live="polite">
+      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">
+          {search ? `Buscando “${search}”…` : 'Buscando productos…'}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {channels.map((name) => (
+            <span key={name} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground">
+              <Loader2 className="size-3 animate-spin text-primary" />
+              {name} · consultando
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">La primera consulta de cada catálogo puede tardar unos segundos.</p>
+      </div>
+    </div>
     {Array.from({ length: 6 }, (_, index) => <div key={index} className="flex items-start gap-3 border-b border-border px-5 py-3">
       <Skeleton className="mt-1 h-4 w-4 shrink-0 rounded" />
       <Skeleton className="h-14 w-14 shrink-0 rounded-md" />

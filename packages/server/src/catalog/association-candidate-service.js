@@ -1,7 +1,9 @@
 import { listRipleyProducts } from '../ripley-catalog.js';
+import { expandItemListings } from '@zentofact/mercado-libre-api';
 import { isFalabellaActivePublished } from './catalog-import.js';
 import { falabellaPublicationSnapshot } from './listing-snapshot-service.js';
 import { httpError, loadCore, positiveInt } from './utils.js';
+import { mercadoLibreClientForCompany, mercadoLibreGrantFromCompany } from '../mercado-libre-tokens.js';
 
 const LIVE_CATALOG_TTL_MS = 30_000;
 const LIVE_CATALOG_PAGE_SIZE = 1_000;
@@ -116,6 +118,52 @@ async function ripleyCatalog(company, dependencies) {
   })).filter((candidate) => candidate.sellerSku);
 }
 
+async function mercadoLibreCatalog(company, dependencies) {
+  const items = await dependencies.listMercadoLibreItems(company);
+  return items.map((item) => ({
+    channelCode: 'mercado_libre',
+    companyId: Number(company.id),
+    companyName: companyName(company),
+    sellerSku: String(item?.sellerSku || '').trim(),
+    shopSku: item?.itemId || null,
+    externalProductId: item?.variationId ? `${item.itemId}:${item.variationId}` : item?.itemId || null,
+    title: item?.title || item?.sellerSku || null,
+    active: item?.status === 'active',
+    marketplaceQuantity: item?.availableQuantity == null ? null : Number(item.availableQuantity),
+    imageUrl: item?.pictureUrl || null,
+    metadata: {
+      permalink: item?.permalink || null,
+      imageUrl: item?.pictureUrl || null,
+      price: item?.price ?? null,
+      userProductId: item?.userProductId || null,
+      catalogProductId: item?.catalogProductId || null,
+      variationId: item?.variationId || null,
+      marketplaceStatus: item?.status || null,
+      isPublished: item?.status === 'active',
+      isSellable: item?.status === 'active' && Number(item?.availableQuantity) > 0,
+    },
+  })).filter((candidate) => candidate.sellerSku);
+}
+
+async function listMercadoLibreItems(company, dependencies = {}) {
+  const client = await mercadoLibreClientForCompany(company, dependencies);
+  const items = [];
+  let scrollId = null;
+  for (let page = 0; page < 200; page += 1) {
+    const result = await client.searchItems({
+      sellerId: company.mercadoLibreUserId || company.mercado_libre_user_id,
+      searchType: 'scan',
+      scrollId,
+      limit: 50,
+    });
+    if (!result.itemIds.length) break;
+    items.push(...await client.getItems(result.itemIds));
+    scrollId = result.scrollId;
+    if (!scrollId) break;
+  }
+  return items.flatMap((item) => expandItemListings(item));
+}
+
 async function dependenciesFor(input) {
   const needsCore = !input.db
     || !input.listCompanies
@@ -133,6 +181,8 @@ async function dependenciesFor(input) {
       filters,
       { getCompany: core.getCompany },
     )),
+    listMercadoLibreItems: input.listMercadoLibreItems
+      || ((company) => listMercadoLibreItems(company, input.mercadoLibreDependencies)),
     cache: input.cache || liveCatalogCache,
     now: typeof input.now === 'function' ? input.now : Date.now,
   };
@@ -188,6 +238,16 @@ export async function listLiveAssociationCandidates(filters = {}, inputDependenc
       ));
     }
   }
+  if (channels.has('mercado_libre')) {
+    for (const company of companies.filter((candidate) => mercadoLibreGrantFromCompany(candidate))) {
+      tasks.push(cachedCatalog(
+        dependencies.cache,
+        `mercado_libre:${company.id}`,
+        () => mercadoLibreCatalog(company, dependencies),
+        now,
+      ));
+    }
+  }
 
   const remoteCandidates = (await Promise.all(tasks)).flat();
   const listingResult = await dependencies.db.query(
@@ -220,6 +280,7 @@ export async function listLiveAssociationCandidates(filters = {}, inputDependenc
       channelCode: remote.channelCode,
       sellerSku: remote.sellerSku,
       shopSku: remote.shopSku,
+      externalProductId: remote.externalProductId || null,
       title: remote.title,
       status: remote.active ? 'active' : 'inactive',
       marketplaceQuantity: remote.marketplaceQuantity,
