@@ -41,7 +41,7 @@ Companies: LIMBO `20990001001`, MANTA RAYA `20990001002`, YAKURUNA `20990001003`
 | SKU | Stock | Listings |
 |---|---|---|
 | AG301 | 12 | LIMBO + MANTA RAYA Falabella |
-| HOG025 | 8 | LIMBO + YAKURUNA Falabella, Ripley `S166285` |
+| HOG025 | 8 | LIMBO + YAKURUNA Falabella, Ripley `S166285`, LIMBO Mercado Libre `HOG025` |
 | BB110 | 25 | YAKURUNA Falabella |
 | BB220 | 40 | LIMBO + MANTA RAYA Falabella |
 | HOG040 | 15 | YAKURUNA Falabella |
@@ -68,16 +68,20 @@ Unified sample orders on LIMBO:
 |---|---|---|---|
 | PV-10001 | Falabella | `pending` | `#/bandeja` tab Pendientes |
 | QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · `Marcar entregado` · `#/orders` Seller = Vendedor Preview |
-| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · `Marcar listo` valida el recojo en Mirakl ST26 · master SKU `HOG025` · three unit lines shown as one product `x3` |
+| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · manage in Ripley · master SKU `HOG025` · three unit lines shown as one product `x3` |
+| ML-10030 | Mercado Libre | `pending` | `#/bandeja` tab Pendientes · espera etiqueta ME2 |
+| ML-10031 | Mercado Libre | `ready_to_ship` | `#/bandeja` tab Listos · etiqueta ME2 10×15 imprimible |
 | PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
 | PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
 | PV-10013 | Falabella | stale `pending` / channel `shipped` | must not stay in Vencidos after bandeja load or Sincronizar |
 
-Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, and RP-10020. Own orders use `Marcar entregado`; print stays secondary. Falabella labels and Falabella `Marcar listo` need live seller APIs. Ripley print stays paused. Ripley `Marcar listo` valida los shipments en Mirakl ST26; no usa Seller Center ni SVC.
+Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, RP-10020, and ML-10030. `GET /logistics-inbox?stage=ready` includes ML-10031. Own orders use `Marcar entregado`; print stays secondary. Print QNC-10010 (etiqueta ZentoFact) and ML-10031 (PDF ME2 del sandbox). Falabella labels and `Marcar listo` need live seller APIs. Ripley confirmation and printing stay paused in the inbox.
+
+Cómo entra un pedido ML: webhook `POST /webhooks/mercadolibre` (`orders_v2` / `shipments`) o sync si el flag está on. En este VM el sandbox local (`MERCADO_LIBRE_SANDBOX=true`) imita la API: `POST /sandbox/mercadolibre/dev/push-order` crea la orden y dispara el webhook. LIMBO queda con `user_id` `200000001` y tokens `SANDBOX-*` que nunca salen a `api.mercadolibre.com`. Health: `GET /sandbox/mercadolibre/health`.
 
 ## Flags
 
-`SEED_PREVIEW=true`. `FALABELLA_SYNC_ENABLED=false`. `MARKETPLACE_PUBLICATION_MUTATION_ENABLED=false`. `AUTO_EMIT_ENABLED=false`. `SUNAT_FORCE_ENV=beta`. Inbox is local DB. Seller API stays off.
+`SEED_PREVIEW=true`. `FALABELLA_SYNC_ENABLED=false`. `MERCADO_LIBRE_SYNC_ENABLED=false`. `MERCADO_LIBRE_SANDBOX=true`. `MARKETPLACE_PUBLICATION_MUTATION_ENABLED=false`. `AUTO_EMIT_ENABLED=false`. `SUNAT_FORCE_ENV=beta`. Inbox is local DB. Falabella and Ripley seller APIs stay off. Mercado Libre uses the local sandbox (tokens `SANDBOX-*`); it must not call `https://api.mercadolibre.com`.
 
 ## Drive
 

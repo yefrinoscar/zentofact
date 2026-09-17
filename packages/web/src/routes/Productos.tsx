@@ -82,6 +82,7 @@ import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import falabellaIcon from '../assets/falabella.png';
+import { ChannelMark } from '../components/channel-mark';
 
 type Company = {
   id: number;
@@ -3029,13 +3030,20 @@ function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) 
       Ripley
     </MarketplaceProductLink>;
   }
-  const classes = compact === 'mercadolibre'
-      ? 'bg-amber-50 text-amber-800'
-      : 'bg-slate-100 text-slate-700';
-  return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', classes)}>{channelLabel(normalized)}</span>;
+  if (compact === 'mercadolibre') {
+    const href = listing ? marketplaceProductUrl(listing) : null;
+    const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-amber-50 px-1.5 text-[11px] font-medium text-amber-800 sm:min-h-6';
+    const mark = <ChannelMark code="mercado_libre" size="xs" />;
+    if (!listing || !href) return <span className={badgeClassName} title="Mercado Libre">{mark} Mercado Libre</span>;
+
+    return <MarketplaceProductLink href={href} listing={listing} marketplace="Mercado Libre" className={badgeClassName}>
+      {mark} Mercado Libre
+    </MarketplaceProductLink>;
+  }
+  return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-700')}>{channelLabel(normalized)}</span>;
 }
 
-function MarketplaceProductLink({ href, listing, marketplace, className, children }: { href: string; listing: Listing; marketplace: 'Falabella' | 'Ripley'; className: string; children: ReactNode }) {
+function MarketplaceProductLink({ href, listing, marketplace, className, children }: { href: string; listing: Listing; marketplace: 'Falabella' | 'Ripley' | 'Mercado Libre'; className: string; children: ReactNode }) {
   return <a
       href={href}
       target="_blank"

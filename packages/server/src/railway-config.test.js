@@ -9,6 +9,7 @@ const requiredRuntimeBuilds = [
   '@zentofact/falabella-api',
   '@zentofact/core',
   '@zentofact/ripley-api',
+  '@zentofact/mercado-libre-api',
 ];
 
 test('Railway compila las librerías internas que usa el API', async () => {
