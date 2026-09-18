@@ -1340,8 +1340,8 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
     ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
 
-  -- Devoluciones físicas desde 2026-09-03 14:00 Lima: entran al almacén
-  -- pero no son vendibles hasta que un operador las apruebe.
+  -- Registro auditable de devoluciones. Entran directo al stock vendible; un
+  -- operador puede marcar por producto si la devolución no llegó o es inusable.
   CREATE TABLE IF NOT EXISTS return_stock_approvals (
     id BIGSERIAL PRIMARY KEY,
     order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -1389,6 +1389,39 @@ const DDL = `
     quantity_pending_return = EXCLUDED.quantity_pending_return,
     updated_at = NOW()
   WHERE product_inventory.quantity_pending_return IS DISTINCT FROM EXCLUDED.quantity_pending_return;
+
+  -- Las devoluciones entran directo al stock vendible. Las aprobaciones
+  -- pendientes se liberan y la salvedad (no llegó o inusable) se marca por
+  -- producto en product_return_incidents.
+  UPDATE return_stock_approvals
+     SET status='approved',
+         stock_quantity=COALESCE(stock_quantity, quantity),
+         merma_quantity=COALESCE(merma_quantity, 0),
+         reviewed_at=COALESCE(reviewed_at, NOW()),
+         reviewed_by=COALESCE(reviewed_by, 'auto')
+   WHERE status='pending';
+
+  UPDATE product_inventory
+     SET quantity_pending_return=0, updated_at=NOW()
+   WHERE quantity_pending_return <> 0;
+
+  CREATE TABLE IF NOT EXISTS product_return_incidents (
+    id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    condition TEXT NOT NULL,
+    quantity NUMERIC(14,4) NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    actor_user_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (product_id, order_id),
+    CHECK (condition IN ('not_arrived', 'unusable')),
+    CHECK (quantity > 0),
+    CHECK (revision >= 1)
+  );
+  CREATE INDEX IF NOT EXISTS idx_product_return_incidents_order
+    ON product_return_incidents(order_id);
 
   -- An applied reconciliation is immutable evidence. Current stock remains in
   -- product_inventory and every delta remains in inventory_movements.

@@ -798,6 +798,9 @@ export async function getProductReturns(id, filters = {}, db) {
          coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
          coalesce(sum(oi.quantity), 0) as quantity,
          coalesce(sum(coalesce(oi.total, oi.unit_price * oi.quantity, 0)), 0) as amount,
+         coalesce(sum(coalesce(rsa.stock_quantity, rsa.quantity, 0))
+           filter (where rsa.status='approved'), 0) as restocked_quantity,
+         max(pri.condition) as return_condition,
          nullif(string_agg(distinct coalesce(
            nullif(oi.raw_data->>'ReasonDetail', ''),
            nullif(oi.raw_data->>'Reason', '')
@@ -807,6 +810,10 @@ export async function getProductReturns(id, filters = {}, db) {
        left join falabella_orders fo
          on fo.company_id=o.company_id and fo.order_id=o.external_order_id
        left join companies c on c.id=o.company_id
+       left join return_stock_approvals rsa
+         on rsa.order_item_id=oi.id and rsa.product_id=$1
+       left join product_return_incidents pri
+         on pri.product_id=$1 and pri.order_id=o.id
        where oi.product_id=$1 and ${returnedClause} ${dateClause}
        group by o.id, o.external_order_number, o.ordered_at, o.company_id,
          coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social)
@@ -832,6 +839,8 @@ export async function getProductReturns(id, filters = {}, db) {
       companyName: row.company_name,
       quantity: Number(row.quantity || 0),
       amount: Number(row.amount || 0),
+      restockedQuantity: Number(row.restocked_quantity || 0),
+      returnCondition: row.return_condition || null,
       reason: row.reason || null,
     })),
   };

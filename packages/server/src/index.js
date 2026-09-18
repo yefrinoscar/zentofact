@@ -77,6 +77,7 @@ const mercadoLibreWebhook = await import('./mercado-libre-webhook.js');
 const mercadoLibreSandbox = await import('./mercado-libre-sandbox.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
+const returnIncidents = await import('./catalog/return-incidents.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
 const ripleyCatalog = await import('./ripley-catalog.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
@@ -780,6 +781,26 @@ app.post('/products/:id/activity', async (c) => {
 app.patch('/products/:id', async (c) => {
   try { return ok(c, await productService.updateProduct(c.req.param('id'), await c.req.json(), c.get('user')?.id)); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.put('/products/:id/returns/:orderId/incident', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await returnIncidents.setReturnIncident(
+      c.req.param('id'),
+      c.req.param('orderId'),
+      body.condition,
+      c.get('user')?.id,
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.delete('/products/:id/returns/:orderId/incident', async (c) => {
+  try {
+    return ok(c, await returnIncidents.clearReturnIncident(
+      c.req.param('id'),
+      c.req.param('orderId'),
+      c.get('user')?.id,
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/products/:id/archive', async (c) => {
   try { return ok(c, await productService.archiveProduct(c.req.param('id'), c.get('user')?.id)); }
