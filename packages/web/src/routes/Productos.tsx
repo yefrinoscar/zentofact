@@ -257,6 +257,8 @@ type ReturnsSummary = ActivityResponse & {
     companyName?: string | null;
     quantity: number;
     amount: number;
+    restockedQuantity?: number;
+    returnCondition?: 'not_arrived' | 'unusable' | null;
     reason?: string | null;
   }>;
 };
@@ -767,6 +769,28 @@ export default function Productos() {
     staleTime: 30_000,
     retry: 1,
   });
+  const returnIncidentMutation = useMutation({
+    mutationFn: ({ orderId, condition }: { orderId: number; condition: 'not_arrived' | 'unusable' | null }) => {
+      if (selectedId == null) throw new Error('Selecciona un producto.');
+      return condition
+        ? api.setCatalogProductReturnIncident(selectedId, orderId, condition)
+        : api.clearCatalogProductReturnIncident(selectedId, orderId);
+    },
+    onSuccess: () => {
+      if (selectedId == null) return;
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-returns', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-detail', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-movements', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-products'] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-summary'] });
+    },
+    onError: (caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : 'No se pudo registrar la devolución.');
+    },
+  });
+  const returnIncidentBusyId = returnIncidentMutation.isPending
+    ? returnIncidentMutation.variables?.orderId ?? null
+    : null;
   const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
     .filter((company) => company.activo !== false)
     .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
@@ -1419,6 +1443,9 @@ export default function Productos() {
         salesLoading={salesQuery.isFetching}
         returns={returns}
         returnsLoading={returnsQuery.isFetching}
+        returnIncidentBusyId={returnIncidentBusyId}
+        onSetReturnIncident={(orderId, condition) => returnIncidentMutation.mutate({ orderId, condition })}
+        onClearReturnIncident={(orderId) => returnIncidentMutation.mutate({ orderId, condition: null })}
         salesRange={salesRange}
         onSalesRangeChange={setSalesRange}
         hasPreviousProduct={hasPreviousProduct}
@@ -2075,6 +2102,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
 
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
+  returnIncidentBusyId, onSetReturnIncident, onClearReturnIncident,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
   onDisassociate, onEditSellerStock, publicationBusyListingId, publicationActionError, publicationActionMessage, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
@@ -2091,6 +2119,9 @@ function ProductDrawer({
   salesLoading: boolean;
   returns?: ReturnsSummary;
   returnsLoading: boolean;
+  returnIncidentBusyId: number | null;
+  onSetReturnIncident: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClearReturnIncident: (orderId: number) => void;
   salesRange: '30' | '90' | '365' | 'all';
   onSalesRangeChange: (range: '30' | '90' | '365' | 'all') => void;
   hasPreviousProduct: boolean;
@@ -2364,7 +2395,7 @@ function ProductDrawer({
               <Metric label="Monto asociado" value={formatMoney(returns.summary.amount)} />
               <Metric label="Sellers" value={formatNumber(returns.summary.sellersCount)} />
             </MetricRow>
-            {returns.summary.ordersCount === 0 ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <section className="space-y-1"><h3 className="px-1 text-sm font-medium">Devoluciones recientes</h3>{returns.recent.map((returned) => <div key={returned.orderId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>{returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}</div><div className="shrink-0 text-right"><p className="text-sm font-semibold">{formatMoney(returned.amount)}</p><p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p></div></div>)}</section>}
+            {returns.summary.ordersCount === 0 ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <ProductReturnsList returns={returns} returnIncidentBusyId={returnIncidentBusyId} onSetReturnIncident={onSetReturnIncident} onClearReturnIncident={onClearReturnIncident} />}
             {returns.hydration.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {returns.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </div>}
         </TabsContent>
@@ -2428,6 +2459,76 @@ function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
       </div>
     </article>)}
   </section>;
+}
+
+const RETURN_INCIDENT_LABELS: Record<'not_arrived' | 'unusable', string> = {
+  not_arrived: 'Nunca llegó',
+  unusable: 'Inusable',
+};
+
+function ProductReturnsList({
+  returns, returnIncidentBusyId, onSetReturnIncident, onClearReturnIncident,
+}: {
+  returns: ReturnsSummary;
+  returnIncidentBusyId: number | null;
+  onSetReturnIncident: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClearReturnIncident: (orderId: number) => void;
+}) {
+  return <section className="space-y-1" aria-labelledby="recent-product-returns-title">
+    <h3 id="recent-product-returns-title" className="px-1 text-sm font-medium">Devoluciones recientes</h3>
+    {returns.recent.map((returned) => {
+      const restocked = Number(returned.restockedQuantity || 0);
+      const busy = returnIncidentBusyId === returned.orderId;
+      return <article key={returned.orderId} className="rounded-xl px-3 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>
+            {returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-sm font-semibold">{formatMoney(returned.amount)}</p>
+            <p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p>
+          </div>
+        </div>
+        {restocked > 0 ? <ReturnIncidentActions returned={returned} restocked={restocked} busy={busy} onSet={onSetReturnIncident} onClear={onClearReturnIncident} /> : null}
+      </article>;
+    })}
+  </section>;
+}
+
+function ReturnIncidentActions({
+  returned, restocked, busy, onSet, onClear,
+}: {
+  returned: ReturnsSummary['recent'][number];
+  restocked: number;
+  busy: boolean;
+  onSet: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClear: (orderId: number) => void;
+}) {
+  if (returned.returnCondition) {
+    return <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+        <AlertTriangle className="size-3" aria-hidden="true" />
+        {RETURN_INCIDENT_LABELS[returned.returnCondition]}
+      </span>
+      <span className="text-xs text-muted-foreground">{formatNumber(restocked)} u fuera del stock</span>
+      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onClear(returned.orderId)}>
+        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+        Volver al stock
+      </Button>
+    </div>;
+  }
+  return <div className="mt-2 flex flex-wrap items-center gap-2">
+    <span className="text-xs text-muted-foreground">{formatNumber(restocked)} u reintegradas:</span>
+    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onSet(returned.orderId, 'not_arrived')}>
+      {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+      Nunca llegó
+    </Button>
+    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onSet(returned.orderId, 'unusable')}>
+      Inusable
+    </Button>
+  </div>;
 }
 
 function ListingActions({ listing, onDisassociate }: { listing: Listing; onDisassociate: (listing: Listing) => void }) {

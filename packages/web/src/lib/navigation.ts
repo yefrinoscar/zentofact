@@ -37,6 +37,8 @@ export type NavItem = {
   description?: string;
   adminOnly?: boolean;
   superadminOnly?: boolean;
+  /** Oculta el módulo del menú en cualquier ambiente mientras se reactiva. */
+  hidden?: boolean;
   hiddenInProduction?: boolean;
   alwaysVisible?: boolean;
 };
@@ -73,7 +75,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
-      { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management' },
+      // Devoluciones vuelven solas al stock; se oculta hasta que el seguimiento
+      // de devoluciones no recibidas o dañadas viva en Productos.
+      { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management', hidden: true },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],

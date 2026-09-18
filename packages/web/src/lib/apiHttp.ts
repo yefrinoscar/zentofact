@@ -526,6 +526,10 @@ const apiHttp = {
   listCatalogProfitOwners: () => req<{ items: string[] }>('/products/profit-owners'),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
+  setCatalogProductReturnIncident: (id: number, orderId: number, condition: 'not_arrived' | 'unusable') =>
+    req(`/products/${id}/returns/${orderId}/incident`, { method: 'PUT', body: JSON.stringify({ condition }) }),
+  clearCatalogProductReturnIncident: (id: number, orderId: number) =>
+    req(`/products/${id}/returns/${orderId}/incident`, { method: 'DELETE' }),
   listTodayProductSales: (filter: {
     date?: string;
     search?: string;

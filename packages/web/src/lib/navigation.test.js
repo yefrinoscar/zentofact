@@ -36,6 +36,13 @@ test('Bandeja Falabella no aparece en producción', () => {
   assert.equal(isNavItemVisible(item, can, false), true);
 });
 
+test('Devoluciones queda oculto en cualquier ambiente', () => {
+  const can = () => true;
+  const item = { to: '/cancelados', permission: 'order_management', hidden: true };
+  assert.equal(isNavItemVisible(item, can, true), false);
+  assert.equal(isNavItemVisible(item, can, false), false);
+});
+
 test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   const can = () => true;
   const settings = { to: '/settings', permission: 'settings' };
