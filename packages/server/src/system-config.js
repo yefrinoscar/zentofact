@@ -23,8 +23,8 @@ export const SYSTEM_FLAGS = {
   marketplace_publication_mutation: {
     key: 'marketplace_publication_mutation',
     envVar: 'MARKETPLACE_PUBLICATION_MUTATION_ENABLED',
-    label: 'Mutación real de publicaciones Falabella',
-    description: 'Permite que publicar y despublicar llame al Seller API real. Sin este flag el flujo es visual-only y nunca muta el marketplace.',
+    label: 'Escritura real en Falabella',
+    description: 'Permite encolar cambios de stock seller y publicación. Falabella se verifica en segundo plano y el resultado llega a Avisos.',
     confirmWord: 'HABILITAR',
     requireListings: false,
     docsPath: null,
@@ -52,7 +52,7 @@ export const SYSTEM_FLAGS = {
     key: 'mercado_libre_sync',
     envVar: 'MERCADO_LIBRE_SYNC_ENABLED',
     label: 'Sincronización periódica de Mercado Libre',
-    description: 'Pausa o reanuda la descarga automática de pedidos desde Mercado Libre. No afecta webhooks ni el sync manual.',
+    description: 'Pausa Mercado Libre en el cron y en Sincronizar. Los webhooks siguen recibiéndose para no perder cambios de estado.',
     confirmWord: null,
     requireListings: false,
     docsPath: null,
@@ -270,7 +270,6 @@ export async function isRipleySyncEnabled(db) {
   return (await effectiveFlagState(SYSTEM_FLAGS.ripley_sync, db)).effective;
 }
 
-/** Lectura runtime del scheduler periódico de Mercado Libre. */
 export async function isMercadoLibreSyncEnabled(db) {
   return (await effectiveFlagState(SYSTEM_FLAGS.mercado_libre_sync, db)).effective;
 }

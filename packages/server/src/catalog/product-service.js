@@ -634,7 +634,7 @@ export async function getProductSales(id, filters = {}, db) {
     and coalesce(o.fulfillment_status, '') <> 'returned'
     and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
     and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'`;
-  const [summaryResult, dailyResult, recentResult] = await Promise.all([
+  const [summaryResult, dailyResult, recentResult, sellersResult] = await Promise.all([
     target.query(
       `select
          count(distinct o.id) as orders_count,
@@ -688,6 +688,41 @@ export async function getProductSales(id, filters = {}, db) {
        order by o.ordered_at desc nulls last, o.id desc limit 20`,
       values,
     ),
+    target.query(
+      `with seller_accounts as (
+         select l.company_id, array_agg(distinct l.channel_code order by l.channel_code) as channel_codes
+         from product_listings l
+         where l.product_id=$1 and l.status <> 'unlinked'
+         group by l.company_id
+       ), seller_sales as (
+         select o.company_id,
+           count(distinct o.id) as orders_count,
+           coalesce(sum(oi.quantity), 0) as units_sold,
+           coalesce(sum(coalesce(oi.total, oi.unit_price * oi.quantity, 0)), 0) as revenue,
+           min(o.ordered_at) as first_sale_at,
+           max(o.ordered_at) as last_sale_at
+         from order_items oi
+         join orders o on o.id=oi.order_id
+         left join falabella_orders fo
+           on fo.company_id=o.company_id and fo.order_id=o.external_order_id
+         where oi.product_id=$1 and ${eligibleClause} ${dateClause}
+         group by o.company_id
+       )
+       select accounts.company_id,
+         coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+         accounts.channel_codes,
+         coalesce(sales.orders_count, 0) as orders_count,
+         coalesce(sales.units_sold, 0) as units_sold,
+         coalesce(sales.revenue, 0) as revenue,
+         sales.first_sale_at,
+         sales.last_sale_at
+       from seller_accounts accounts
+       join companies c on c.id=accounts.company_id
+       left join seller_sales sales on sales.company_id=accounts.company_id
+       order by coalesce(sales.units_sold, 0) desc,
+         lower(coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social))`,
+      values,
+    ),
   ]);
   const summary = summaryResult.rows[0] || {};
   return {
@@ -705,6 +740,16 @@ export async function getProductSales(id, filters = {}, db) {
       ordersCount: Number(row.orders_count || 0),
       unitsSold: Number(row.units_sold || 0),
       revenue: Number(row.revenue || 0),
+    })),
+    sellers: sellersResult.rows.map((row) => ({
+      companyId: Number(row.company_id),
+      companyName: row.company_name,
+      channelCodes: row.channel_codes || [],
+      ordersCount: Number(row.orders_count || 0),
+      unitsSold: Number(row.units_sold || 0),
+      revenue: Number(row.revenue || 0),
+      firstSaleAt: row.first_sale_at || null,
+      lastSaleAt: row.last_sale_at || null,
     })),
     recent: recentResult.rows.map((row) => ({
       orderId: Number(row.order_id),
@@ -753,6 +798,9 @@ export async function getProductReturns(id, filters = {}, db) {
          coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
          coalesce(sum(oi.quantity), 0) as quantity,
          coalesce(sum(coalesce(oi.total, oi.unit_price * oi.quantity, 0)), 0) as amount,
+         coalesce(sum(coalesce(rsa.stock_quantity, rsa.quantity, 0))
+           filter (where rsa.status='approved'), 0) as restocked_quantity,
+         max(pri.condition) as return_condition,
          nullif(string_agg(distinct coalesce(
            nullif(oi.raw_data->>'ReasonDetail', ''),
            nullif(oi.raw_data->>'Reason', '')
@@ -762,6 +810,10 @@ export async function getProductReturns(id, filters = {}, db) {
        left join falabella_orders fo
          on fo.company_id=o.company_id and fo.order_id=o.external_order_id
        left join companies c on c.id=o.company_id
+       left join return_stock_approvals rsa
+         on rsa.order_item_id=oi.id and rsa.product_id=$1
+       left join product_return_incidents pri
+         on pri.product_id=$1 and pri.order_id=o.id
        where oi.product_id=$1 and ${returnedClause} ${dateClause}
        group by o.id, o.external_order_number, o.ordered_at, o.company_id,
          coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social)
@@ -787,6 +839,8 @@ export async function getProductReturns(id, filters = {}, db) {
       companyName: row.company_name,
       quantity: Number(row.quantity || 0),
       amount: Number(row.amount || 0),
+      restockedQuantity: Number(row.restocked_quantity || 0),
+      returnCondition: row.return_condition || null,
       reason: row.reason || null,
     })),
   };

@@ -18,10 +18,14 @@ function httpError(message, status = 400) {
   return error;
 }
 
-export function mercadoLibreAppConfig(env = process.env) {
-  const appId = text(env.MERCADO_LIBRE_APP_ID);
-  const clientSecret = text(env.MERCADO_LIBRE_CLIENT_SECRET);
-  const redirectUri = text(env.MERCADO_LIBRE_REDIRECT_URI)
+export function mercadoLibreAppConfig(env = process.env, company = null) {
+  const companyAppId = text(company?.mercadoLibreAppId ?? company?.mercado_libre_app_id);
+  const companyClientSecret = text(company?.mercadoLibreClientSecret ?? company?.mercado_libre_client_secret);
+  const companyRedirectUri = text(company?.mercadoLibreRedirectUri ?? company?.mercado_libre_redirect_uri);
+  const hasCompanyConfig = Boolean(companyAppId || companyClientSecret || companyRedirectUri);
+  const appId = hasCompanyConfig ? companyAppId : text(env.MERCADO_LIBRE_APP_ID);
+  const clientSecret = hasCompanyConfig ? companyClientSecret : text(env.MERCADO_LIBRE_CLIENT_SECRET);
+  const redirectUri = (hasCompanyConfig ? companyRedirectUri : text(env.MERCADO_LIBRE_REDIRECT_URI))
     || (text(env.AUTH_BASE_URL) ? `${text(env.AUTH_BASE_URL).replace(/\/+$/, '')}/integrations/mercado-libre/callback` : '');
   return {
     configured: Boolean(appId && clientSecret && redirectUri),
@@ -33,7 +37,7 @@ export function mercadoLibreAppConfig(env = process.env) {
 }
 
 function stateSecret(env = process.env) {
-  return text(env.MERCADO_LIBRE_STATE_SECRET || env.BETTER_AUTH_SECRET || env.MERCADO_LIBRE_CLIENT_SECRET);
+  return text(env.MERCADO_LIBRE_STATE_SECRET || env.BETTER_AUTH_SECRET);
 }
 
 export function signMercadoLibreOAuthState(payload, env = process.env) {
@@ -82,12 +86,9 @@ export function mercadoLibreWebRedirect(query = {}, env = process.env) {
   const origin = text(env.WEB_ORIGINS).split(',')[0].trim()
     || 'http://127.0.0.1:3011';
   const companyId = Number(query.companyId);
-  const path = Number.isInteger(companyId) && companyId > 0
-    ? `/#/companies/${companyId}`
-    : '/#/companies';
+  const path = '/#/companies';
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
-    if (key === 'companyId') continue;
     if (value) params.set(key, String(value));
   }
   const suffix = params.toString();
@@ -97,13 +98,13 @@ export function mercadoLibreWebRedirect(query = {}, env = process.env) {
 export async function startMercadoLibreConnect(companyIdInput, actor, env = process.env) {
   const companyId = Number(companyIdInput);
   if (!Number.isInteger(companyId) || companyId <= 0) throw httpError('Empresa inválida.');
-  const app = mercadoLibreAppConfig(env);
-  if (!app.configured) {
-    throw httpError('Falta configurar MERCADO_LIBRE_APP_ID, MERCADO_LIBRE_CLIENT_SECRET y el redirect URI.', 503);
-  }
   const core = await loadCore();
-  const company = await core.getPublicCompany(companyId);
+  const company = await core.getCompany(companyId);
   if (!company || company.activo === false) throw httpError('Empresa no encontrada o inactiva.', 404);
+  const app = mercadoLibreAppConfig(env, company);
+  if (!app.configured) {
+    throw httpError('Completa App ID, Client Secret y Redirect URI en la empresa.', 503);
+  }
   const state = signMercadoLibreOAuthState({
     companyId,
     actorId: actor?.id || actor?.userId || null,
@@ -125,8 +126,11 @@ export async function finishMercadoLibreConnect(query = {}, dependencies = {}) {
     if (!code) throw httpError('Mercado Libre no devolvió el código de autorización.');
     const state = verifyMercadoLibreOAuthState(query.state, env, dependencies.now?.() || Date.now());
     companyId = state.companyId;
-    const app = mercadoLibreAppConfig(env);
-    if (!app.configured) throw httpError('Falta la aplicación de Mercado Libre.', 503);
+    const core = dependencies.core || await loadCore();
+    const company = await core.getCompany(state.companyId);
+    if (!company || company.activo === false) throw httpError('Empresa no encontrada o inactiva.', 404);
+    const app = mercadoLibreAppConfig(env, company);
+    if (!app.configured) throw httpError('Completa la aplicación de Mercado Libre en la empresa.', 503);
     const token = await (dependencies.exchangeAuthorizationCode || exchangeAuthorizationCode)({
       appId: app.appId,
       clientSecret: app.clientSecret,
@@ -140,9 +144,6 @@ export async function finishMercadoLibreConnect(query = {}, dependencies = {}) {
     if (text(me?.userId) && text(me.userId) !== text(token.userId)) {
       throw httpError('Mercado Libre devolvió un user_id distinto al del token.');
     }
-    const core = dependencies.core || await loadCore();
-    const company = await core.getCompany(state.companyId);
-    if (!company || company.activo === false) throw httpError('Empresa no encontrada o inactiva.', 404);
     const existing = await core.getCompanyByMercadoLibreUserId(token.userId);
     if (existing && Number(existing.id) !== Number(company.id)) {
       throw httpError('Esa cuenta de Mercado Libre ya está conectada a otra empresa.');

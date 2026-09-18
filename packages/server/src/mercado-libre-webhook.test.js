@@ -4,12 +4,25 @@ import {
   acknowledgeMercadoLibreWebhook,
   parseMercadoLibreResource,
   shipmentOrderIds,
+  storedOrderIdsForShipment,
 } from './mercado-libre-webhook.js';
 
 test('parsea resources de pedidos y envíos', () => {
   assert.deepEqual(parseMercadoLibreResource('/orders/2000001234'), { kind: 'order', id: '2000001234' });
   assert.deepEqual(parseMercadoLibreResource('/shipments/99'), { kind: 'shipment', id: '99' });
   assert.equal(parseMercadoLibreResource('/items/MPE1'), null);
+});
+
+test('recupera las órdenes guardadas cuando el shipment nuevo no trae order_id', async () => {
+  const calls = [];
+  const ids = await storedOrderIdsForShipment(7, 'SHIP-9', {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [{ external_order_id: 'ML-1' }, { external_order_id: 'ML-2' }] };
+    },
+  });
+  assert.deepEqual(ids, ['ML-1', 'ML-2']);
+  assert.deepEqual(calls[0].params, [7, 'SHIP-9']);
 });
 
 test('extrae los order.id del envío sin fusionarlos', () => {

@@ -7,7 +7,7 @@ import {
   listMovements,
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
-import { needsReturnStockApproval, RETURN_STOCK_APPROVAL_FROM_AT, stockPhase } from './catalog/stock-phase.js';
+import { stockPhase } from './catalog/stock-phase.js';
 import { approveReturnStock } from './order-management.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
@@ -25,7 +25,7 @@ import {
   refreshFalabellaListingSnapshots,
   refreshRipleyListingSnapshots,
 } from './catalog/listing-snapshot-service.js';
-import { getCatalogSummary, getProduct, listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { getCatalogSummary, getProduct, getProductSales, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
@@ -95,7 +95,9 @@ class InventoryDb {
         order_item_id: itemId,
         product_id: params[2],
         quantity: params[3],
-        status: 'pending',
+        status: 'approved',
+        stock_quantity: params[3],
+        merma_quantity: 0,
       });
       return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
@@ -784,17 +786,10 @@ test('cancelación y devolución revierten cantidades aplicadas una sola vez', a
   assert.equal(returnedMovement.quantity_delta, 2);
   assert.equal(returnedMovement.reason, 'Devolución del pedido 3248709095');
   assert.equal(returnedDb.pendingReturn, 0);
-  assert.equal(returnedDb.approvals.size, 0);
+  assert.equal(returnedDb.approvals.get(101).status, 'approved');
 });
 
-test('una devolución anterior al corte de aprobación entra al stock vendible', () => {
-  assert.equal(needsReturnStockApproval('2026-09-03T18:59:59.000Z'), false);
-  assert.equal(needsReturnStockApproval(RETURN_STOCK_APPROVAL_FROM_AT), true);
-  assert.equal(needsReturnStockApproval('2026-09-04T12:00:00.000Z'), true);
-  assert.equal(needsReturnStockApproval(null), false);
-});
-
-test('una devolución desde el 3 set. 14:00 Lima queda por aprobar y no se vende', async () => {
+test('una devolución entra directo al stock vendible, sin aprobación manual', async () => {
   const db = new InventoryDb(8);
   const applied = item({
     product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
@@ -815,41 +810,18 @@ test('una devolución desde el 3 set. 14:00 Lima queda por aprobar y no se vende
     persisted,
   }));
   assert.equal(db.quantity, 10);
-  assert.equal(db.pendingReturn, 2);
-  assert.equal(db.approvals.get(101)?.quantity, 2);
-  assert.equal(db.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3249612124');
-
-  const approved = await approveReturnStock(20, 'operator-1', db);
-  assert.equal(approved.approvedLines, 1);
-  assert.equal(approved.approvedQuantity, 2);
-  assert.equal(approved.mermaQuantity, 0);
   assert.equal(db.pendingReturn, 0);
-  assert.equal(db.quantity, 10);
-  assert.equal(db.approvals.get(101).stock_quantity, 2);
-  assert.equal(db.approvals.get(101).merma_quantity, 0);
+  assert.equal(db.approvals.get(101)?.status, 'approved');
+  assert.equal(db.approvals.get(101)?.stock_quantity, 2);
+  assert.equal(db.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3249612124');
 });
 
-test('al revisar una devolución se puede mandar parte a merma', async () => {
+test('al revisar una devolución legacy se puede mandar parte a merma', async () => {
   const db = new InventoryDb(8);
-  const applied = item({
-    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
-    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  db.approvals.set(101, {
+    id: 1, order_id: 20, order_item_id: 101, product_id: 5, quantity: 2, status: 'pending',
   });
-  db.items.set(101, { ...applied });
-  const persisted = {
-    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
-    external_order_number: '3249612124',
-    returned_at: '2026-09-03T20:00:00.000Z',
-  };
-  await stockPhase(phaseInput(db, [], {
-    existing: { order_status: 'completed', fulfillment_status: 'delivered' },
-    persisted,
-  }));
-  await stockPhase(phaseInput(db, [], {
-    existing: { order_status: 'completed', fulfillment_status: 'returned' },
-    persisted,
-  }));
-  assert.equal(db.pendingReturn, 2);
+  db.pendingReturn = 2;
 
   const reviewed = await approveReturnStock(20, 'operator-1', db, {
     lines: [{ orderItemId: 101, stockQuantity: 1, mermaQuantity: 1 }],
@@ -857,7 +829,7 @@ test('al revisar una devolución se puede mandar parte a merma', async () => {
   assert.equal(reviewed.approvedQuantity, 1);
   assert.equal(reviewed.mermaQuantity, 1);
   assert.equal(db.pendingReturn, 0);
-  assert.equal(db.quantity, 9);
+  assert.equal(db.quantity, 7);
   const merma = [...db.movements.values()].find((row) => row.movement_type === 'adjustment_out');
   assert.equal(merma.quantity_delta, -1);
   assert.match(merma.reason, /Merma/);
@@ -1981,6 +1953,68 @@ test('el resumen de catálogo expone kpis operativos desde SQL', async () => {
   assert.match(statements[0].sql, /as units_sold_30/);
   assert.equal(statements[0].params.length, 1);
   assert.equal(statements[0].params[0], 'active');
+});
+
+test('las ventas del producto comparan todos los sellers asociados', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('with seller_accounts as')) {
+        return { rows: [
+          {
+            company_id: 8,
+            company_name: 'LIMBO S.A.C.',
+            channel_codes: ['falabella'],
+            orders_count: 5,
+            units_sold: 7,
+            revenue: 210,
+            first_sale_at: '2026-08-01T12:00:00.000Z',
+            last_sale_at: '2026-08-12T12:00:00.000Z',
+          },
+          {
+            company_id: 9,
+            company_name: 'MANTA RAYA S.R.L.',
+            channel_codes: ['falabella', 'ripley'],
+            orders_count: 0,
+            units_sold: 0,
+            revenue: 0,
+            first_sale_at: null,
+            last_sale_at: null,
+          },
+        ] };
+      }
+      if (sql.includes("date_trunc('day'")) return { rows: [] };
+      if (sql.includes('order by o.ordered_at desc')) return { rows: [] };
+      return { rows: [{
+        orders_count: 5,
+        units_sold: 7,
+        revenue: 210,
+        average_unit_price: 30,
+        first_sale_at: '2026-08-01T12:00:00.000Z',
+        last_sale_at: '2026-08-12T12:00:00.000Z',
+      }] };
+    },
+  };
+
+  const result = await getProductSales(5, { range: '30' }, db);
+
+  assert.equal(result.sellers.length, 2);
+  assert.deepEqual(result.sellers[0], {
+    companyId: 8,
+    companyName: 'LIMBO S.A.C.',
+    channelCodes: ['falabella'],
+    ordersCount: 5,
+    unitsSold: 7,
+    revenue: 210,
+    firstSaleAt: '2026-08-01T12:00:00.000Z',
+    lastSaleAt: '2026-08-12T12:00:00.000Z',
+  });
+  assert.equal(result.sellers[1].unitsSold, 0);
+  const sellersQuery = statements.find(({ sql }) => sql.includes('with seller_accounts as'));
+  assert.deepEqual(sellersQuery.params, [5, 30]);
+  assert.match(sellersQuery.sql, /left join seller_sales/);
+  assert.match(sellersQuery.sql, /order by coalesce\(sales\.units_sold, 0\) desc/);
 });
 
 test('las salidas del día agregan pedidos locales por producto y fecha de Lima', async () => {

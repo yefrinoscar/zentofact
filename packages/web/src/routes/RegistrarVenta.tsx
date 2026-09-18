@@ -25,7 +25,6 @@ import {
   type PaymentMethod,
   type PaymentRecipient,
   type SaleLine,
-  type SaleSource,
   type SaleStepId,
 } from '../lib/registrar-venta';
 import { OWN_FLEET_CARRIER, quoteOwnFleetShipping, saleTotals } from '../lib/own-fleet-shipping';
@@ -50,9 +49,10 @@ import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { ClienteStep, EntregaStep, PagoStep, ProductosStep } from './registrar-venta/steps';
+import { NewSalespersonDialog } from './registrar-venta/NewSalespersonDialog';
 import { ResumenStep } from './registrar-venta/resumen';
 import { FieldHint, SaleStepper, type StepState } from './registrar-venta/widgets';
-import type { PaymentProof, SaleFormView } from './registrar-venta/view';
+import type { PaymentProof, SaleFormView, SalespersonOption } from './registrar-venta/view';
 
 type ChannelAccount = {
   id: number;
@@ -65,13 +65,14 @@ export default function RegistrarVenta() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
-  const { can, isAdmin } = usePermissions();
+  const { can, isAdmin, role, user } = usePermissions();
   const [searchParams] = useSearchParams();
   const afterSavePath = saleReturnPath(searchParams.get('from'), can('order_management'));
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [saleSource, setSaleSource] = useState<SaleSource>('marketplace');
+  const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
+  const [salespersonCreatorOpen, setSalespersonCreatorOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [documentRequest, setDocumentRequest] = useState<DocumentRequest>('none');
@@ -131,6 +132,15 @@ export default function RegistrarVenta() {
     staleTime: 30_000,
   });
   const fleetConfig = fleetQuery.data;
+  const salespersonOnly = role === 'vendedor';
+  const salespeopleQuery = useQuery({
+    queryKey: ['active-salespeople'],
+    queryFn: api.listActiveSalespeople,
+    enabled: !salespersonOnly,
+    staleTime: 30_000,
+  });
+  const salespeople = (salespeopleQuery.data || []) satisfies SalespersonOption[];
+  const salespersonId = salespersonOnly ? String(user?.id || '') : selectedSalespersonId;
 
   const manualAccount = useMemo(
     () => accounts.find((account) => account.channelCode === 'manual' && account.active) || null,
@@ -150,6 +160,7 @@ export default function RegistrarVenta() {
 
   const saleInput: ManualSaleInput = {
     channelAccountId: manualAccount?.id,
+    salespersonId,
     customerName,
     customerPhone,
     lines,
@@ -159,7 +170,6 @@ export default function RegistrarVenta() {
     sellerShippingAmount,
     dropoffPlace,
     shippingNote,
-    saleSource,
     paymentMethod,
     receivedBy,
     paidTo,
@@ -337,10 +347,35 @@ export default function RegistrarVenta() {
       : '';
   const submitDisabled = creating || !!loadError || channelMissing;
 
+  const addCreatedSalesperson = async (salesperson: SalespersonOption) => {
+    queryClient.setQueryData<SalespersonOption[]>(['active-salespeople'], (current = []) => (
+      [...current.filter((option) => option.id !== salesperson.id), salesperson]
+        .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+    ));
+    setSelectedSalespersonId(salesperson.id);
+    setStepError('');
+    showSnackbar({ message: `${salesperson.name} ya está disponible.`, tone: 'success' });
+  };
+
   const view: SaleFormView = {
     isAdmin,
-    saleSource,
-    setSaleSource,
+    showSalespersonSelector: !salespersonOnly,
+    salespeople,
+    salespeopleLoading: salespeopleQuery.isPending,
+    salespeopleError: salespeopleQuery.error
+      ? humanizeSaleError(
+        salespeopleQuery.error instanceof Error
+          ? salespeopleQuery.error.message
+          : 'No se pudieron cargar las vendedoras.',
+      )
+      : (!salespeopleQuery.isPending && salespeople.length === 0 ? 'No hay vendedoras activas.' : ''),
+    salespersonId,
+    setSalespersonId: (value) => {
+      setSelectedSalespersonId(value);
+      setStepError('');
+    },
+    canCreateSalesperson: can('users'),
+    openSalespersonCreator: () => setSalespersonCreatorOpen(true),
     customerName,
     setCustomerName: (value) => {
       setCustomerName(value);
@@ -413,7 +448,8 @@ export default function RegistrarVenta() {
   };
 
   return (
-    <form
+    <>
+      <form
       onSubmit={(event) => {
         event.preventDefault();
         if (isLastStep) {
@@ -511,6 +547,12 @@ export default function RegistrarVenta() {
         canSelect={(product) => remainingSaleStock(product, lines) > 0}
         showProfit
       />
-    </form>
+      </form>
+      <NewSalespersonDialog
+        open={salespersonCreatorOpen}
+        onOpenChange={setSalespersonCreatorOpen}
+        onCreated={addCreatedSalesperson}
+      />
+    </>
   );
 }

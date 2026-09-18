@@ -22,12 +22,14 @@ import {
   formatBandejaDeadlineDate,
   logisticsBulkDeliverConfirmCopy,
   logisticsBulkDeliverSummary,
+  logisticsBulkReadyActionLabel,
   logisticsBulkReadyConfirmCopy,
   logisticsBulkReadySummary,
   logisticsDeliverConfirmCopy,
   logisticsDeliverSuccessCopy,
   logisticsEmptyCopy,
   logisticsPrintSuccessCopy,
+  logisticsReadyActionLabel,
   logisticsReadyConfirmCopy,
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
@@ -37,6 +39,7 @@ import {
   DEFAULT_BANDEJA_URGENCY,
   RIPLEY_LABEL_SOON_COPY,
   showPdfInTab,
+  updatePdfPreviewProgress,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -82,13 +85,6 @@ type InboxResponse = {
   totalCount: number;
   limit: number;
   offset: number;
-};
-
-type PrintResult = {
-  base64?: string;
-  filename?: string;
-  labelCount?: number;
-  skipped?: Array<{ id: number; reason: string }>;
 };
 
 const INBOX_BATCH_LIMIT = 300;
@@ -224,7 +220,10 @@ export default function BandejaLogistica() {
   };
 
   const printMutation = useMutation({
-    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds }) as Promise<PrintResult>,
+    mutationFn: (orderIds: number[]) => api.printLogisticsPack(
+      { orderIds },
+      (progress) => updatePdfPreviewProgress(printPreviewRef.current, progress),
+    ),
     onSuccess: (result) => {
       const preview = printPreviewRef.current;
       printPreviewRef.current = null;
@@ -490,7 +489,7 @@ export default function BandejaLogistica() {
       <Dialog open={Boolean(bulkReady)} onOpenChange={(open) => !open && !bulkReadyMutation.isPending && setBulkReady(null)}>
         <DialogContent className="sm:max-w-md" showCloseButton={!bulkReadyMutation.isPending}>
           <DialogHeader>
-            <DialogTitle>Marcar {bulkReady?.length} pedidos listos</DialogTitle>
+            <DialogTitle>{bulkReady ? logisticsBulkReadyActionLabel(bulkReady) : 'Preparar pedidos'}</DialogTitle>
             <DialogDescription>
               {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} seleccionado${bulkReady.length === 1 ? '' : 's'}.` : ''}
             </DialogDescription>
@@ -502,7 +501,7 @@ export default function BandejaLogistica() {
             <Button variant="outline" onClick={() => setBulkReady(null)} disabled={bulkReadyMutation.isPending}>Cancelar</Button>
             <Button onClick={() => bulkReady && bulkReadyMutation.mutate(bulkReady)} disabled={bulkReadyMutation.isPending}>
               {bulkReadyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-              {bulkReadyMutation.isPending ? `Actualizando ${bulkProgress} de ${bulkReady?.length}…` : `Marcar ${bulkReady?.length} listos`}
+              {bulkReadyMutation.isPending ? `Actualizando ${bulkProgress} de ${bulkReady?.length}…` : bulkReady ? logisticsBulkReadyActionLabel(bulkReady) : 'Confirmar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -532,7 +531,7 @@ export default function BandejaLogistica() {
                 <Button variant="outline" onClick={closeReady} disabled={readyMutation.isPending}>Cancelar</Button>
                 <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
                   {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-                  {readyOrder.channelCode === 'ripley' ? 'Confirmar en Ripley' : 'Confirmar y marcar listo'}
+                  {readyOrder.channelCode === 'ripley' ? 'Agendar recojo en Ripley' : logisticsReadyActionLabel(readyOrder)}
                 </Button>
               </DialogFooter>
             </>

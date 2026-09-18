@@ -37,6 +37,19 @@ test('acepta un aviso operativo y descarta filas rotas', () => {
   assert.equal(parseOperatorNotification({ ...valid, title: '' }), null);
 });
 
+test('acepta el resultado de una actualización Falabella', () => {
+  const parsed = parseOperatorNotification({
+    ...valid,
+    id: 'marketplace_mutation:41:succeeded',
+    kind: 'marketplace_mutation',
+    severity: 'success',
+    title: 'Stock actualizado en Falabella',
+    href: '/productos',
+  });
+  assert.equal(parsed?.kind, 'marketplace_mutation');
+  assert.equal(parsed?.severity, 'success');
+});
+
 test('el listado ignora ítems inválidos y recalcula el no leído si falta', () => {
   const parsed = parseOperatorNotificationsResponse({
     items: [valid, { id: 'x' }, { ...valid, id: 'insumo_low_stock:1:0', kind: 'insumo_low_stock', unread: false }],
@@ -65,4 +78,17 @@ test('el aria-label del timbre incluye la cantidad sin leer', () => {
   assert.equal(notificationAriaLabel(0), 'Avisos');
   assert.equal(notificationAriaLabel(1), 'Avisos, 1 sin leer');
   assert.equal(notificationAriaLabel(4), 'Avisos, 4 sin leer');
+});
+
+test('el frontend conserva el aviso anticipado y su contador', () => {
+  const parsed = parseOperatorNotificationsResponse({ items: [{
+    ...valid,
+    id: 'product_low_stock:22:1:warning',
+    kind: 'product_low_stock',
+    severity: 'warning',
+    title: 'Zapatera está por reponer',
+    href: '/productos',
+  }] });
+  assert.equal(parsed.items[0]?.kind, 'product_low_stock');
+  assert.equal(parsed.unreadCount, 1);
 });

@@ -8,12 +8,11 @@ import CreditNotes from './routes/CreditNotes';
 import CreditNotesList from './routes/CreditNotesList';
 import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
-import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
 import Avisos from './routes/Avisos';
 import { NotificationBell } from './components/NotificationBell';
-import { ProductSoldOutAlertSound } from './hooks/useProductSoldOutAlertSound';
+import { OperatorNotificationAlerts } from './hooks/useProductSoldOutAlertSound';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import DescuentosCola from './routes/DescuentosCola';
@@ -51,8 +50,8 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
   '/ventas': {
-    title: 'Ventas',
-    subtitle: 'Qué se vende, qué traer y qué no tocar.',
+    title: 'Desempeño de productos',
+    subtitle: 'Ventas, rotación y stock de todo tu catálogo.',
   },
   '/pagos': {
     title: 'Pagos',
@@ -109,10 +108,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/credit-notes/bulk': {
     title: 'Anulación masiva',
     subtitle: 'Anula boletas por mes y empresa emitiendo NC en lote.',
-  },
-  '/falabella-api': {
-    title: 'Gestor de Sellers',
-    subtitle: 'Consulta órdenes por empresa usando las credenciales Seller API guardadas.',
   },
   '/productos': {
     title: 'Catálogo de productos',
@@ -263,7 +258,7 @@ function AppLayout() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      <ProductSoldOutAlertSound />
+      <OperatorNotificationAlerts />
       <Sidebar hideOnMobile />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -314,10 +309,10 @@ function AppLayout() {
               <Route path="/companies/nueva" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/companies/:companyId" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
-              <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
+              <Route path="/workflow" element={<Navigate to="/bandeja" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes_manage" {...permissionState}><CreditNotesList /></RequirePermission>} />
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
-              <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
+              <Route path="/falabella-api" element={<Navigate to="/bandeja" replace />} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
               <Route path="/salidas" element={<Navigate to="/orders" replace />} />

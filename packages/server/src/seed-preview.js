@@ -996,18 +996,11 @@ async function ensureSampleOrders(companiesByRuc, products) {
       for (const item of insertedItems) {
         await pool.query(
           `INSERT INTO return_stock_approvals (
-             order_id, order_item_id, product_id, quantity, status, returned_at
-           ) VALUES ($1,$2,$3,$4,'pending',$5)
+             order_id, order_item_id, product_id, quantity, status, returned_at,
+             reviewed_at, reviewed_by, stock_quantity, merma_quantity
+           ) VALUES ($1,$2,$3,$4,'approved',$5,NOW(),'auto',$4,0)
            ON CONFLICT (order_item_id) DO NOTHING`,
           [orderId, item.id, item.product_id, item.quantity, promisedAt],
-        );
-        await pool.query(
-          `INSERT INTO product_inventory (product_id, quantity_on_hand, quantity_reserved, quantity_pending_return)
-           VALUES ($1, 0, 0, $2)
-           ON CONFLICT (product_id) DO UPDATE SET
-             quantity_pending_return = product_inventory.quantity_pending_return + EXCLUDED.quantity_pending_return,
-             updated_at = NOW()`,
-          [item.product_id, item.quantity],
         );
       }
     }

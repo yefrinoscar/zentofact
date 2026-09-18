@@ -77,10 +77,13 @@ const mercadoLibreWebhook = await import('./mercado-libre-webhook.js');
 const mercadoLibreSandbox = await import('./mercado-libre-sandbox.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
+const returnIncidents = await import('./catalog/return-incidents.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
 const ripleyCatalog = await import('./ripley-catalog.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
+const marketplaceMutationJobs = await import('./catalog/marketplace-mutation-jobs.js');
+await marketplaceMutationJobs.ensureMarketplaceMutationJobTables(core.pool);
 const dashboard = await import('./dashboard.js');
 const productSalesReport = await import('./catalog/product-sales-report.js');
 const pagos = await import('./pagos.js');
@@ -145,16 +148,27 @@ app.post('/webhooks/falabella/:companyId/:token', (c) =>
 app.post('/webhooks/falabella/:companyId', (c) =>
   handleFalabellaWebhook(c, c.req.param('companyId'), ''));
 app.on(['GET'], '/webhooks/falabella/*', (c) => c.json({ error: 'method not allowed' }, 405));
-
 app.post('/webhooks/mercadolibre', async (c) => {
   let payload = {};
   try { payload = await c.req.json(); } catch { payload = {}; }
+  const expectedApplicationId = String(process.env.MERCADO_LIBRE_APP_ID || '').trim();
+  const receivedApplicationId = String(payload?.application_id || '').trim();
+  if (expectedApplicationId && receivedApplicationId && receivedApplicationId !== expectedApplicationId) {
+    return c.json({ ok: true, ignored: 'application' }, 200);
+  }
   return c.json(mercadoLibreWebhook.acknowledgeMercadoLibreWebhook(payload), 200);
 });
+app.on(['GET'], '/webhooks/mercadolibre', (c) => c.json({ error: 'method not allowed' }, 405));
+const mercadoLibreSandboxCompany = (await core.listCompanies())
+  .find((company) => ['LIMBO', '20990001001'].includes(
+    String(company.nombre || company.nombreComercial || company.ruc || '').trim().toUpperCase(),
+  ));
+if (mercadoLibreSandboxCompany) {
+  await mercadoLibreSandbox.applyMercadoLibreSandboxCompany(mercadoLibreSandboxCompany);
+}
 if (mercadoLibreSandbox.mercadoLibreSandboxEnabled()) {
   mercadoLibreSandbox.resetMercadoLibreSandbox();
   app.route('/sandbox/mercadolibre', mercadoLibreSandbox.createMercadoLibreSandboxApp());
-  console.log('[mercado-libre] sandbox local en /sandbox/mercadolibre');
 }
 app.get('/integrations/mercado-libre/callback', async (c) => {
   const location = await mercadoLibreOauth.finishMercadoLibreConnect(c.req.query());
@@ -437,6 +451,36 @@ app.post('/logistics-inbox/print', async (c) => {
     });
   }
 });
+app.post('/logistics-inbox/print-stream', async (c) => {
+  let body = {};
+  try {
+    body = await c.req.json();
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+  const user = c.get('user');
+  c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
+  c.header('Cache-Control', 'no-cache, no-transform');
+  c.header('X-Accel-Buffering', 'no');
+  return stream(c, async (s) => {
+    const write = (event) => s.write(`${JSON.stringify(event)}\n`);
+    try {
+      const result = await logisticsInbox.printLogisticsPackWithDefaults({
+        ...body,
+        printedBy: user?.email || user?.name || null,
+      }, {
+        onProgress: (progress) => write({ type: 'progress', ...progress }),
+      });
+      await write({ type: 'result', result });
+    } catch (e) {
+      await write({
+        type: 'error',
+        error: String(e?.message || e),
+        logId: e?.logId || null,
+      });
+    }
+  });
+});
 app.post('/logistics-inbox/:orderId/ready', async (c) => {
   try {
     const user = c.get('user');
@@ -549,6 +593,10 @@ app.get('/order-management/my-sales', requirePermission('salesperson'), async (c
     }));
   } catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/salespeople', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await users.listActiveSalespeople()); }
+  catch (e) { return fail(c, e); }
+});
 app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -613,6 +661,19 @@ app.post('/order-management/orders/ingest', requirePermission('order_management'
 app.post('/order-management/orders/manual', async (c) => {
   try {
     const body = await c.req.json();
+    const actorUserId = c.get('user')?.id;
+    const selfSalespersonId = salespersonOnlyUserId(c);
+    let createdByUserId = selfSalespersonId;
+    if (!createdByUserId) {
+      const requestedSalespersonId = String(body.salespersonId || '').trim();
+      const salesperson = requestedSalespersonId
+        ? await users.getUserById(requestedSalespersonId)
+        : null;
+      if (!salesperson?.active || salesperson.role !== 'vendedor') {
+        return c.json({ error: 'Elige una vendedora activa.' }, 400);
+      }
+      createdByUserId = salesperson.id;
+    }
     const idempotencyKey = String(
       c.req.header('idempotency-key') || body.idempotencyKey || '',
     ).trim();
@@ -623,7 +684,8 @@ app.post('/order-management/orders/manual', async (c) => {
       ...body,
       source: 'manual',
       automatic: false,
-      actorUserId: c.get('user')?.id,
+      actorUserId,
+      createdByUserId,
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
     });
@@ -720,6 +782,26 @@ app.patch('/products/:id', async (c) => {
   try { return ok(c, await productService.updateProduct(c.req.param('id'), await c.req.json(), c.get('user')?.id)); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.put('/products/:id/returns/:orderId/incident', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await returnIncidents.setReturnIncident(
+      c.req.param('id'),
+      c.req.param('orderId'),
+      body.condition,
+      c.get('user')?.id,
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.delete('/products/:id/returns/:orderId/incident', async (c) => {
+  try {
+    return ok(c, await returnIncidents.clearReturnIncident(
+      c.req.param('id'),
+      c.req.param('orderId'),
+      c.get('user')?.id,
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/products/:id/archive', async (c) => {
   try { return ok(c, await productService.archiveProduct(c.req.param('id'), c.get('user')?.id)); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
@@ -739,6 +821,32 @@ app.get('/product-listings/association-candidates', async (c) => {
 app.patch('/product-listings/:id', async (c) => {
   try { return ok(c, await listingService.updateListing(c.req.param('id'), await c.req.json())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/product-listings/:id/seller-stock', async (c) => {
+  try {
+    return ok(c, await marketplacePublication.updateMarketplaceSellerStock(
+      c.req.param('id'),
+      await c.req.json(),
+      {
+        db: core.pool,
+        enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
+        userId: c.get('user')?.id,
+      },
+    ), 202);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/product-listings/:id/publication', async (c) => {
+  try {
+    return ok(c, await marketplacePublication.updateMarketplacePublication(
+      c.req.param('id'),
+      await c.req.json(),
+      {
+        db: core.pool,
+        enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
+        userId: c.get('user')?.id,
+      },
+    ), 202);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/product-listings/:id/unlink', async (c) => {
   try { return ok(c, await listingService.unlinkListing(c.req.param('id'))); }
@@ -1052,16 +1160,24 @@ app.patch('/companies/:id', requirePermission('companies'), async (c) => {
   } catch (e) { return fail(c, e, 400); }
 });
 app.delete('/companies/:id', requirePermission('companies'), async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
-app.get('/integrations/mercado-libre/status', requirePermission('companies'), (c) => {
-  const app = mercadoLibreOauth.mercadoLibreAppConfig();
-  const sandbox = mercadoLibreSandbox.mercadoLibreSandboxEnabled();
-  return ok(c, { configured: app.configured, sandbox });
+app.get('/integrations/mercado-libre/status', requirePermission('companies'), async (c) => {
+  const companyId = Number(c.req.query('companyId'));
+  const company = Number.isInteger(companyId) && companyId > 0 ? await core.getCompany(companyId) : null;
+  const config = mercadoLibreOauth.mercadoLibreAppConfig(process.env, company);
+  const hasCompanyConfig = Boolean(
+    company?.mercadoLibreAppId
+    || company?.mercadoLibreClientSecret
+    || company?.mercadoLibreRedirectUri,
+  );
+  return ok(c, {
+    configured: config.configured,
+    source: hasCompanyConfig ? 'company' : 'environment',
+    sandbox: mercadoLibreSandbox.mercadoLibreSandboxEnabled(),
+  });
 });
 app.get('/integrations/mercado-libre/:companyId/connect', requirePermission('companies'), async (c) => {
-  try {
-    const url = await mercadoLibreOauth.startMercadoLibreConnect(c.req.param('companyId'), c.get('user'));
-    return c.redirect(url);
-  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return c.redirect(await mercadoLibreOauth.startMercadoLibreConnect(c.req.param('companyId'), c.get('user'))); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/companies/:id/mercado-libre/disconnect', requirePermission('companies'), async (c) => {
   try { return ok(c, await mercadoLibreOauth.disconnectMercadoLibre(c.req.param('id'))); }
@@ -1255,6 +1371,7 @@ app.post('/falabella/:companyId/products', requirePermission('productos'), async
     return ok(c, await marketplacePublication.createMarketplaceProduct(
       core.falabellaCreateProduct,
       { companyId: Number(c.req.param('companyId')), product },
+      await systemConfig.isMarketplacePublicationMutationEnabled(),
     ));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
@@ -1927,4 +2044,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   orderSync.startOrderSyncScheduler();
   stockJobs.startStockReconciliationCron();
   stockJobs.startStockJobWorker();
+  marketplaceMutationJobs.startMarketplaceMutationWorker();
 });

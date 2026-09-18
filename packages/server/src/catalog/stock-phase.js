@@ -1,6 +1,5 @@
 import {
   applyInventoryMovement,
-  applyInventoryPendingReturn,
   applyInventoryReservation,
   InsufficientStockError,
   inventoryConfig,
@@ -14,7 +13,6 @@ import {
 } from './stock-commitment.js';
 
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
-export const RETURN_STOCK_APPROVAL_FROM_AT = '2026-09-03T19:00:00.000Z';
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
 const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
@@ -25,12 +23,6 @@ export function isStockEligibleFulfillment(status) {
 
 function orderRef(persisted) {
   return persisted?.external_order_number || persisted?.external_order_id || persisted?.id;
-}
-
-export function needsReturnStockApproval(returnedAt) {
-  if (!returnedAt) return false;
-  const at = new Date(returnedAt).getTime();
-  return Number.isFinite(at) && at >= Date.parse(RETURN_STOCK_APPROVAL_FROM_AT);
 }
 
 function restockReason(kind, persisted) {
@@ -179,21 +171,18 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     await writeStock(db, item, {
       stockState: 'reversed', appliedQuantity: 0, revision: nextRevision,
     });
-    if (movementType === 'return' && needsReturnStockApproval(context.returnedAt) && item.product_id) {
-      const queued = await db.query(
+    if (movementType === 'return' && item.product_id) {
+      // La devolución entra directo al stock vendible: no requiere aprobación.
+      // Si el operador marca en Productos que no llegó o es inusable, esas
+      // unidades se dan de baja con una incidencia.
+      await db.query(
         `insert into return_stock_approvals (
-           order_id, order_item_id, product_id, quantity, status, returned_at
-         ) values ($1,$2,$3,$4,'pending',$5)
-         on conflict (order_item_id) do nothing
-         returning id`,
+           order_id, order_item_id, product_id, quantity, status, returned_at,
+           reviewed_at, reviewed_by, stock_quantity, merma_quantity
+         ) values ($1,$2,$3,$4,'approved',$5,now(),'auto',$4,0)
+         on conflict (order_item_id) do nothing`,
         [context.orderId, item.id, item.product_id, already, context.returnedAt],
       );
-      if (queued.rows.length) {
-        await applyInventoryPendingReturn(db, {
-          productId: item.product_id,
-          quantityDelta: already,
-        });
-      }
     }
   } else {
     console.warn(JSON.stringify({ event: 'catalog.stock.idempotency_mismatch', key, already, target: 0, itemId: item.id }));

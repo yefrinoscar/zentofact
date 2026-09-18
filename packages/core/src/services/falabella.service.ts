@@ -658,6 +658,53 @@ function requireProductCreateFields(input: any) {
   return '';
 }
 
+export function falabellaProductStatusUpdateXml(input: {
+  sellerSku: string;
+  status: 'active' | 'inactive';
+  operatorCode?: string;
+}): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Request>
+  <Product>
+    <SellerSku>${escXml(input.sellerSku)}</SellerSku>
+    <BusinessUnits>
+      <BusinessUnit>
+        <OperatorCode>${escXml(input.operatorCode || 'fape')}</OperatorCode>
+        <Status>${input.status}</Status>
+      </BusinessUnit>
+    </BusinessUnits>
+  </Product>
+</Request>`;
+}
+
+export function falabellaStockUpdateXml(input: {
+  sellerSku: string;
+  quantity: number;
+  facilityId?: string | null;
+}): string {
+  const facility = input.facilityId
+    ? `\n        <GSCFacilityId>${escXml(input.facilityId)}</GSCFacilityId>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Request>
+  <Warehouse>
+    <Stock>${facility}
+      <SellerSku>${escXml(input.sellerSku)}</SellerSku>
+      <Quantity>${input.quantity}</Quantity>
+    </Stock>
+  </Warehouse>
+</Request>`;
+}
+
+function mutationRequestId(data: any): string {
+  return String(
+    data?.SuccessResponse?.Head?.RequestId
+    || data?.SuccessResponse?.Body?.Stocks?.feed
+    || data?.Head?.RequestId
+    || '',
+  ).trim();
+}
+
 export async function falabellaGetOrders(payload: { companyId: number; filters: GetOrdersV2Filters }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { error: found.error };
@@ -810,6 +857,51 @@ export async function falabellaCreateProduct(payload: { companyId: number; produ
   const result = await parseFalabellaResponse(response);
   const requestId = result.data?.SuccessResponse?.Head?.RequestId || result.data?.Head?.RequestId || '';
   return { ...result, requestId, xml: body };
+}
+
+export async function falabellaUpdateStock(payload: {
+  companyId: number;
+  sellerSku: string;
+  quantity: number;
+  facilityId?: string | null;
+}) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { ok: false, error: found.error };
+  const { company } = found;
+  const response = await fetch(signedFalabellaUrl(company, 'UpdateStock'), {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/xml' },
+    body: falabellaStockUpdateXml(payload),
+  });
+  const result = await parseFalabellaResponse(response);
+  return {
+    ok: result.ok && !result.error,
+    status: result.status,
+    error: result.error,
+    requestId: mutationRequestId(result.data),
+  };
+}
+
+export async function falabellaUpdateProductStatus(payload: {
+  companyId: number;
+  sellerSku: string;
+  status: 'active' | 'inactive';
+}) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { ok: false, error: found.error };
+  const { company } = found;
+  const response = await fetch(signedFalabellaUrl(company, 'ProductUpdate'), {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/xml' },
+    body: falabellaProductStatusUpdateXml(payload),
+  });
+  const result = await parseFalabellaResponse(response);
+  return {
+    ok: result.ok && !result.error,
+    status: result.status,
+    error: result.error,
+    requestId: mutationRequestId(result.data),
+  };
 }
 
 export async function falabellaGetFeeds(payload: { companyId: number; filters?: { action?: string; status?: string; limit?: number; offset?: number } }) {

@@ -2,6 +2,8 @@
 
 Investigación realizada el 4 de septiembre de 2026. El alcance está limitado a fuentes oficiales del portal de desarrolladores de **Mercado Libre Perú** (`developers.mercadolibre.com.pe`) y a las páginas hermanas del mismo sitio que documentan el mismo host `https://api.mercadolibre.com`. No se usaron blogs, SDKs de terceros ni documentación de integradores.
 
+Revalidación operativa del 17 de septiembre de 2026: se volvieron a consultar las páginas oficiales servidas desde el dominio peruano. Esta revisión corrige el alcance de `POST /shipments/$ID/process/ready_to_ship`, precisa cuándo Bandeja puede imprimir una etiqueta y separa los hechos documentados de lo que todavía requiere una venta de prueba MPE.
+
 ZentoFact ya declara el canal `mercado_libre` en `order_channels` y asocia publicaciones con `product_listings` (`channel_code`, `company_id`, `seller_sku`) hacia un producto maestro (`products.main_sku`). Esta nota describe qué publica Mercado Libre y cómo encaja en ese modelo. No implementa el conector.
 
 ## Conclusión ejecutiva
@@ -14,6 +16,8 @@ El identificador para asociar publicaciones al maestro es el atributo **`SELLER_
 
 No hay sandbox: las pruebas se hacen en producción con **usuarios de test**. Los SDK oficiales de GitHub están fuera de mantenimiento desde abril de 2021. Hay que llamar REST.
 
+Para Bandeja, la documentación permite cerrar el flujo de ingesta, seguimiento del shipment, datos fiscales e impresión/reimpresión de etiqueta ME2. No permite afirmar lo mismo para “Confirmar”: Perú no está entre los países con `MANUFACTURING_TIME`, requisito oficial de “Ya tengo el producto”. Esa acción debe permanecer deshabilitada hasta una validación real MPE o una confirmación de soporte de Mercado Libre.
+
 ## Matriz de evidencia
 
 | Área | Confirmado en docs oficiales | No publicado o incompleto |
@@ -25,9 +29,9 @@ No hay sandbox: las pruebas se hacen en producción con **usuarios de test**. Lo
 | Listar y leer órdenes, packs, ítems de orden | Confirmado | — |
 | Estados de orden y de pack | Confirmado | Enum completo de estados de pago de Mercado Pago en las páginas de seller |
 | Estados de envío | `GET /shipment_statuses` + mapeo front | — |
-| Etiqueta ME2 PDF/ZPL | `GET /shipment_labels` en la guía PE de ME2 | Disponibilidad de Full en Perú para imprimir (Full no imprime etiqueta de venta) |
-| `POST .../process/ready_to_ship` | Documentado para ME2 + `manufacturing_time` | `manufacturing_time` no está listado para Perú; no se afirma que el POST funcione en MPE |
-| Notificaciones `orders_v2`, `items`, `shipments` | Confirmado | — |
+| Etiqueta ME2 PDF/ZPL | `GET /shipment_labels` en la guía PE de ME2; imprimir y reimprimir por shipment | Full queda excluido: no imprime etiqueta de venta y Perú no figura en su disponibilidad oficial |
+| `POST .../process/ready_to_ship` | La guía de packs disponible para MPE documenta “Ya tengo el producto”; solo ME2 y países con `manufacturing_time` | La guía vigente limita `MANUFACTURING_TIME` a AR, BR, UY, CO y MX. Perú no figura. No habilitar esta acción en MPE sin prueba real o confirmación de ML |
+| Notificaciones `orders_v2`, `items`, `shipments` | Confirmado | La guía no documenta firma HMAC ni secreto de webhook |
 | `SELLER_SKU` vs `seller_custom_field` | Confirmado | — |
 | User Products (`user_product_id`) | Confirmado; afecta stock y variaciones | Endpoint para listar todas las familias de un seller |
 | Catálogo ML en Perú | Confirmado | — |
@@ -97,7 +101,7 @@ Respuesta oficial:
 }
 ```
 
-`expires_in` es 10800 segundos; el texto de la guía dice **6 horas**. El `refresh_token` dura **6 meses**, es de **un solo uso** y solo vale el último. Cada refresh devuelve uno nuevo. Guardar `user_id`: es el seller.
+`expires_in` es 10800 segundos; el texto de la guía dice **6 horas**, una contradicción interna. El conector debe calcular la expiración desde `expires_in`, no codificar seis horas. El `refresh_token` dura **6 meses**, es de **un solo uso** y solo vale el último. Cada refresh devuelve uno nuevo. Guardar `user_id`: es el seller.
 
 4. Llamadas posteriores:
 
@@ -138,6 +142,8 @@ Fuentes: [Gestiona ventas](https://developers.mercadolibre.com.pe/es_ar/gestiona
 Durante 2024 ML anunció que todas las órdenes quedarían atadas a un `pack_id`. Un pack puede mezclar órdenes de distintos sellers; la API solo muestra las órdenes de sellers que otorgaron grant a la app.
 
 ZentoFact: `orders.external_order_id` = `order.id`. El `pack_id` y el `shipment.id` van en metadata/shipping. **No fusionar** dos `order.id` del mismo pack (el glosario prohíbe fusionar Pedidos con identidades externas distintas). La etiqueta y el manifiesto logístico sí se operan por shipment/pack.
+
+En un pack compartido, varias órdenes pueden apuntar al mismo `shipment.id`. La Bandeja conserva cada orden como Pedido, pero debe deduplicar la transición logística y la etiqueta por `shipment.id`. Una etiqueta por orden produciría duplicados físicos del mismo paquete.
 
 ### 2.2 Endpoints
 
@@ -243,12 +249,27 @@ Tags de orden publicados: `pack_order`, `not_delivered`, `not_paid`, `high_concu
 | Acción | Endpoint | Notas |
 | --- | --- | --- |
 | Imprimir etiqueta ME2 | `GET /shipment_labels?shipment_ids=…&response_type=pdf\|zpl2` | Status `ready_to_ship` + substatus `ready_to_print` (o `printed` para reimprimir). Máx. 50 ids. Mode `me2`. No sirve para Full. |
-| “Ya tengo el producto” | `POST /shipments/$ID/process/ready_to_ship` | Solo ME2 en países con `manufacturing_time`. **Perú no está en la lista de manufacturing_time** de products-sync-listings. No cablear sin probar un seller MPE. |
+| “Ya tengo el producto” | `POST /shipments/$ID/process/ready_to_ship` | Sin body documentado; devuelve `{ "status": 200 }`. Solo ME2 en países con `manufacturing_time`. La guía vigente limita esa función a AR, BR, UY, CO y MX. **Perú no figura. No mostrar “Confirmar” como acción disponible en MPE.** |
 | Partir un envío multi-ítem | `POST /shipments/$ID/split` | Cancela pack/orden/shipment con `pack_splitted` |
 | Preguntas | `POST /answers` | Preventa |
 | Mensajes postventa | `/messages/packs/…` | La lectura marca leído salvo `mark_as_read=false` |
 
 No está publicado en las páginas consultadas un `POST /orders/$ID/cancel`. La guía de fraude dice que hay que cancelar, sin documentar la ruta.
+
+### 3.6 Flujo exacto para Bandeja MPE
+
+| Shipment observado | Etapa de Bandeja | Acción disponible |
+| --- | --- | --- |
+| Ausente, `pending` o `handling` | Pendientes / En preparación | Ninguna mutación al canal. Esperar `shipments` o reconciliar por GET |
+| `ready_to_ship` + `ready_to_print` | Listos | **Imprimir etiqueta** PDF o ZPL por `shipment.id` |
+| `ready_to_ship` + `printed` | Listos | **Reimprimir etiqueta**. No generar una distinta |
+| `ready_to_ship` + `picked_up`, `authorized_by_carrier` o `in_hub` | Enviados / En tránsito | Ninguna. Aunque el status siga en `ready_to_ship`, el paquete ya salió de bodega |
+| `shipped` | Enviados | Ninguna |
+| `delivered` | Completados | Ninguna |
+| `cancelled`, `not_delivered`, estado o subestado desconocido | Cancelados, Incidencia o No mapeado según el caso | No imprimir ni confirmar; conservar el valor original para soporte |
+| `logistic_type=fulfillment` | Operado por Full | No imprimir etiqueta de venta |
+
+“Confirmar” en Bandeja no equivale a cambiar `order.status`. La orden pagada ya está confirmada comercialmente. La única acción oficial parecida es “Ya tengo el producto” sobre el shipment, pero no está soportada oficialmente para MPE por la restricción de `MANUFACTURING_TIME`. La capacidad `ready_to_ship` debe quedar apagada para Mercado Libre Perú. La capacidad `shipping_label` sí puede encenderse, condicionada por los campos de la tabla.
 
 ## 4. Envíos (Mercado Envíos)
 
@@ -265,11 +286,13 @@ Consultas: `GET /users/$USER_ID/shipping_preferences`, `GET /sites/$SITE_ID/ship
 
 Perú: **ML no entrega `zip_code`**. `receiver_phone` solo en ME1. Dirección del comprador oculta hasta el pago. Desde el 12/10/2025, `order_id` y `external_reference` dejan de ir en el shipment.
 
-**Etiqueta (PE, ME2):** `GET /shipment_labels?shipment_ids=$ID&response_type=pdf` o `zpl2`. Medida estándar 10×15 cm (México es 10×20). Reimprimir = el mismo GET. No hay etiquetas personalizadas. Full: el seller **no** imprime la etiqueta de venta.
+**Etiqueta (PE, ME2):** `GET /shipment_labels?shipment_ids=$ID&response_type=pdf` o `zpl2`. Medida estándar 10×15 cm (México es 10×20). Imprimir solo con `mode=me2`, `status=ready_to_ship`, substatus `ready_to_print` y un tipo logístico imprimible (`drop_off`, `xd_drop_off`, `cross_docking` o `self_service`). Reimprimir con el mismo GET cuando el substatus ya es `printed`. Máximo 50 shipment ids por consulta. No hay etiquetas personalizadas. Full: el seller **no** imprime la etiqueta de venta.
+
+Si el substatus es `buffered`, la etiqueta todavía no está disponible. La guía indica esperar `lead_time.buffering.date`; esa fecha no es el plazo de despacho.
 
 La misma página de ME2 dice que el “carrito de compras” (consulta de envíos de carrito) está en AR, BR, MX, CL, CO y próximamente UY. Eso **no contradice** packs en Perú (la guía de packs lista Perú); es otro recurso. Validar con un seller MPE si un pack de varias órdenes comparte un solo `shipment_id`.
 
-**Full:** el ingreso a depósito es Seller Center, no API. Las APIs de stock fulfillment se documentan para AR, BR, MX, CL y CO. **No asumir Full por API en MPE.**
+**Full:** el ingreso a depósito es Seller Center, no API. La página oficial de Full y las APIs de stock fulfillment se documentan para AR, BR, MX, CL y CO. Perú no figura. **No asumir Full por API en MPE ni intentar imprimir la etiqueta de venta de un shipment fulfillment.**
 
 ## 5. Productos y asociación a maestros
 
@@ -364,13 +387,15 @@ User Products multi-origen: `GET /user-products/$UP_ID/stock` y PUT a `seller_wa
 
 Fuente: [Notificaciones](https://developers.mercadolibre.com.pe/es_ar/productos-recibe-notificaciones) (actualizada 02/09/2026).
 
-POST al callback. Responder **HTTP 200 en 500 ms** o ML desactiva el tópico y **no guarda** esos eventos. Reintentos durante **1 hora**, luego se descartan. Trabajar con cola: ack inmediato, GET del recurso después. Zona horaria UTC. IPs de origen publicadas en esa página (allowlist).
+POST al callback. Responder **HTTP 200 en 500 ms** o ML desactiva el tópico y **no guarda** los eventos del período desactivado. Hace hasta **ocho intentos durante 1 hora** antes de considerar perdida la notificación. Trabajar con cola: ack inmediato, GET del recurso después. Zona horaria UTC. IPs de origen publicadas en esa página (allowlist).
 
 Tópicos mínimos para un ERP: `orders_v2` (recomendado para ventas), `shipments`, `items`, `questions`, `payments`, `messages`. Si hay User Products: `user_products`, `stock-location`.
 
 Payload típico: `{ resource, user_id, topic, application_id, attempts, sent, received }`. Después, GET a `https://api.mercadolibre.com{resource}`.
 
-Huecos: `GET /missed_feeds?app_id=$APP_ID` (últimos **2 días**). El tópico `items` exige `site_id` (usar `MPE`).
+Huecos: `GET /missed_feeds?app_id=$APP_ID` (últimos **2 días**). El tópico `items` exige `site_id` (usar `MPE`). Si ML desactiva un tópico por fallback, hay que suscribirlo de nuevo y esos eventos no aparecerán en `missed_feeds`; por eso el poll de reconciliación no es opcional.
+
+La guía oficial no define firma HMAC, secreto de webhook ni header `X-Signature`. El receptor debe comprobar `application_id`, que `user_id` pertenezca a una cuenta conectada, que `topic` esté permitido y que `resource` tenga una ruta esperada. Puede aplicar la allowlist oficial de IPs cuando la infraestructura conserve la IP de origen. El payload solo dispara trabajo: la verdad operativa viene del GET autenticado al recurso.
 
 ## 7. Facturación en Perú
 
@@ -396,12 +421,12 @@ Postventa: notificación `messages`; `GET /messages/unread?tag=post_sale&role=se
 
 | Pieza ZentoFact | Encaje ML |
 | --- | --- |
-| `order_channels.code = mercado_libre` | Ya insertado. Capacidades actuales: `ingestion: api, webhook`. Falta `actions: ready_to_ship, shipping_label` hasta cablear ME2 |
+| `order_channels.code = mercado_libre` | Ya insertado. Capacidades actuales: `ingestion: api, webhook`. Se puede añadir `shipping_label` al cablear ME2. No añadir `ready_to_ship` para MPE con la evidencia actual |
 | `order_channel_accounts` | Una fila por Empresa + `external_account_id = user_id` |
 | ADR sync por cuenta | Un cursor por grant; ids de orden únicos dentro del seller |
 | `orders.external_order_id` | `order.id` (no el pack) |
 | `product_listings` | `SELLER_SKU` + `item_id` |
-| Bandeja operativa | Stages desde **shipment**: `handling` → Pendientes, `ready_to_ship` → Listos, `shipped` → Enviados |
+| Bandeja operativa | Stages desde **shipment** y substatus. `handling` → Pendientes; `ready_to_ship` + `ready_to_print/printed` → Listos; `picked_up/authorized_by_carrier/in_hub` o `shipped` → Enviados |
 | Stock | Reserva al `paid`+pendiente; confirma al `ready_to_ship` (misma regla que Falabella) |
 | Emisión | Independiente de la sync. Billing-info MPE alimenta boleta/factura |
 | Flag de mutación de publicación | No hacer PUT de stock/precio a ML hasta habilitarlo |
@@ -416,8 +441,8 @@ La UI ya menciona Mercado Libre en `#/productos` y en el prototipo multicanal. E
 4. **Importar ítems** — Scan de `/users/$ID/items/search`, `GET /items` con token dueño, persistir `item_id`, `SELLER_SKU`, variación/UP, status, qty, precio, permalink.
 5. **Mapear maestros** — `SELLER_SKU` → `product_listings` → `main_sku`. Cola de no mapeados. No asociar por `seller_custom_field` ni solo por GTIN.
 6. **Ingesta de pedidos** — Poll + `orders_v2`. Adaptador que normalice a `ingestOrder`. Pack y shipment en metadata. Billing-info MPE.
-7. **Webhook** — 200 en 500 ms + cola + `missed_feeds`.
-8. **Bandeja** — Stages por shipment. Etiqueta ME2 cuando `ready_to_print`. No mutar publicación hasta el flag.
+7. **Webhook** — Validar forma, app, seller, tópico y ruta; 200 en 500 ms + cola + `missed_feeds` + poll de reconciliación.
+8. **Bandeja** — Stages por shipment y substatus. Etiqueta ME2 cuando `ready_to_print`; reimpresión cuando `printed`; una etiqueta por shipment compartido. Sin acción “Confirmar” en MPE. No mutar publicación hasta el flag.
 9. **Stock hacia ML** — Solo con mapeo limpio y flag encendido. Respetar 429 y 409 de `x-version`.
 10. **Preguntas** — Segunda fase.
 
@@ -456,6 +481,8 @@ Los repos `mercadolibre/*-sdk` (Node, PHP, Python, Java, .NET, Ruby, Go) declara
 - https://developers.mercadolibre.com.pe/es_ar/items-y-busquedas
 - https://developers.mercadolibre.com.pe/es_ar/publica-productos
 - https://developers.mercadolibre.com.pe/en_us/products-sync-listings
+- https://developers.mercadolibre.com.pe/es_ar/producto-sincroniza-modifica-publicaciones
+- https://developers.mercadolibre.com.pe/es_ar/envios-fulfillment
 - https://developers.mercadolibre.com.pe/es_ar/variaciones
 - https://developers.mercadolibre.com.pe/es_ar/user-products
 - https://developers.mercadolibre.com.pe/es_ar/que-es-catalogo

@@ -102,6 +102,7 @@ type Listing = {
   companyName?: string;
   sellerSku: string;
   shopSku?: string | null;
+  externalProductId?: string | null;
   title?: string | null;
   status: string;
   marketplaceQuantity?: number | null;
@@ -218,6 +219,16 @@ type SalesSummary = ActivityResponse & {
     lastSaleAt?: string | null;
   };
   daily: Array<{ day: string; ordersCount: number; unitsSold: number; revenue: number }>;
+  sellers: Array<{
+    companyId: number;
+    companyName?: string | null;
+    channelCodes: string[];
+    ordersCount: number;
+    unitsSold: number;
+    revenue: number;
+    firstSaleAt?: string | null;
+    lastSaleAt?: string | null;
+  }>;
   recent: Array<{
     orderId: number;
     orderNumber?: string | null;
@@ -246,6 +257,8 @@ type ReturnsSummary = ActivityResponse & {
     companyName?: string | null;
     quantity: number;
     amount: number;
+    restockedQuantity?: number;
+    returnCondition?: 'not_arrived' | 'unusable' | null;
     reason?: string | null;
   }>;
 };
@@ -281,7 +294,6 @@ const initialCreate = {
 };
 const initialAdjust: InventoryAdjustForm = { mode: 'absolute', value: '', reason: '' };
 const initialPublishVisual = {
-  listingId: null as number | null,
   channelCode: 'falabella',
   companyId: '',
   sellerSku: '',
@@ -332,6 +344,14 @@ function activityCaption(activity: ActivityResponse, ordersLabel: string) {
       : `Cambios recientes verificados ${formatDate(coverage.liveQueriedAt)}`
     : `verificación en vivo incompleta${coverage.dataUpdatedThrough ? ` · datos locales hasta ${formatDate(coverage.dataUpdatedThrough)}` : ''}`;
   return `${sourceText} · ${reviewed} · ${formatDuration(activity.durationMs)}`;
+}
+
+function salesPeriodDays(sales: SalesSummary) {
+  if (sales.range !== 'all') return Number(sales.range);
+  if (!sales.summary.firstSaleAt) return 1;
+  const firstSale = new Date(sales.summary.firstSaleAt).getTime();
+  if (!Number.isFinite(firstSale)) return 1;
+  return Math.max(1, Math.ceil((Date.now() - firstSale) / 86_400_000));
 }
 
 function formatBasePrice(product: Product) {
@@ -586,7 +606,7 @@ export default function Productos() {
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
-  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
+  const [modal, setModal] = useState<'create' | 'adjust' | 'seller_stock' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -595,8 +615,11 @@ export default function Productos() {
   const [savedField, setSavedField] = useState<ProductEditableField | null>(null);
   const [createForm, setCreateForm] = useState(initialCreate);
   const [adjustForm, setAdjustForm] = useState(initialAdjust);
+  const [sellerStockListing, setSellerStockListing] = useState<Listing | null>(null);
+  const [sellerStockValue, setSellerStockValue] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
+  const [publicationBusyListingId, setPublicationBusyListingId] = useState<number | null>(null);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
   const [associationProduct, setAssociationProduct] = useState<Product | null>(null);
@@ -746,6 +769,28 @@ export default function Productos() {
     staleTime: 30_000,
     retry: 1,
   });
+  const returnIncidentMutation = useMutation({
+    mutationFn: ({ orderId, condition }: { orderId: number; condition: 'not_arrived' | 'unusable' | null }) => {
+      if (selectedId == null) throw new Error('Selecciona un producto.');
+      return condition
+        ? api.setCatalogProductReturnIncident(selectedId, orderId, condition)
+        : api.clearCatalogProductReturnIncident(selectedId, orderId);
+    },
+    onSuccess: () => {
+      if (selectedId == null) return;
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-returns', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-detail', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-movements', selectedId] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-products'] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-summary'] });
+    },
+    onError: (caught: unknown) => {
+      setError(caught instanceof Error ? caught.message : 'No se pudo registrar la devolución.');
+    },
+  });
+  const returnIncidentBusyId = returnIncidentMutation.isPending
+    ? returnIncidentMutation.variables?.orderId ?? null
+    : null;
   const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
     .filter((company) => company.activo !== false)
     .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
@@ -769,8 +814,6 @@ export default function Productos() {
   });
   const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
   const products = useMemo(() => (productsQuery.data?.products || []) as Product[], [productsQuery.data?.products]);
-  const productsByIdRef = useRef(new Map<number, Product>());
-  productsByIdRef.current = new Map(products.map((product) => [product.id, product]));
   const totalCount = Number(productsQuery.data?.totalCount || 0);
   const inventorySummary = (summaryQuery.data || productsQuery.data?.summary || null) as CatalogInventorySummary | null;
   const detail = detailQuery.data as Product | undefined;
@@ -895,6 +938,15 @@ export default function Productos() {
     openModal('adjust');
   };
 
+  const openSellerStock = (listing: Listing) => {
+    const sellerQuantity = metadataNumber(listing, 'sellerWarehouseQuantity');
+    const fulfillmentQuantity = metadataNumber(listing, 'fulfillmentQuantity') ?? 0;
+    const fallbackQuantity = Math.max(0, (listing.marketplaceQuantity ?? 0) - fulfillmentQuantity);
+    setSellerStockListing(listing);
+    setSellerStockValue(String(sellerQuantity ?? fallbackQuantity));
+    openModal('seller_stock');
+  };
+
   const openListingAssociation = (product: Product) => {
     setAssociationProduct(product);
     setAssociationSearch('');
@@ -907,13 +959,13 @@ export default function Productos() {
     openModal('associate_listing');
   };
 
-  const runAction = async (action: () => Promise<any>, success: (result: any) => string) => {
+  const runAction = async (action: () => Promise<any>, success: (result: any) => string, reload = true) => {
     setBusy(true);
     setActionError('');
     try {
       const result = await action();
       setActionMessage(success(result));
-      await reloadAll();
+      if (reload) await reloadAll();
       return result;
     } catch (caught: any) {
       setActionError(caught?.message || 'No se pudo completar la operación.');
@@ -957,6 +1009,26 @@ export default function Productos() {
     }
   };
 
+  const updateSellerStock = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!sellerStockListing) return;
+    const quantity = Number(sellerStockValue);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setActionError('El stock debe ser un entero mayor o igual a 0.');
+      return;
+    }
+    const listing = sellerStockListing;
+    const updated = await runAction(
+      () => api.updateProductListingSellerStock(listing.id, { quantity }),
+      () => 'Actualización enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
+    );
+    if (updated) {
+      setModal(null);
+      setSellerStockListing(null);
+    }
+  };
+
   const updateProductImage = async (event: FormEvent) => {
     event.preventDefault();
     if (!selectedId) return;
@@ -988,6 +1060,7 @@ export default function Productos() {
               companyId: listing.companyId,
               sellerSku: listing.sellerSku,
               shopSku: listing.shopSku,
+              externalProductId: listing.externalProductId,
               title: listing.title,
               marketplaceQuantity: listing.marketplaceQuantity,
               metadata: { ...listing.metadata, imageUrl: listing.imageUrl },
@@ -1068,24 +1141,20 @@ export default function Productos() {
     }
   };
 
-  const openPublishVisual = (product: Product, listing?: Listing) => {
+  const openPublishVisual = (product: Product) => {
     setSelectedId(product.id);
     setPublishVisual({
-      listingId: listing?.id || null,
-      channelCode: listing?.channelCode || 'falabella',
-      companyId: listing ? String(listing.companyId) : '',
-      sellerSku: listing?.sellerSku || '',
-      price: String(listing
-        ? metadataNumber(listing, 'effectivePrice') ?? metadataNumber(listing, 'regularPrice') ?? metadataNumber(listing, 'price') ?? product.referencePrice ?? product.sellerPriceMin ?? ''
-        : product.referencePrice ?? product.sellerPriceMin ?? ''),
+      channelCode: 'falabella',
+      companyId: '',
+      sellerSku: '',
+      price: String(product.referencePrice ?? product.sellerPriceMin ?? ''),
       images: product.imageUrl ? [product.imageUrl] : [],
     });
     openModal('publish_visual');
   };
-  const openPublishVisualRef = useRef(openPublishVisual);
-  openPublishVisualRef.current = openPublishVisual;
 
-  const togglePublication = useCallback((listing: Listing) => {
+  const togglePublication = (listing: Listing) => {
+    if (busy || publicationBusyListingId != null) return;
     if (isActivelyPublished(listing)) {
       setUnpublishListing(listing);
       setUnpublishConfirmation('');
@@ -1094,12 +1163,16 @@ export default function Productos() {
       setModal('unpublish_visual');
       return;
     }
-    const product = productsByIdRef.current.get(listing.productId)
-      || (selectedProductRef.current?.id === listing.productId ? selectedProductRef.current : null);
-    if (product) openPublishVisualRef.current(product, listing);
-  }, []);
+    setActionMessage('');
+    setPublicationBusyListingId(listing.id);
+    void runAction(
+      () => api.updateProductListingPublication(listing.id, { visible: true }),
+      () => 'Publicación enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
+    ).finally(() => setPublicationBusyListingId(null));
+  };
 
-  const simulatePublish = (event: FormEvent) => {
+  const submitPublish = (event: FormEvent) => {
     event.preventDefault();
     const seller = companies.find((company) => String(company.id) === publishVisual.companyId);
     const preview = simulatePublicationPreview({
@@ -1110,22 +1183,34 @@ export default function Productos() {
     setActionMessage(preview.message || '');
   };
 
-  const simulateUnpublish = (event: FormEvent) => {
+  const submitUnpublish = async (event: FormEvent) => {
     event.preventDefault();
-    const preview = simulatePublicationPreview({
-      kind: 'unpublish',
-      confirmation: unpublishConfirmation,
-    });
-    setActionError(preview.error || '');
-    setActionMessage(preview.message || '');
+    if (!unpublishListing) return;
+    if (unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT) {
+      setActionError('Escribe DESPUBLICAR para confirmar.');
+      return;
+    }
+    const updated = await runAction(
+      () => api.updateProductListingPublication(unpublishListing.id, { visible: false }),
+      () => 'Despublicación enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
+    );
+    if (updated) {
+      setModal(null);
+      setUnpublishListing(null);
+      setUnpublishConfirmation('');
+    }
   };
 
   const publishCopy = publicationPreviewCopy('publish');
-  const unpublishCopy = publicationPreviewCopy('unpublish');
+  const unpublishCopy = {
+    title: 'Confirmar despublicación',
+    subtitle: 'El cambio se enviará a Falabella.',
+    submit: 'Despublicar',
+  };
   const visibleError = error || (queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el catálogo.' : '');
   const visualListingExists = Boolean(selectedProduct?.listings?.some((listing) => (
-    listing.id !== publishVisual.listingId
-      && listing.channelCode === publishVisual.channelCode
+    listing.channelCode === publishVisual.channelCode
       && String(listing.companyId) === publishVisual.companyId
   )));
 
@@ -1325,6 +1410,7 @@ export default function Productos() {
       />
 
       {visibleError && <Notice tone="error">{visibleError}</Notice>}
+      {modal === null && (actionError || actionMessage) && <ActionFeedback error={actionError} message={actionMessage} />}
 
       <CatalogTable
         key={tableResetKey}
@@ -1342,6 +1428,7 @@ export default function Productos() {
         onOpenImage={openProductImage}
         onAssociateProduct={openListingAssociation}
         onTogglePublication={togglePublication}
+        publicationBusyListingId={publicationBusyListingId}
       />
 
       <ProductDrawer
@@ -1356,6 +1443,9 @@ export default function Productos() {
         salesLoading={salesQuery.isFetching}
         returns={returns}
         returnsLoading={returnsQuery.isFetching}
+        returnIncidentBusyId={returnIncidentBusyId}
+        onSetReturnIncident={(orderId, condition) => returnIncidentMutation.mutate({ orderId, condition })}
+        onClearReturnIncident={(orderId) => returnIncidentMutation.mutate({ orderId, condition: null })}
         salesRange={salesRange}
         onSalesRangeChange={setSalesRange}
         hasPreviousProduct={hasPreviousProduct}
@@ -1366,7 +1456,7 @@ export default function Productos() {
         onPreviousProduct={() => void navigateProduct('previous')}
         onNextProduct={() => void navigateProduct('next')}
         onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
-        holdOpen={modal === 'adjust' || modal === 'image' || modal === 'publish_visual' || modal === 'unpublish_visual'}
+        holdOpen={modal === 'adjust' || modal === 'seller_stock' || modal === 'image' || modal === 'publish_visual' || modal === 'unpublish_visual'}
         onOpenImage={openProductImage}
         onAdjust={openAdjust}
         onEditImage={() => {
@@ -1387,6 +1477,10 @@ export default function Productos() {
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
         onTogglePublication={togglePublication}
+        publicationBusyListingId={publicationBusyListingId}
+        publicationActionError={actionError}
+        publicationActionMessage={actionMessage}
+        onEditSellerStock={openSellerStock}
       />
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
@@ -1425,6 +1519,29 @@ export default function Productos() {
             <TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required />
             <ActionFeedback error={actionError} message={actionMessage} />
             <Submit busy={busy}>Registrar ajuste</Submit>
+          </form>
+        </Modal>
+      )}
+
+      {modal === 'seller_stock' && sellerStockListing && (
+        <Modal
+          title={`Editar stock seller · ${sellerShortName(sellerStockListing.companyName || `Empresa ${sellerStockListing.companyId}`)}`}
+          subtitle={`SKU ${sellerStockListing.sellerSku}`}
+          onClose={() => { setModal(null); setSellerStockListing(null); }}
+        >
+          <form onSubmit={updateSellerStock} className="space-y-4">
+            <Field
+              label="Nuevo stock seller"
+              type="number"
+              value={sellerStockValue}
+              onChange={setSellerStockValue}
+              required
+              min={0}
+              step={1}
+              autoFocus
+            />
+            <ActionFeedback error={actionError} message={actionMessage} />
+            <Submit busy={busy}>Guardar stock</Submit>
           </form>
         </Modal>
       )}
@@ -1475,7 +1592,12 @@ export default function Productos() {
               <Select value={associationAvailability} onValueChange={(value: AssociationAvailability) => { setAssociationAvailability(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por disponibilidad"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recommended">Activos con stock</SelectItem><SelectItem value="all">Cualquier estado</SelectItem></SelectContent></Select>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Productos disponibles para asociar">
-              {unlinkedListingsQuery.isPending ? <AssociationCandidatesSkeleton />
+              {unlinkedListingsQuery.isPending ? (
+                <AssociationCandidatesSkeleton
+                  search={associationSubmittedSearch}
+                  channel={associationChannel}
+                />
+              )
                 : unlinkedListingsQuery.isError ? <div className="px-5 py-10 text-sm text-red-700">No se pudieron cargar los productos de los canales.</div>
                   : unlinkedListings.length === 0 ? <div className="px-5 py-10 text-center"><Store className="mx-auto h-7 w-7 text-muted-foreground" />
                     {hiddenAssociationCandidateTotal > 0
@@ -1513,19 +1635,18 @@ export default function Productos() {
         </DialogContent>
       </Dialog>
 
-      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
+      {modal === 'publish_visual' && selectedProduct && <Modal title="Nueva publicación" subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={submitPublish} className="space-y-5">
         <Notice tone="info">{publishCopy.notice}</Notice>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="label">Canal<Select value={publishVisual.channelCode} onValueChange={(value) => {
             setActionMessage('');
-            setPublishVisual((current) => ({ ...current, listingId: null, channelCode: value }));
+            setPublishVisual((current) => ({ ...current, channelCode: value }));
           }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem><SelectItem value="mercadolibre">Mercado Libre</SelectItem></SelectContent></Select></label>
           <label className="label">Seller<Select value={publishVisual.companyId} onValueChange={(value) => {
             const company = companies.find((candidate) => String(candidate.id) === value);
             setActionMessage('');
             setPublishVisual((current) => ({
               ...current,
-              listingId: null,
               companyId: value,
               sellerSku: company ? suggestedSellerSku(selectedProduct, company) : '',
               price: current.price || String(selectedProduct.referencePrice ?? selectedProduct.sellerPriceMin ?? ''),
@@ -1563,15 +1684,15 @@ export default function Productos() {
         </div>
         {visualListingExists && <Notice tone="info">Este producto ya tiene una publicación asociada para esa empresa y canal.</Notice>}
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{publishCopy.submit}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || !publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{publishCopy.submit}</button></div>
       </form></Modal>}
 
-      {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={simulateUnpublish} className="space-y-4">
+      {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={submitUnpublish} className="space-y-4">
         <div className="rounded-lg bg-red-50 px-3 py-3 text-sm text-red-800"><ShieldAlert className="mr-2 inline h-4 w-4" />Despublicar puede detener ventas en <strong>{sellerShortName(unpublishListing.companyName)}</strong>. Requiere confirmación explícita.</div>
         <div className="grid grid-cols-2 gap-3 text-sm"><InfoValue label="Canal" value={channelLabel(unpublishListing.channelCode)} /><InfoValue label="SKU seller" value={unpublishListing.sellerSku} /></div>
         <Field label={`Escribe ${UNPUBLISH_CONFIRMATION_TEXT} para confirmar`} value={unpublishConfirmation} onChange={setUnpublishConfirmation} required />
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT} className="inline-flex h-9 items-center justify-center rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">{unpublishCopy.submit}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT} className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{unpublishCopy.submit}</button></div>
       </form></Modal>}
     </div>
   );
@@ -1702,6 +1823,7 @@ const CatalogTable = memo(function CatalogTable({
   onOpenImage,
   onAssociateProduct,
   onTogglePublication,
+  publicationBusyListingId,
 }: {
   products: Product[];
   totalCount: number;
@@ -1717,6 +1839,7 @@ const CatalogTable = memo(function CatalogTable({
   onOpenImage: (product: Product) => void;
   onAssociateProduct: (product: Product) => void;
   onTogglePublication: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
 }) {
   const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
   const toggleExpand = useCallback((productId: number) => {
@@ -1843,6 +1966,7 @@ const CatalogTable = memo(function CatalogTable({
                 onOpenDetail={onOpenProduct}
                 onAssociateProduct={onAssociateProduct}
                 onTogglePublication={onTogglePublication}
+                publicationBusyListingId={publicationBusyListingId}
               />}
             </Fragment>)}</TableBody>
           </Table>
@@ -1866,12 +1990,14 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   onOpenDetail,
   onAssociateProduct,
   onTogglePublication,
+  publicationBusyListingId,
 }: {
   product: Product;
   listings?: Listing[];
   onOpenDetail: (productId: number) => void;
   onAssociateProduct: (product: Product) => void;
   onTogglePublication: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
 }) {
   const shouldFetch = providedListings === undefined;
   const detailQuery = useQuery({
@@ -1898,6 +2024,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     {listings.length ? listings.map((listing, index) => {
       const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
       const publication = publicationPresentation(listing);
+      const publicationPending = publicationBusyListingId === listing.id;
       const isLast = index === listings.length - 1;
       return <TableRow
         key={listing.id}
@@ -1928,11 +2055,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
               <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
               <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
               <div className="col-span-2 flex items-center justify-between border-t border-border/60 pt-2">
-                <span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span>
+                <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span>
                 <Switch
                   checked={publication.visible}
                   onCheckedChange={() => onTogglePublication(listing)}
-                  aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+                  disabled={publicationBusyListingId != null}
+                  aria-busy={publicationPending}
+                  aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} ${listing.sellerSku} de ${sellerName}`}
                 />
               </div>
             </div>
@@ -1943,11 +2072,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         <TableCell className="hidden py-2.5 align-middle sm:table-cell" />
         <TableCell className="hidden py-2.5 align-middle sm:table-cell">
           <div className="flex items-center gap-2">
-            <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
+            <span className={cn('hidden items-center gap-1.5 text-xs font-medium xl:inline-flex', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span>
             <Switch
               checked={publication.visible}
               onCheckedChange={() => onTogglePublication(listing)}
-              aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+              disabled={publicationBusyListingId != null}
+              aria-busy={publicationPending}
+              aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} ${listing.sellerSku} de ${sellerName}`}
             />
           </div>
         </TableCell>
@@ -1971,9 +2102,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
 
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
+  returnIncidentBusyId, onSetReturnIncident, onClearReturnIncident,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
+  onDisassociate, onEditSellerStock, publicationBusyListingId, publicationActionError, publicationActionMessage, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
   onSaveDescription,
 }: {
   open: boolean;
@@ -1987,6 +2119,9 @@ function ProductDrawer({
   salesLoading: boolean;
   returns?: ReturnsSummary;
   returnsLoading: boolean;
+  returnIncidentBusyId: number | null;
+  onSetReturnIncident: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClearReturnIncident: (orderId: number) => void;
   salesRange: '30' | '90' | '365' | 'all';
   onSalesRangeChange: (range: '30' | '90' | '365' | 'all') => void;
   hasPreviousProduct: boolean;
@@ -2005,6 +2140,10 @@ function ProductDrawer({
   onAssociate: () => void;
   onDisassociate: (listing: Listing) => void;
   onTogglePublication: (listing: Listing) => void;
+  onEditSellerStock: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
+  publicationActionError: string;
+  publicationActionMessage: string;
   profitOwners: string[];
   savingField: ProductEditableField | null;
   savedField: ProductEditableField | null;
@@ -2177,10 +2316,12 @@ function ProductDrawer({
             />
             <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
           </div>
+          {(publicationActionError || publicationActionMessage) && <div className="mt-3"><ActionFeedback error={publicationActionError} message={publicationActionMessage} /></div>}
           {!associatedListings.length ? <div className="py-12"><p className="text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-[13px] text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div>
             : !listingRows.length ? <p className="py-10 text-sm text-muted-foreground">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
             : <div className="mt-2">{listingRows.map((listing) => {
               const publication = publicationPresentation(listing);
+              const publicationPending = publicationBusyListingId === listing.id;
               return <article key={listing.id} className="border-b border-border/70 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -2188,7 +2329,7 @@ function ProductDrawer({
                     <div className="mt-1"><ChannelBadge value={listing.channelCode} listing={listing} /></div>
                     <p className="mt-2 line-clamp-2 text-sm leading-5">{listing.title || product.name}</p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2"><span className={cn('text-[12px]', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
+                  <div className="flex shrink-0 items-center gap-2"><span className={cn('inline-flex items-center gap-1.5 text-[12px]', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} disabled={publicationBusyListingId != null} aria-busy={publicationPending} aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
                 </div>
                 <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                   <dl className="grid min-w-0 grid-cols-2 gap-4">
@@ -2196,7 +2337,7 @@ function ProductDrawer({
                     <div><dt className="text-xs text-muted-foreground">Shop SKU</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-muted-foreground">{listing.shopSku || '—'}</dd></div>
                   </dl>
                   <div><span className="text-xs text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
-                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
+                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} onEdit={() => onEditSellerStock(listing)} /></div>
                 </div>
               </article>;
             })}</div>}
@@ -2237,7 +2378,7 @@ function ProductDrawer({
               <Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} />
               <Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} />
             </MetricRow>
-            {sales.summary.ordersCount === 0 ? <div className="py-10 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
+            {sales.summary.ordersCount === 0 ? <div className="py-10 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <><ProductSellerSales sales={sales} /><ProductSalesTable sales={sales.recent} /></>}
             {sales.hydration?.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </div>}
         </TabsContent>
@@ -2254,13 +2395,54 @@ function ProductDrawer({
               <Metric label="Monto asociado" value={formatMoney(returns.summary.amount)} />
               <Metric label="Sellers" value={formatNumber(returns.summary.sellersCount)} />
             </MetricRow>
-            {returns.summary.ordersCount === 0 ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <section className="space-y-1"><h3 className="px-1 text-sm font-medium">Devoluciones recientes</h3>{returns.recent.map((returned) => <div key={returned.orderId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>{returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}</div><div className="shrink-0 text-right"><p className="text-sm font-semibold">{formatMoney(returned.amount)}</p><p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p></div></div>)}</section>}
+            {returns.summary.ordersCount === 0 ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <ProductReturnsList returns={returns} returnIncidentBusyId={returnIncidentBusyId} onSetReturnIncident={onSetReturnIncident} onClearReturnIncident={onClearReturnIncident} />}
             {returns.hydration.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {returns.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </div>}
         </TabsContent>
       </Tabs>}
     </SheetContent>
   </Sheet>;
+}
+
+function ProductSellerSales({ sales }: { sales: SalesSummary }) {
+  const leader = sales.sellers[0];
+  const totalUnits = sales.summary.unitsSold;
+  const periodDays = salesPeriodDays(sales);
+  if (!leader) return null;
+
+  return <section aria-labelledby="seller-sales-title">
+    <div className="flex items-end justify-between gap-4 px-1">
+      <div>
+        <h3 id="seller-sales-title" className="text-sm font-medium">Venta por seller</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">Compara qué cuenta mueve más unidades.</p>
+      </div>
+      <span className="text-xs text-muted-foreground">{formatNumber(periodDays, 0)} días</span>
+    </div>
+    {sales.sellers.length > 1 && leader.unitsSold > 0 ? <div className="mt-3 border-y border-border/70 bg-muted/35 px-3 py-3">
+      <p className="text-sm font-medium">Con poco stock, prioriza {sellerShortName(leader.companyName)}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Vendió {formatNumber(leader.unitsSold)} u, {formatNumber((leader.unitsSold / totalUnits) * 100, 0)}% del periodo.</p>
+    </div> : null}
+    <div className="mt-1 divide-y divide-border/70">
+      {sales.sellers.map((seller, index) => {
+        const share = totalUnits > 0 ? (seller.unitsSold / totalUnits) * 100 : 0;
+        const rate = seller.unitsSold / periodDays;
+        return <article key={seller.companyId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-5 gap-y-2 px-1 py-3.5">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="w-4 shrink-0 text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+              <p className="truncate text-sm font-medium">{sellerShortName(seller.companyName)}</p>
+            </div>
+            <p className="ml-6 mt-1 text-xs text-muted-foreground">{seller.channelCodes.map(channelLabel).join(' · ') || 'Sin canal'} · {formatNumber(seller.ordersCount)} {seller.ordersCount === 1 ? 'pedido' : 'pedidos'}</p>
+            <div className="ml-6 mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true"><div className="h-full rounded-full bg-foreground/65" style={{ width: `${share}%` }} /></div>
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-semibold tabular-nums">{formatNumber(seller.unitsSold)} u</p>
+            <p className="mt-1 text-xs tabular-nums text-muted-foreground">{formatNumber(rate, 1)} u/día · {formatNumber(share, 0)}%</p>
+          </div>
+        </article>;
+      })}
+    </div>
+  </section>;
 }
 
 function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
@@ -2277,6 +2459,76 @@ function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
       </div>
     </article>)}
   </section>;
+}
+
+const RETURN_INCIDENT_LABELS: Record<'not_arrived' | 'unusable', string> = {
+  not_arrived: 'Nunca llegó',
+  unusable: 'Inusable',
+};
+
+function ProductReturnsList({
+  returns, returnIncidentBusyId, onSetReturnIncident, onClearReturnIncident,
+}: {
+  returns: ReturnsSummary;
+  returnIncidentBusyId: number | null;
+  onSetReturnIncident: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClearReturnIncident: (orderId: number) => void;
+}) {
+  return <section className="space-y-1" aria-labelledby="recent-product-returns-title">
+    <h3 id="recent-product-returns-title" className="px-1 text-sm font-medium">Devoluciones recientes</h3>
+    {returns.recent.map((returned) => {
+      const restocked = Number(returned.restockedQuantity || 0);
+      const busy = returnIncidentBusyId === returned.orderId;
+      return <article key={returned.orderId} className="rounded-xl px-3 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>
+            {returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-sm font-semibold">{formatMoney(returned.amount)}</p>
+            <p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p>
+          </div>
+        </div>
+        {restocked > 0 ? <ReturnIncidentActions returned={returned} restocked={restocked} busy={busy} onSet={onSetReturnIncident} onClear={onClearReturnIncident} /> : null}
+      </article>;
+    })}
+  </section>;
+}
+
+function ReturnIncidentActions({
+  returned, restocked, busy, onSet, onClear,
+}: {
+  returned: ReturnsSummary['recent'][number];
+  restocked: number;
+  busy: boolean;
+  onSet: (orderId: number, condition: 'not_arrived' | 'unusable') => void;
+  onClear: (orderId: number) => void;
+}) {
+  if (returned.returnCondition) {
+    return <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+        <AlertTriangle className="size-3" aria-hidden="true" />
+        {RETURN_INCIDENT_LABELS[returned.returnCondition]}
+      </span>
+      <span className="text-xs text-muted-foreground">{formatNumber(restocked)} u fuera del stock</span>
+      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onClear(returned.orderId)}>
+        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+        Volver al stock
+      </Button>
+    </div>;
+  }
+  return <div className="mt-2 flex flex-wrap items-center gap-2">
+    <span className="text-xs text-muted-foreground">{formatNumber(restocked)} u reintegradas:</span>
+    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onSet(returned.orderId, 'not_arrived')}>
+      {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+      Nunca llegó
+    </Button>
+    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onSet(returned.orderId, 'unusable')}>
+      Inusable
+    </Button>
+  </div>;
 }
 
 function ListingActions({ listing, onDisassociate }: { listing: Listing; onDisassociate: (listing: Listing) => void }) {
@@ -2319,8 +2571,33 @@ function CatalogTableSkeleton() {
   </div>;
 }
 
-function AssociationCandidatesSkeleton() {
+function associationSearchChannels(channel: AssociationChannel) {
+  if (channel === 'falabella') return ['Falabella'];
+  if (channel === 'ripley') return ['Ripley'];
+  if (channel === 'mercado_libre') return ['Mercado Libre'];
+  return ['Falabella', 'Ripley', 'Mercado Libre'];
+}
+
+function AssociationCandidatesSkeleton({ search, channel }: { search: string; channel: AssociationChannel }) {
+  const channels = associationSearchChannels(channel);
   return <div aria-label="Cargando productos" aria-busy="true">
+    <div className="flex items-start gap-3 border-b border-border bg-muted/30 px-5 py-4" role="status" aria-live="polite">
+      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">
+          {search ? `Buscando “${search}”…` : 'Buscando productos…'}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {channels.map((name) => (
+            <span key={name} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground">
+              <Loader2 className="size-3 animate-spin text-primary" />
+              {name} · consultando
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">La primera consulta de cada catálogo puede tardar unos segundos.</p>
+      </div>
+    </div>
     {Array.from({ length: 6 }, (_, index) => <div key={index} className="flex items-start gap-3 border-b border-border px-5 py-3">
       <Skeleton className="mt-1 h-4 w-4 shrink-0 rounded" />
       <Skeleton className="h-14 w-14 shrink-0 rounded-md" />
@@ -2796,15 +3073,16 @@ function SellerPrice({ listing }: { listing: Listing }) {
   </div>;
 }
 
-function SellerStock({ listing }: { listing: Listing }) {
+function SellerStock({ listing, onEdit }: { listing: Listing; onEdit?: () => void }) {
   const sellerStock = metadataNumber(listing, 'sellerWarehouseQuantity');
   const fulfillmentStock = metadataNumber(listing, 'fulfillmentQuantity');
-  const fromGetStock = listing.metadata?.stockSource === 'falabella_get_stock';
+  const stockSource = listing.metadata?.stockSource;
+  const hasSplitStock = sellerStock != null || fulfillmentStock != null;
   const isSellable = listing.metadata?.isSellable;
   const publiclyUnavailable = listing.metadata?.publicAvailabilityStatus === 'unavailable';
   const contentScore = metadataNumber(listing, 'contentScore');
-  return <div>
-    <strong className="block text-sm">{formatNumber(listing.marketplaceQuantity)} u</strong>
+  const content = <div>
+    <strong className="block text-sm">{formatNumber(sellerStock ?? listing.marketplaceQuantity)} u</strong>
     {publiclyUnavailable && <small className="block leading-4 text-amber-700" title="La tienda pública de Falabella no ofrece esta publicación, aunque Seller Center reporte unidades.">
       Sin stock en Falabella
     </small>}
@@ -2812,11 +3090,22 @@ function SellerStock({ listing }: { listing: Listing }) {
       {sellabilityLabel(listing)}{contentScore != null ? ` · score ${formatNumber(contentScore, 0)}` : ''}
     </small>}
     <small className="block leading-4 text-muted-foreground">
-      {fromGetStock
-        ? `${publiclyUnavailable ? 'Seller Center reporta' : 'Seller'} ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
+      {hasSplitStock
+        ? `FBF ${formatNumber(fulfillmentStock ?? 0)}${stockSource === 'falabella_get_stock_confirmed' ? ' · confirmado' : ''}`
         : 'stock publicado'}
     </small>
   </div>;
+  if (!onEdit) return content;
+  return <button
+    type="button"
+    onClick={onEdit}
+    className="group -m-1 flex rounded-md p-1 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    aria-label={`Editar stock seller de ${listing.sellerSku}`}
+    title="Editar stock seller"
+  >
+    {content}
+    <Pencil className="ml-1.5 mt-0.5 size-3 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
+  </button>;
 }
 
 function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) {
@@ -2978,6 +3267,7 @@ function Field({
   className,
   list,
   min,
+  step,
   autoFocus,
 }: {
   label: string;
@@ -2988,9 +3278,10 @@ function Field({
   className?: string;
   list?: string;
   min?: number | string;
+  step?: number | string;
   autoFocus?: boolean;
 }) {
-  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
+  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={step ?? (type === 'number' ? 'any' : undefined)} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
 }
 
 function ProfitOwnerOptions({ owners, id = 'profit-owner-options' }: { owners: string[]; id?: string }) {

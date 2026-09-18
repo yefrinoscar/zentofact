@@ -5,7 +5,6 @@ import type {
   PaymentMethod,
   PaymentRecipient,
   SaleLine,
-  SaleSource,
   SaleStepId,
 } from '../../lib/registrar-venta';
 import type { ShippingCarrier } from '../../lib/shipping-carrier';
@@ -14,12 +13,19 @@ import type { OwnFleetOrigin, OwnFleetQuote } from '../../lib/own-fleet-shipping
 import type { SaleTotals } from '../../lib/sale-summary';
 
 export type PaymentProof = { name: string; type: string; dataUrl: string };
+export type SalespersonOption = { id: string; name: string };
 
 /** Contrato entre la página y los cuerpos de cada paso. Toda la escritura pasa por aquí. */
 export type SaleFormView = {
   isAdmin: boolean;
-  saleSource: SaleSource;
-  setSaleSource: (value: SaleSource) => void;
+  showSalespersonSelector: boolean;
+  salespeople: SalespersonOption[];
+  salespeopleLoading: boolean;
+  salespeopleError: string;
+  salespersonId: string;
+  setSalespersonId: (value: string) => void;
+  canCreateSalesperson: boolean;
+  openSalespersonCreator: () => void;
   customerName: string;
   setCustomerName: (value: string) => void;
   customerPhone: string;

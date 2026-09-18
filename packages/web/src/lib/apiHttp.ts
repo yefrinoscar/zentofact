@@ -1,6 +1,6 @@
 // Cliente HTTP del frontend web. Vite redirige el API al backend manteniendo
 // las cookies bajo el mismo origen del navegador.
-import { apiErrorFromResponse } from './api-error';
+import { ApiError, apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
 import {
@@ -11,6 +11,19 @@ import {
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
+
+export type LogisticsPrintProgress = {
+  current: number;
+  total: number;
+  orderNumber?: string | null;
+};
+
+export type LogisticsPrintResult = {
+  base64?: string;
+  filename?: string;
+  labelCount?: number;
+  skipped?: Array<{ id: number; reason: string }>;
+};
 
 export type OrderSyncAccountStatus = {
   channelAccountId: number;
@@ -70,6 +83,7 @@ export type ProductAssociationCandidate = {
   channelCode: 'falabella' | 'ripley' | 'mercado_libre';
   sellerSku: string;
   shopSku: string | null;
+  externalProductId?: string | null;
   title: string | null;
   status: 'active' | 'inactive';
   marketplaceQuantity: number | null;
@@ -161,6 +175,99 @@ async function req<T = any>(path: string, init?: RequestInit, attempt = 0): Prom
   if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function logisticsPrintResult(value: unknown): LogisticsPrintResult {
+  if (!isRecord(value)) throw new Error('La impresión terminó sin devolver el PDF.');
+  const skipped = Array.isArray(value.skipped)
+    ? value.skipped.flatMap((entry) => (
+      isRecord(entry) && typeof entry.id === 'number' && typeof entry.reason === 'string'
+        ? [{ id: entry.id, reason: entry.reason }]
+        : []
+    ))
+    : undefined;
+  return {
+    base64: typeof value.base64 === 'string' ? value.base64 : undefined,
+    filename: typeof value.filename === 'string' ? value.filename : undefined,
+    labelCount: typeof value.labelCount === 'number' ? value.labelCount : undefined,
+    skipped,
+  };
+}
+
+async function printLogisticsPackStream(
+  data: { orderIds: number[] },
+  onProgress?: (progress: LogisticsPrintProgress) => void,
+  attempt = 0,
+): Promise<LogisticsPrintResult> {
+  const token = await ensureCsrfToken();
+  const path = '/logistics-inbox/print-stream';
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': token },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    let payload: unknown = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
+    if (response.status === 401) handleUnauthorized(path);
+    const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : '';
+    if (response.status === 403 && attempt === 0 && message.toLowerCase().includes('csrf')) {
+      clearCsrfToken();
+      return printLogisticsPackStream(data, onProgress, 1);
+    }
+    throw apiErrorFromResponse(payload, response.status, text.trim() || `HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: LogisticsPrintResult | null = null;
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const event: unknown = JSON.parse(trimmed);
+    if (!isRecord(event) || typeof event.type !== 'string') return;
+    if (event.type === 'progress' && typeof event.current === 'number' && typeof event.total === 'number') {
+      onProgress?.({
+        current: event.current,
+        total: event.total,
+        orderNumber: typeof event.orderNumber === 'string' ? event.orderNumber : null,
+      });
+      return;
+    }
+    if (event.type === 'result') {
+      result = logisticsPrintResult(event.result);
+      return;
+    }
+    if (event.type === 'error') {
+      throw new ApiError(
+        typeof event.error === 'string' ? event.error : 'No se pudo armar la impresión.',
+        { logId: typeof event.logId === 'string' ? event.logId : undefined },
+      );
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let lineEnd = buffer.indexOf('\n');
+    while (lineEnd >= 0) {
+      handleLine(buffer.slice(0, lineEnd));
+      buffer = buffer.slice(lineEnd + 1);
+      lineEnd = buffer.indexOf('\n');
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer) handleLine(buffer);
+  if (!result) throw new Error('La impresión terminó sin devolver el PDF.');
+  return result;
+}
 const qs = (o: Record<string, any> = {}) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
@@ -188,7 +295,15 @@ const apiHttp = {
       body: JSON.stringify({ id }),
     }).then(parseOperatorNotificationsResponse),
   listUsers: () => req('/users'),
-  createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
+  createUser: (data: {
+    name: string;
+    email: string;
+    password: string;
+    role: string;
+    permissions: string[];
+    active: boolean;
+    commissionPercent: number;
+  }) => req<{ id: string; name: string; email: string }>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
   usersCatalog: () => req('/users/meta/catalog'),
@@ -296,8 +411,10 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/logistics-inbox${qs(filter)}`),
-  printLogisticsPack: (data: { orderIds: number[] }) =>
-    req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
+  printLogisticsPack: (
+    data: { orderIds: number[] },
+    onProgress?: (progress: LogisticsPrintProgress) => void,
+  ) => printLogisticsPackStream(data, onProgress),
   markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderDelivered: (data: { orderId: number }) =>
@@ -345,6 +462,7 @@ const apiHttp = {
     sortDir?: 'asc' | 'desc';
   } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
+  listActiveSalespeople: () => req<Array<{ id: string; name: string }>>('/order-management/salespeople'),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
   listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
@@ -374,7 +492,7 @@ const apiHttp = {
     method: 'PATCH',
     body: JSON.stringify(data),
   }),
-  createManagedOrder: (data: any) => {
+  createManagedOrder: (data: Record<string, unknown> & { idempotencyKey?: string }) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return req('/order-management/orders/manual', {
       method: 'POST',
@@ -408,6 +526,10 @@ const apiHttp = {
   listCatalogProfitOwners: () => req<{ items: string[] }>('/products/profit-owners'),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
+  setCatalogProductReturnIncident: (id: number, orderId: number, condition: 'not_arrived' | 'unusable') =>
+    req(`/products/${id}/returns/${orderId}/incident`, { method: 'PUT', body: JSON.stringify({ condition }) }),
+  clearCatalogProductReturnIncident: (id: number, orderId: number) =>
+    req(`/products/${id}/returns/${orderId}/incident`, { method: 'DELETE' }),
   listTodayProductSales: (filter: {
     date?: string;
     search?: string;
@@ -436,6 +558,8 @@ const apiHttp = {
   listRipleyProducts: (companyId: number, filter: { max?: number; offset?: number } = {}) => req(`/ripley/${companyId}/products${qs(filter)}`),
   createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
   updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateProductListingSellerStock: (id: number, data: { quantity: number }) => req(`/product-listings/${id}/seller-stock`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateProductListingPublication: (id: number, data: { visible: boolean }) => req(`/product-listings/${id}/publication`, { method: 'PATCH', body: JSON.stringify(data) }),
   unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),
   applyListingStockToOpenOrders: (id: number) => req(`/product-listings/${id}/apply-stock-to-open-orders`, { method: 'POST', body: '{}' }),
   getProductInventory: (id: number) => req(`/products/${id}/inventory`),
@@ -446,8 +570,6 @@ const apiHttp = {
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
   syncRipleyCatalog: (data: { dryRun?: boolean } = {}) => req('/catalog/sync/ripley', { method: 'POST', body: JSON.stringify(data) }),
   syncMercadoLibreCatalog: (data: { dryRun?: boolean; createProductsFromSellerSku?: boolean } = {}) => req('/catalog/sync/mercado-libre', { method: 'POST', body: JSON.stringify(data) }),
-  getMercadoLibreIntegrationStatus: () => req('/integrations/mercado-libre/status'),
-  disconnectMercadoLibre: (companyId: number) => req(`/companies/${companyId}/mercado-libre/disconnect`, { method: 'POST', body: '{}' }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
   ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
   ripleyApiGetOrders: (companyId: number, filters: { max?: number; offset?: number; orderStateCodes?: string; startUpdateDate?: string; endUpdateDate?: string } = {}) => req(`/ripley/${companyId}/orders${qs(filters)}`),
@@ -500,6 +622,9 @@ const apiHttp = {
   createCompany: (data: any) => req('/companies', { method: 'POST', body: JSON.stringify(data) }),
   updateCompany: (id: number, data: any) => req(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCompany: (id: number) => req(`/companies/${id}`, { method: 'DELETE' }),
+  getMercadoLibreStatus: (companyId?: number) => req(`/integrations/mercado-libre/status${qs({ companyId })}`),
+  mercadoLibreConnectUrl: (companyId: number) => `/integrations/mercado-libre/${companyId}/connect`,
+  disconnectMercadoLibre: (companyId: number) => req(`/companies/${companyId}/mercado-libre/disconnect`, { method: 'POST' }),
   testSunatConnection: (id: number, environment: 'beta' | 'produccion') => req(`/companies/${id}/test-sunat`, { method: 'POST', body: JSON.stringify({ environment }) }),
   // Empresa activa: estado del cliente (localStorage en web)
   getActiveCompanyId: async () => { const v = localStorage.getItem('activeCompanyId'); return v ? Number(v) : null; },
