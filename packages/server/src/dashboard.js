@@ -84,12 +84,21 @@ export function percentageDelta(current, previous) {
 export function normalizeSummary(raw = {}) {
   const paidSales = numeric(raw.paidSales);
   const pendingSales = numeric(raw.pendingSales);
+  const arrives = raw.arrives == null ? paidSales + pendingSales : numeric(raw.arrives);
+  const settledBruto = numeric(raw.settledBruto);
   return {
     grossDemand: numeric(raw.grossDemand),
     netSales: numeric(raw.netSales),
     paidSales,
     pendingSales,
-    arrives: raw.arrives == null ? paidSales + pendingSales : numeric(raw.arrives),
+    arrives,
+    settledBruto,
+    commission: numeric(raw.commission),
+    otherFees: numeric(raw.otherFees),
+    take: raw.take == null ? Math.max(0, settledBruto - arrives) : numeric(raw.take),
+    settledOrders: numeric(raw.settledOrders),
+    uncrossedSales: numeric(raw.uncrossedSales),
+    uncrossedOrders: numeric(raw.uncrossedOrders),
     cancelledSales: numeric(raw.cancelledSales),
     orders: numeric(raw.orders),
     totalOrders: numeric(raw.totalOrders),
@@ -176,7 +185,10 @@ const DASHBOARD_SQL = `
     SELECT
       source.*,
       ss.status AS settlement_status,
-      COALESCE(ss.neto, 0) AS settlement_neto
+      COALESCE(ss.neto, 0) AS settlement_neto,
+      COALESCE(ss.bruto, 0) AS settlement_bruto,
+      COALESCE(ss.commission, 0) AS settlement_commission,
+      COALESCE(ss.other_fees, 0) AS settlement_other_fees
     FROM sales_source source
     LEFT JOIN sale_settlements ss
       ON ss.sale_source = source.sale_source AND ss.sale_id = source.sale_id
@@ -192,6 +204,12 @@ const DASHBOARD_SQL = `
       COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'paid'), 0) AS paid_sales,
       COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'pending'), 0) AS pending_sales,
       COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS arrives,
+      COALESCE(SUM(settlement_bruto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS settled_bruto,
+      COALESCE(SUM(settlement_commission) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS commission,
+      COALESCE(SUM(settlement_other_fees) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS other_fees,
+      COALESCE(COUNT(*) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS settled_orders,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled AND settlement_status IS NULL), 0) AS uncrossed_sales,
+      COALESCE(COUNT(*) FILTER (WHERE NOT is_cancelled AND settlement_status IS NULL), 0) AS uncrossed_orders,
       COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
       COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
       COUNT(*) AS total_orders,
@@ -214,6 +232,7 @@ const DASHBOARD_SQL = `
     SELECT
       day,
       COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS net_settled,
       COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
       COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders
     FROM current_orders
@@ -232,6 +251,8 @@ const DASHBOARD_SQL = `
     SELECT
       company_id,
       COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS net_settled,
+      COALESCE(SUM(settlement_bruto - settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS take,
       COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
       COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
       COUNT(*) FILTER (WHERE is_cancelled) AS cancelled_orders,
@@ -250,6 +271,8 @@ const DASHBOARD_SQL = `
   ranking AS (
     SELECT c.id, COALESCE(NULLIF(c.nombre_comercial, ''), NULLIF(c.nombre, ''), c.razon_social) AS name,
       COALESCE(t.net_sales, 0) AS net_sales,
+      COALESCE(t.net_settled, 0) AS net_settled,
+      COALESCE(t.take, 0) AS take,
       COALESCE(t.cancelled_sales, 0) AS cancelled_sales,
       COALESCE(t.orders, 0) AS orders,
       COALESCE(t.cancelled_orders, 0) AS cancelled_orders,
@@ -275,6 +298,13 @@ const DASHBOARD_SQL = `
         'paidSales', paid_sales,
         'pendingSales', pending_sales,
         'arrives', arrives,
+        'settledBruto', settled_bruto,
+        'commission', commission,
+        'otherFees', other_fees,
+        'take', settled_bruto - arrives,
+        'settledOrders', settled_orders,
+        'uncrossedSales', uncrossed_sales,
+        'uncrossedOrders', uncrossed_orders,
         'cancelledSales', cancelled_sales,
         'orders', orders,
         'totalOrders', total_orders,
@@ -299,6 +329,7 @@ const DASHBOARD_SQL = `
       SELECT jsonb_agg(jsonb_build_object(
         'day', day,
         'netSales', net_sales,
+        'netSalesNet', net_settled,
         'cancelledSales', cancelled_sales,
         'orders', orders
       ) ORDER BY day) FROM sales_daily
@@ -359,8 +390,8 @@ export async function getDashboard(input = {}, db) {
   const currentSalesByDay = fillDailySeries(
     filters.from,
     filters.to,
-    normalizeRows(row.sales_by_day, ['netSales', 'cancelledSales', 'orders']),
-    { netSales: 0, cancelledSales: 0, orders: 0 },
+    normalizeRows(row.sales_by_day, ['netSales', 'netSalesNet', 'cancelledSales', 'orders']),
+    { netSales: 0, netSalesNet: 0, cancelledSales: 0, orders: 0 },
   );
   const previousSalesByDay = fillDailySeries(
     filters.previousFrom,
@@ -374,12 +405,14 @@ export async function getDashboard(input = {}, db) {
     previousSales: previousSalesByDay[index]?.netSales || 0,
   }));
   const companyRanking = normalizeRows(row.company_ranking, [
-    'net_sales', 'cancelled_sales', 'orders', 'cancelled_orders', 'total_orders',
+    'net_sales', 'net_settled', 'take', 'cancelled_sales', 'orders', 'cancelled_orders', 'total_orders',
     'previous_net_sales', 'previous_orders', 'average_ticket',
   ]).map((company) => ({
     id: company.id,
     name: company.name,
     netSales: company.net_sales,
+    netSalesNet: company.net_settled,
+    take: company.take,
     cancelledSales: company.cancelled_sales,
     orders: company.orders,
     cancelledOrders: company.cancelled_orders,
