@@ -1,19 +1,14 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import {
   Activity,
-  ArrowDownRight,
-  ArrowUpRight,
+  ArrowRight,
   CalendarDays,
-  ChartNoAxesCombined,
-  CircleDollarSign,
   RefreshCw,
-  Store,
-  Truck,
-  WalletCards,
+  TrendingUp,
 } from 'lucide-react';
 import {
   Area,
@@ -22,15 +17,13 @@ import {
   Line,
   ResponsiveContainer,
   Tooltip,
-  Treemap,
   XAxis,
   YAxis,
 } from 'recharts';
-import type { TreemapNode } from 'recharts';
 import api from '../lib/api';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -39,14 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
 type PeriodKey = '7d' | '30d' | 'month' | '90d' | 'custom';
@@ -55,21 +40,6 @@ type DashboardFilters = {
   from: string;
   to: string;
   companyId?: number;
-};
-
-type CompanyPerformance = {
-  id: number;
-  name: string;
-  netSales: number;
-  cancelledSales: number;
-  orders: number;
-  cancelledOrders: number;
-  totalOrders: number;
-  previousNetSales: number;
-  averageTicket: number;
-  salesShare: number;
-  salesChange: number | null;
-  cancellationRate: number;
 };
 
 const money = new Intl.NumberFormat('es-PE', {
@@ -85,16 +55,11 @@ const compactMoney = new Intl.NumberFormat('es-PE', {
   currency: 'PEN',
   maximumFractionDigits: 1,
 });
-const dateLabel = new Intl.DateTimeFormat('es-PE', {
-  day: '2-digit',
-  month: 'short',
-  timeZone: 'UTC',
-});
-const dateTimeLabel = new Intl.DateTimeFormat('es-PE', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-  timeZone: 'America/Lima',
-});
+const dateLabel = new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', timeZone: 'UTC' });
+
+const RECEIVE = '#059669';
+const WAIT = '#d97706';
+const LOSS = '#e11d48';
 
 function localToday() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -126,11 +91,11 @@ function dateKey(value: Date) {
 function rangeLabel(from: string, to: string) {
   const start = dateFromKey(from);
   const end = dateFromKey(to);
-  if (from === to) return format(start, "d 'de' MMMM 'de' yyyy", { locale: es });
+  if (from === to) return format(start, "d 'de' MMMM", { locale: es });
   if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
-    return `${format(start, 'd', { locale: es })} - ${format(end, "d 'de' MMMM 'de' yyyy", { locale: es })}`;
+    return `${format(start, 'd', { locale: es })} – ${format(end, "d 'de' MMMM 'de' yyyy", { locale: es })}`;
   }
-  return `${format(start, 'd MMM yyyy', { locale: es })} - ${format(end, 'd MMM yyyy', { locale: es })}`;
+  return `${format(start, 'd MMM', { locale: es })} – ${format(end, 'd MMM yyyy', { locale: es })}`;
 }
 
 function rangeFor(period: Exclude<PeriodKey, 'custom'>) {
@@ -145,96 +110,78 @@ function formatDay(value: unknown) {
   return day ? dateLabel.format(new Date(`${day}T12:00:00.000Z`)) : '';
 }
 
-function Trend({ value, inverse = false }: { value: number | null | undefined; inverse?: boolean }) {
-  if (value === undefined) return null;
-  if (value === null) return <span className="font-medium text-muted-foreground">Sin base previa</span>;
-  const rising = value >= 0;
-  const favorable = inverse ? !rising : rising;
+function Trend({ value }: { value: number | null | undefined }) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const up = Number(value) >= 0;
   return (
-    <span className={cn(
-      'inline-flex items-center gap-0.5 font-semibold',
-      favorable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
-    )}>
-      {rising ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-      {Math.abs(value).toFixed(1)}%
+    <span className={cn('inline-flex items-center gap-1 text-xs font-semibold tabular-nums', up ? 'text-emerald-600' : 'text-red-600')}>
+      <TrendingUp className={cn('size-3.5', !up && 'rotate-180')} />
+      {Math.abs(Number(value)).toFixed(1)}%
     </span>
   );
 }
 
-function KpiCard({
-  title,
+function Eyebrow({ children }: { children: ReactNode }) {
+  return <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{children}</p>;
+}
+
+function Metric({
+  label,
   value,
-  detail,
-  change,
-  icon: Icon,
-  tone,
+  hint,
+  tone = 'neutral',
+  delta,
 }: {
-  title: string;
+  label: string;
   value: string;
-  detail: string;
-  change?: number | null;
-  icon: typeof CircleDollarSign;
-  tone?: 'arrive' | 'wait';
+  hint: string;
+  tone?: 'neutral' | 'receive' | 'wait';
+  delta?: number | null;
 }) {
-  const wait = tone === 'wait';
-  const arrive = tone === 'arrive';
   return (
-    <Card className="gap-4 py-5">
-      <CardContent className="px-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">{title}</p>
-            <p className={cn(
-              'mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.035em] tabular-nums 2xl:text-2xl',
-              wait && 'text-orange-600 dark:text-orange-400',
-              arrive && 'text-emerald-700 dark:text-emerald-400',
-            )}>
-              {value}
-            </p>
-          </div>
-          <span className={cn(
-            'grid size-9 shrink-0 place-items-center rounded-xl',
-            wait && 'bg-orange-500/10 text-orange-600',
-            arrive && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-            !wait && !arrive && 'bg-primary/8 text-primary dark:bg-primary/15',
-          )}>
-            <Icon className="size-[18px]" />
-          </span>
-        </div>
-        <div className="mt-4 flex min-h-4 items-center justify-between gap-2 text-xs">
-          <span className="truncate text-muted-foreground">{detail}</span>
-          <Trend value={change} inverse={wait} />
-        </div>
-      </CardContent>
-    </Card>
+    <div className="min-w-0">
+      <Eyebrow>{label}</Eyebrow>
+      <p className={cn(
+        'mt-2 whitespace-nowrap text-[1.75rem] font-semibold tracking-[-0.045em] tabular-nums lg:text-[2rem]',
+        tone === 'receive' && 'text-emerald-700 dark:text-emerald-500',
+        tone === 'wait' && 'text-amber-700 dark:text-amber-500',
+      )}>
+        {value}
+      </p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span>{hint}</span>
+        {delta !== undefined ? <Trend value={delta} /> : null}
+      </div>
+    </div>
   );
 }
 
-function SalesSummaryCard({ summary }: { summary: any }) {
-  const orders = Number(summary.orders || 0);
+function FlowStep({
+  label,
+  value,
+  hint,
+  tone = 'neutral',
+  strong,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone?: 'neutral' | 'receive' | 'loss';
+  strong?: boolean;
+}) {
   return (
-    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20 sm:col-span-2">
-      <CardContent className="px-5">
-        <div className="grid grid-cols-2 divide-x divide-white/15">
-          <div className="pr-4 sm:pr-6">
-            <p className="text-xs font-medium text-primary-foreground/70">Facturado</p>
-            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums sm:text-[1.55rem] 2xl:text-[1.7rem]">
-              {money.format(summary.netSales || 0)}
-            </p>
-            <p className="mt-4 min-h-4 truncate text-xs text-primary-foreground/65">
-              {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
-            </p>
-          </div>
-          <div className="pl-4 sm:pl-6">
-            <p className="text-xs font-medium text-primary-foreground/70">Neto</p>
-            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums text-emerald-100 sm:text-[1.55rem] 2xl:text-[1.7rem]">
-              {money.format(summary.arrives || 0)}
-            </p>
-            <p className="mt-4 min-h-4 text-xs text-primary-foreground/65">Te llega</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="min-w-[120px] flex-1">
+      <Eyebrow>{label}</Eyebrow>
+      <p className={cn(
+        'mt-1.5 text-lg font-semibold tracking-[-0.02em] tabular-nums',
+        tone === 'receive' && 'text-emerald-700 dark:text-emerald-500',
+        tone === 'loss' && 'text-rose-600 dark:text-rose-400',
+        strong && 'text-xl',
+      )}>
+        {value}
+      </p>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
+    </div>
   );
 }
 
@@ -242,99 +189,23 @@ function SalesTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload || {};
   return (
-    <div className="min-w-56 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-6">
-          <span className="text-muted-foreground">{formatDay(row.day)}</span>
-          <strong className="text-primary">{money.format(row.netSales || 0)}</strong>
-        </div>
-        <div className="flex items-center justify-between gap-6">
-          <span className="text-muted-foreground">{formatDay(row.previousDay)}</span>
-          <strong>{money.format(row.previousSales || 0)}</strong>
-        </div>
-        <div className="flex items-center justify-between gap-6 border-t border-border pt-2">
-          <span className="text-muted-foreground">Pedidos del día</span>
-          <strong>{integer.format(row.orders || 0)}</strong>
-        </div>
-      </div>
+    <div className="min-w-52 rounded-xl border border-border bg-popover/95 p-3 text-xs shadow-lg backdrop-blur">
+      <p className="mb-1.5 font-medium">{formatDay(row.day)}</p>
+      <p className="flex justify-between gap-6"><span className="text-muted-foreground">Facturado</span><strong className="tabular-nums text-primary">{money.format(row.netSales || 0)}</strong></p>
+      <p className="flex justify-between gap-6"><span className="text-muted-foreground">Neto</span><strong className="tabular-nums" style={{ color: RECEIVE }}>{money.format(row.netSalesNet || 0)}</strong></p>
+      <p className="flex justify-between gap-6"><span className="text-muted-foreground">Pedidos</span><strong className="tabular-nums">{integer.format(row.orders || 0)}</strong></p>
     </div>
-  );
-}
-
-function CompanyTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const company = payload[0]?.payload as CompanyPerformance;
-  return (
-    <div className="min-w-60 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
-      <p className="mb-2 max-w-64 font-medium text-foreground">{company.name}</p>
-      <div className="space-y-1.5 text-muted-foreground">
-        <p className="flex justify-between gap-6"><span>Facturado</span><strong className="text-primary">{money.format(company.netSales)}</strong></p>
-        <p className="flex justify-between gap-6"><span>Participación</span><strong className="text-foreground">{company.salesShare.toFixed(1)}%</strong></p>
-        <p className="flex justify-between gap-6"><span>Ticket promedio</span><strong className="text-foreground">{money.format(company.averageTicket)}</strong></p>
-        <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Cancelaciones</span><strong className="text-orange-600">{money.format(company.cancelledSales)}</strong></p>
-      </div>
-    </div>
-  );
-}
-
-function CompanyTreemapCell({ depth, x, y, width, height, index, name, salesShare, netSales }: TreemapNode) {
-  if (depth !== 1 || width < 4 || height < 4) return null;
-
-  const share = Number(salesShare || 0);
-  const sales = Number(netSales || 0);
-  const showName = width >= 86 && height >= 52;
-  const showAmount = width >= 105 && height >= 78;
-  const maxNameLength = Math.max(8, Math.floor((width - 24) / 6.2));
-  const shortName = name.length > maxNameLength ? `${name.slice(0, maxNameLength - 1)}…` : name;
-  const radius = Math.min(8, width / 8, height / 8);
-
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        rx={radius}
-        fill="var(--primary)"
-        fillOpacity={Math.max(0.7, 1 - index * 0.045)}
-      />
-      {showName && (
-        <text x={x + 12} y={y + 20} fill="var(--primary-foreground)" fontSize={10} fontWeight={650}>
-          {index + 1}. {shortName}
-        </text>
-      )}
-      {width >= 54 && height >= 38 && (
-        <text
-          x={x + 12}
-          y={showAmount ? y + height - 29 : y + height - 13}
-          fill="var(--primary-foreground)"
-          fontSize={showAmount ? 18 : 13}
-          fontWeight={750}
-        >
-          {share.toFixed(1)}%
-        </text>
-      )}
-      {showAmount && (
-        <text x={x + 12} y={y + height - 11} fill="var(--primary-foreground)" fillOpacity={0.74} fontSize={10}>
-          {compactMoney.format(sales)}
-        </text>
-      )}
-    </g>
   );
 }
 
 function SkeletonDashboard() {
   return (
-    <div className="animate-pulse space-y-5">
-      <div className="h-20 rounded-2xl bg-muted" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-36 rounded-2xl bg-muted" />)}
-      </div>
-      <div className="grid gap-4 xl:grid-cols-5">
-        <div className="h-[420px] rounded-2xl bg-muted xl:col-span-3" />
-        <div className="h-[420px] rounded-2xl bg-muted xl:col-span-2" />
-      </div>
+    <div className="animate-pulse space-y-8">
+      <div className="h-9 w-72 rounded-xl bg-muted" />
+      <div className="h-28 rounded-xl bg-muted" />
+      <div className="h-16 rounded-xl bg-muted" />
+      <div className="h-[360px] rounded-xl bg-muted" />
+      <div className="h-72 rounded-xl bg-muted" />
     </div>
   );
 }
@@ -363,12 +234,6 @@ export default function Dashboard() {
     },
   });
   const data: any = query.data;
-
-  const ranking = useMemo(
-    () => (data?.companyRanking || []).filter((company: CompanyPerformance) => company.totalOrders > 0),
-    [data?.companyRanking],
-  );
-  const rankingChart = ranking;
 
   const choosePeriod = (next: Exclude<PeriodKey, 'custom'>) => {
     const nextRange = rangeFor(next);
@@ -399,12 +264,27 @@ export default function Dashboard() {
   }
 
   const summary = data?.summary || {};
+  const days = data?.salesByDay || [];
+  const orders = Number(summary.orders || 0);
+  const settledOrders = Number(summary.settledOrders || 0);
+  const uncrossedSales = Number(summary.uncrossedSales || 0);
+  const arrived = Number(summary.arrives || 0);
+  const facturado = Number(summary.netSales || 0);
+  const crossedShare = orders > 0 ? (settledOrders / orders) * 100 : 0;
+  const netoShare = facturado > 0 ? (arrived / facturado) * 100 : 0;
   const comparisonLabel = `vs. ${rangeLabel(data?.filters?.previousFrom || filters.from, data?.filters?.previousTo || filters.to)}`;
+  const flow = [
+    { label: 'Facturado', value: money.format(facturado), hint: `${integer.format(orders)} pedidos`, tone: 'neutral' as const },
+    { label: 'Cruzado', value: money.format(summary.settledBruto || 0), hint: `${integer.format(settledOrders)} pedidos · ${crossedShare.toFixed(1)}%`, tone: 'neutral' as const },
+    { label: 'Comisión', value: `− ${money.format(summary.commission || 0)}`, hint: 'Falabella', tone: 'loss' as const },
+    { label: 'Logística', value: `− ${money.format(summary.otherFees || 0)}`, hint: 'Falabella', tone: 'loss' as const },
+    { label: 'Neto', value: money.format(arrived), hint: 'Te llega', tone: 'receive' as const, strong: true },
+  ];
 
   return (
-    <div className="space-y-5 pb-8">
-      <section className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted/60 p-1">
+    <div className="space-y-8 pb-8">
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex w-fit flex-wrap items-center gap-1 rounded-xl bg-muted/60 p-1">
           {([
             ['7d', '7 días'],
             ['30d', '30 días'],
@@ -424,10 +304,10 @@ export default function Dashboard() {
           ))}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex w-fit flex-wrap items-center gap-2">
           <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
             <PopoverTrigger asChild>
-              <Button variant="outline" className="h-9 w-full justify-start rounded-xl bg-background px-3 text-left text-xs font-normal sm:w-[270px]">
+              <Button variant="outline" className="h-9 w-[220px] justify-start rounded-xl bg-background px-3 text-left text-xs font-normal">
                 <CalendarDays className="size-4 text-muted-foreground" />
                 <span className="truncate">{rangeLabel(filters.from, filters.to)}</span>
               </Button>
@@ -453,7 +333,7 @@ export default function Dashboard() {
               companyId: value === 'all' ? undefined : Number(value),
             }))}
           >
-            <SelectTrigger className="w-full sm:w-[210px]"><SelectValue placeholder="Todas las tiendas" /></SelectTrigger>
+            <SelectTrigger className="w-[180px]"><SelectValue placeholder="Todas las tiendas" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas las tiendas</SelectItem>
               {(data?.companies || []).map((company: any) => <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>)}
@@ -472,166 +352,129 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SalesSummaryCard summary={summary} />
-        <KpiCard
-          title="Pagado"
-          value={money.format(summary.paidSales || 0)}
-          detail="Ya depositaron"
-          icon={CircleDollarSign}
-        />
-        <KpiCard
-          title="Pendiente"
-          value={money.format(summary.pendingSales || 0)}
-          detail="Aún no pagan"
-          icon={WalletCards}
-          tone="wait"
-        />
-        <KpiCard
-          title="Envío propio"
-          value={money.format(data?.ownFleetShipping?.total || 0)}
-          detail={`Distrito ${money.format(data?.ownFleetShipping?.districtTotal || 0)} · Distancia ${money.format(data?.ownFleetShipping?.distanceTotal || 0)}`}
-          icon={Truck}
-        />
-      </div>
+      <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-border/70">
+        <div className="lg:pr-6">
+          <Metric label="Facturado" value={money.format(facturado)} hint={`${integer.format(orders)} pedidos`} delta={data?.changes?.netSales} />
+        </div>
+        <div className="lg:px-6">
+          <Metric label="Neto" value={money.format(arrived)} hint="Te llega" tone="receive" />
+        </div>
+        <div className="lg:px-6">
+          <Metric label="Cobrado" value={money.format(summary.paidSales || 0)} hint="Ya depositaron" />
+        </div>
+        <div className="lg:pl-6">
+          <Metric label="Por cobrar" value={money.format(summary.pendingSales || 0)} hint="Aún no pagan" tone="wait" />
+        </div>
+      </section>
 
-      <div className="grid gap-4 xl:grid-cols-5">
-        <Card className="xl:col-span-3">
-          <CardHeader className="gap-3 sm:grid-cols-[1fr_auto]">
+      <section className="border-t border-border/70 pt-7">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Eyebrow>Del facturado al neto</Eyebrow>
+          <p className="text-xs text-muted-foreground">
+            {money.format(uncrossedSales)} sin conciliar · cruce {crossedShare.toFixed(1)}% · {netoShare.toFixed(1)}% del facturado
+          </p>
+        </div>
+        <div className="mt-5 flex flex-wrap items-stretch gap-y-5">
+          {flow.map((step, index) => (
+            <Fragment key={step.label}>
+              {index > 0 ? (
+                <ArrowRight className="mx-3 hidden size-4 shrink-0 self-center text-muted-foreground/40 sm:block" />
+              ) : null}
+              <FlowStep label={step.label} value={step.value} hint={step.hint} tone={step.tone} strong={step.strong} />
+            </Fragment>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-10 border-t border-border/70 pt-7 lg:grid-cols-[minmax(0,2.1fr)_minmax(0,1fr)] lg:gap-0 lg:divide-x lg:divide-border/70">
+        <div className="min-w-0 lg:pr-10">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-medium text-muted-foreground">Evolución financiera</p>
-              <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Facturado por día</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Compara el ritmo de ventas con el periodo inmediatamente anterior.</p>
+              <Eyebrow>Evolución</Eyebrow>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight">Facturado y neto por día</h2>
             </div>
-            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground sm:justify-end">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Periodo actual</span>
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/60" />Periodo anterior</span>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Facturado</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full" style={{ background: RECEIVE }} />Neto</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/40" />Periodo anterior</span>
             </div>
-          </CardHeader>
-          <CardContent className="px-2 sm:px-4">
-            <div className="h-[330px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data?.salesByDay || []} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                  <defs>
-                    <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.24} />
-                      <stop offset="92%" stopColor="var(--primary)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
-                  <XAxis dataKey="day" tickFormatter={formatDay} axisLine={false} tickLine={false} tickMargin={12} minTickGap={34} fontSize={11} stroke="var(--muted-foreground)" />
-                  <YAxis orientation="right" tickFormatter={(value) => compactMoney.format(value)} axisLine={false} tickLine={false} tickMargin={10} width={66} fontSize={11} stroke="var(--muted-foreground)" />
-                  <Tooltip content={<SalesTooltip />} cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.45 }} />
-                  <Line type="monotone" dataKey="previousSales" stroke="var(--muted-foreground)" strokeOpacity={0.55} strokeWidth={1.75} strokeDasharray="5 5" dot={false} activeDot={false} />
-                  <Area type="monotone" dataKey="netSales" stroke="var(--primary)" strokeWidth={2.5} fill="url(#salesFill)" activeDot={{ r: 5, strokeWidth: 3, stroke: 'var(--background)' }} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="mt-5 h-[320px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={days} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="dashFacturado" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="dashNeto" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={RECEIVE} stopOpacity={0.2} />
+                    <stop offset="100%" stopColor={RECEIVE} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
+                <XAxis dataKey="day" tickFormatter={formatDay} axisLine={false} tickLine={false} tickMargin={12} minTickGap={30} fontSize={11} stroke="var(--muted-foreground)" />
+                <YAxis orientation="right" tickFormatter={(value) => compactMoney.format(value)} axisLine={false} tickLine={false} tickMargin={10} width={64} fontSize={11} stroke="var(--muted-foreground)" />
+                <Tooltip content={<SalesTooltip />} cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.35 }} />
+                <Area type="monotone" dataKey="previousSales" stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeWidth={1.5} strokeDasharray="4 4" fill="none" dot={false} activeDot={false} />
+                <Area type="monotone" dataKey="netSales" stroke="var(--primary)" strokeWidth={2.5} fill="url(#dashFacturado)" activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--background)' }} />
+                <Area type="monotone" dataKey="netSalesNet" stroke={RECEIVE} strokeWidth={2.25} fill="url(#dashNeto)" activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--background)' }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
 
-        <Card className="xl:col-span-2">
-          <CardHeader>
-            <p className="text-xs font-medium text-muted-foreground">Comparativo de tiendas</p>
-            <CardTitle className="text-xl font-semibold tracking-tight">Aporte a las ventas</CardTitle>
-            <p className="text-xs text-muted-foreground">Facturado y participación en el periodo seleccionado.</p>
-          </CardHeader>
-          <CardContent className="px-2 sm:px-4">
-            {rankingChart.length ? (
-              <div
-                key={`${filters.from}-${filters.to}-${filters.companyId || 'all'}`}
-                className="h-[330px] w-full overflow-hidden rounded-xl motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300"
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <Treemap
-                    data={rankingChart}
-                    dataKey="netSales"
-                    nameKey="name"
-                    aspectRatio={4 / 3}
-                    nodeGap={4}
-                    isAnimationActive={false}
-                    content={(props) => <CompanyTreemapCell {...props} />}
-                  >
-                    <Tooltip content={<CompanyTooltip />} wrapperStyle={{ zIndex: 20 }} />
-                  </Treemap>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="grid h-[330px] place-items-center text-center text-sm text-muted-foreground">
-                <div>
-                  <Store className="mx-auto mb-3 size-8 opacity-50" />
-                  No hay ventas para comparar.
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <div className="min-w-0 lg:pl-10">
+          <Eyebrow>Composición</Eyebrow>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight">De cada sol cruzado</h2>
+          <CompositionDonut summary={summary} />
+        </div>
+      </section>
+
+      <div className="flex items-center gap-2 border-t border-border/70 px-1 pt-5 text-xs text-muted-foreground">
+        <Activity className="size-4" />
+        El neto sale de los pedidos cruzados con el estado de cuenta. {comparisonLabel}.
       </div>
+    </div>
+  );
+}
 
-      <Card>
-        <CardHeader className="border-b border-border/70 pb-5 sm:grid-cols-[1fr_auto]">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground">Desempeño comercial</p>
-            <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Salud financiera por tienda</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Identifica qué tiendas crecen, cuánto aportan y dónde se concentra la cancelación.</p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <CalendarDays className="size-4" />
-            {data?.dataThrough ? `Ventas sincronizadas al ${dateTimeLabel.format(new Date(data.dataThrough))}` : comparisonLabel}
-          </div>
-        </CardHeader>
-        <CardContent className="px-0">
-          <Table className="min-w-[940px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-5">Tienda</TableHead>
-                <TableHead className="text-right">Facturado</TableHead>
-                <TableHead>Participación</TableHead>
-                <TableHead className="text-right">Vs. anterior</TableHead>
-                <TableHead className="text-right">Pedidos</TableHead>
-                <TableHead className="text-right">Ticket promedio</TableHead>
-                <TableHead className="pr-5 text-right">Cancelaciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ranking.map((company: CompanyPerformance, index: number) => (
-                <TableRow key={company.id}>
-                  <TableCell className="pl-5 font-medium">
-                    <span className="mr-3 inline-grid size-7 place-items-center rounded-lg bg-muted text-[11px] font-semibold text-muted-foreground">{index + 1}</span>
-                    {company.name}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold tabular-nums">{money.format(company.netSales)}</TableCell>
-                  <TableCell>
-                    <div className="flex min-w-32 items-center gap-3">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(company.salesShare, 100)}%` }} />
-                      </div>
-                      <span className="w-11 text-right text-xs tabular-nums text-muted-foreground">{company.salesShare.toFixed(1)}%</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right"><Trend value={company.salesChange} /></TableCell>
-                  <TableCell className="text-right tabular-nums">{integer.format(company.orders)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{money.format(company.averageTicket)}</TableCell>
-                  <TableCell className="pr-5 text-right">
-                    <p className="tabular-nums text-orange-600 dark:text-orange-400">{money.format(company.cancelledSales)}</p>
-                    <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{company.cancellationRate.toFixed(1)}% de pedidos</p>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {!ranking.length && (
-            <div className="py-14 text-center text-sm text-muted-foreground">
-              <Store className="mx-auto mb-3 size-8 opacity-50" />
-              No hay ventas sincronizadas para este periodo.
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
-        <ChartNoAxesCombined className="size-4" />
-        Pagado y pendiente suman el neto. {comparisonLabel}.
+function CompositionDonut({ summary }: { summary: any }) {
+  const com = Number(summary.commission || 0);
+  const log = Number(summary.otherFees || 0);
+  const neto = Number(summary.arrives || 0);
+  const total = Math.max(1, com + log + neto);
+  const comDeg = (com / total) * 360;
+  const logDeg = ((com + log) / total) * 360;
+  return (
+    <div className="mt-5 flex flex-wrap items-center gap-7">
+      <div
+        className="relative size-40 shrink-0 rounded-full"
+        style={{ background: `conic-gradient(from -90deg, ${LOSS} 0 ${comDeg}deg, ${WAIT} ${comDeg}deg ${logDeg}deg, ${RECEIVE} ${logDeg}deg 360deg)` }}
+      >
+        <div className="absolute inset-[27%] grid place-items-center rounded-full bg-background text-center">
+          <span>
+            <span className="block text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Neto</span>
+            <span className="mt-0.5 block text-sm font-semibold tabular-nums">{money.format(neto)}</span>
+          </span>
+        </div>
+      </div>
+      <div className="min-w-[9rem] flex-1 space-y-3 text-sm">
+        <p className="flex items-center justify-between gap-4">
+          <span className="inline-flex items-center gap-2 text-muted-foreground"><span className="size-2 rounded-full" style={{ background: LOSS }} />Comisión</span>
+          <strong className="tabular-nums">{money.format(com)}</strong>
+        </p>
+        <p className="flex items-center justify-between gap-4">
+          <span className="inline-flex items-center gap-2 text-muted-foreground"><span className="size-2 rounded-full" style={{ background: WAIT }} />Logística</span>
+          <strong className="tabular-nums">{money.format(log)}</strong>
+        </p>
+        <p className="flex items-center justify-between gap-4">
+          <span className="inline-flex items-center gap-2 text-muted-foreground"><span className="size-2 rounded-full" style={{ background: RECEIVE }} />Neto</span>
+          <strong className="tabular-nums text-emerald-700 dark:text-emerald-500">{money.format(neto)}</strong>
+        </p>
+        <p className="border-t border-border/70 pt-3 text-xs text-muted-foreground">
+          Cancelaciones {money.format(summary.cancelledSales || 0)} · Se queda {money.format(summary.take || 0)}
+        </p>
       </div>
     </div>
   );

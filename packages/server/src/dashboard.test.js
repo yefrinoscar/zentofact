@@ -41,3 +41,29 @@ test('si no viene arrives, suma pagado y pendiente', () => {
   const summary = normalizeSummary({ paidSales: 12.5, pendingSales: 7.5 });
   assert.equal(summary.arrives, 20);
 });
+
+test('el resumen conserva el desglose del neto liquidado', () => {
+  const summary = normalizeSummary({
+    netSales: 1000,
+    arrives: 780,
+    settledBruto: 940,
+    commission: 100,
+    otherFees: 60,
+    settledOrders: 4,
+    uncrossedSales: 60,
+    uncrossedOrders: 2,
+  });
+  assert.equal(summary.settledBruto, 940);
+  assert.equal(summary.commission, 100);
+  assert.equal(summary.otherFees, 60);
+  assert.equal(summary.take, 160);
+  assert.equal(summary.settledOrders, 4);
+  assert.equal(summary.uncrossedSales, 60);
+  assert.equal(summary.uncrossedOrders, 2);
+});
+
+test('si no viene take, se deriva del bruto liquidado menos el neto', () => {
+  const summary = normalizeSummary({ settledBruto: 940, arrives: 780 });
+  assert.equal(summary.take, 160);
+  assert.equal(normalizeSummary({}).take, 0);
+});
