@@ -4,6 +4,7 @@ import { FAILED_EMISSION_ALERT_AFTER_ATTEMPTS } from './auto-emission-alert.js';
 import { userHasPermission } from './permissions.js';
 import { isCatalogInventoryEnabled } from './system-config.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
+import { JOB_BUCKET_SQL, JOB_REVERSAL_LATERAL } from './catalog/stock-jobs.js';
 import {
   applyNotificationState,
   collectLiveNotifications,
@@ -247,7 +248,7 @@ async function stockDiscountFailedSummary(db) {
             min(j.updated_at) as oldest_at
        from inventory_stock_jobs j
        left join lateral (
-         select ordered_at
+         select id, ordered_at, order_status, fulfillment_status
            from orders
           where orders.id=j.order_id
              or (
@@ -258,8 +259,9 @@ async function stockDiscountFailedSummary(db) {
           order by (orders.id=j.order_id) desc, orders.id asc
           limit 1
        ) order_row on true
-      where j.status='failed'
-        and order_row.ordered_at >= $1::timestamptz`,
+       ${JOB_REVERSAL_LATERAL}
+      where order_row.ordered_at >= $1::timestamptz
+        and ${JOB_BUCKET_SQL} = 'failed'`,
     [INVENTORY_LISTEN_FROM_AT],
   );
   const row = result.rows[0] || {};
