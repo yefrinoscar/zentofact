@@ -58,7 +58,7 @@ export default function Avisos() {
           <p className="text-sm font-medium">Nada pendiente</p>
           <p className="max-w-sm text-sm text-muted-foreground">
             {canReceive
-              ? 'Cuando falle una boleta, se agote un producto o un insumo, o se venza un pedido, aparece aquí.'
+              ? 'Cuando falle una boleta, se agote un producto o un insumo, se venza un pedido o se detenga un descuento de stock, aparece aquí.'
               : 'Tu perfil no recibe avisos de operación.'}
           </p>
         </div>

@@ -6,6 +6,7 @@ import {
   buildEmissionFailedNotification,
   buildInsumoLowStockNotification,
   buildProductSoldOutNotification,
+  buildStockDiscountFailedNotification,
   collectLiveNotifications,
   filterNotificationsForUser,
   isProductSoldOut,
@@ -230,5 +231,44 @@ test('los avisos de reposición respetan los permisos de productos', () => {
   const items = [stockNotice(shoeRack)];
   assert.equal(filterNotificationsForUser(items, operator, userHasPermission).length, 1);
   assert.equal(filterNotificationsForUser(items, billing, userHasPermission).length, 0);
+  assert.equal(filterNotificationsForUser(items, vendedor, userHasPermission).length, 0);
+});
+
+test('los descuentos de stock detenidos generan un aviso crítico', () => {
+  const item = buildStockDiscountFailedNotification({
+    count: 6,
+    insufficientCount: 4,
+    unmatchedCount: 2,
+    oldestAt: '2026-09-20T14:00:00.000Z',
+  });
+  assert.equal(item.kind, 'stock_discount_failed');
+  assert.equal(item.severity, 'critical');
+  assert.equal(item.href, '/descuentos-stock');
+  assert.equal(item.count, 6);
+  assert.match(item.title, /6 descuentos de stock requieren atención/);
+  assert.match(item.body, /4 sin stock/);
+  assert.match(item.body, /2 sin producto maestro/);
+  assert.equal(notificationPermissionForKind('stock_discount_failed'), 'productos');
+});
+
+test('sin fallos no hay aviso de descuentos de stock', () => {
+  assert.equal(buildStockDiscountFailedNotification({ count: 0 }), null);
+  assert.equal(buildStockDiscountFailedNotification(), null);
+});
+
+test('el aviso de descuentos aparece en la colección de avisos', () => {
+  const items = collectLiveNotifications({
+    stockDiscountFailures: { count: 3, insufficientCount: 3 },
+  });
+  const item = items.find((entry) => entry.kind === 'stock_discount_failed');
+  assert.ok(item);
+  assert.equal(item.count, 3);
+});
+
+test('el aviso de descuentos respeta el permiso de productos', () => {
+  const admin = { role: 'admin', active: true, permissions: ROLE_PRESETS.admin.permissions };
+  const items = [buildStockDiscountFailedNotification({ count: 1 })];
+  assert.equal(filterNotificationsForUser(items, admin, userHasPermission).length, 1);
+  assert.equal(filterNotificationsForUser(items, operator, userHasPermission).length, 0);
   assert.equal(filterNotificationsForUser(items, vendedor, userHasPermission).length, 0);
 });

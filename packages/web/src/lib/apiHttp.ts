@@ -766,7 +766,7 @@ const apiHttp = {
 
   // Cola de descuentos de stock
   stockJobsGetConfig: () => req('/catalog/stock-jobs/config'),
-  stockJobsList: (limit = 60) => req(`/catalog/stock-jobs/jobs${qs({ limit })}`),
+  stockJobsList: (params: { status?: string; page?: number; pageSize?: number } = {}) => req(`/catalog/stock-jobs/jobs${qs(params)}`),
   stockJobsSetPaused: (paused: boolean) => req('/catalog/stock-jobs/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
   stockJobsRetry: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/retry`, { method: 'POST' }),
   stockJobsOrderPreview: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/order-preview`),

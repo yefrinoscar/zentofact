@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { FAILED_EMISSION_ALERT_AFTER_ATTEMPTS } from './auto-emission-alert.js';
 import { userHasPermission } from './permissions.js';
 import { isCatalogInventoryEnabled } from './system-config.js';
+import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
   applyNotificationState,
   collectLiveNotifications,
@@ -230,9 +231,49 @@ function hrefForItem(item, user) {
   return '/orders';
 }
 
+async function stockDiscountFailedSummary(db) {
+  // Clasifica con la misma señal que usa la cola (result.unmapped /
+  // result.insufficient, en el mismo orden de precedencia que
+  // blockedStockReason) en vez de leer el texto de last_error.
+  const result = await target(db).query(
+    `select count(*)::int as count,
+            count(*) filter (
+              where coalesce((j.result->>'unmapped')::int, 0) > 0
+            )::int as unmatched,
+            count(*) filter (
+              where coalesce((j.result->>'unmapped')::int, 0) = 0
+                and coalesce((j.result->>'insufficient')::int, 0) > 0
+            )::int as insufficient,
+            min(j.updated_at) as oldest_at
+       from inventory_stock_jobs j
+       left join lateral (
+         select ordered_at
+           from orders
+          where orders.id=j.order_id
+             or (
+               j.order_id is null
+               and orders.company_id=j.company_id
+               and orders.external_order_id=j.external_order_id
+             )
+          order by (orders.id=j.order_id) desc, orders.id asc
+          limit 1
+       ) order_row on true
+      where j.status='failed'
+        and order_row.ordered_at >= $1::timestamptz`,
+    [INVENTORY_LISTEN_FROM_AT],
+  );
+  const row = result.rows[0] || {};
+  return {
+    count: Number(row.count || 0),
+    unmatchedCount: Number(row.unmatched || 0),
+    insufficientCount: Number(row.insufficient || 0),
+    oldestAt: row.oldest_at || null,
+  };
+}
+
 async function collectVisibleNotifications(user, db) {
   const userId = requireUserId(user);
-  const [failedEmissions, lowInsumos, overdueBandeja, stockProducts, stored] = await Promise.all([
+  const [failedEmissions, lowInsumos, overdueBandeja, stockProducts, stockDiscountFailures, stored] = await Promise.all([
     safeSource('emission', () => failedEmissionSummary(db)),
     safeSource('insumos', () => lowStockInsumos(db)),
     safeSource('bandeja', async () => {
@@ -240,6 +281,7 @@ async function collectVisibleNotifications(user, db) {
       return countOpenOverdueOrders(db);
     }),
     safeSource('products', () => stockAlertProducts(db)),
+    safeSource('stock-discounts', () => stockDiscountFailedSummary(db)),
     safeSource('stored', () => storedNotifications(userId, db)),
   ]);
   const live = collectLiveNotifications({
@@ -247,6 +289,7 @@ async function collectVisibleNotifications(user, db) {
     lowInsumos: lowInsumos || [],
     overdueBandeja: overdueBandeja || { count: 0 },
     stockProducts: stockProducts || [],
+    stockDiscountFailures: stockDiscountFailures || { count: 0 },
   }).map((item) => ({ ...item, href: hrefForItem(item, user) }));
   const scoped = filterNotificationsForUser([...live, ...(stored || [])], user, userHasPermission);
   const stateById = await loadStateById(requireUserId(user), scoped.map((item) => item.id), db);

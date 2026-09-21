@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Check, Clock, PackageOpen, PackageX, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock, PackageMinus, PackageOpen, PackageX, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
   notificationElapsedLabel,
@@ -11,6 +11,7 @@ function iconForKind(kind: OperatorNotification['kind']) {
   if (kind === 'emission_failed') return AlertTriangle;
   if (kind === 'insumo_low_stock' || kind === 'product_low_stock') return PackageOpen;
   if (kind === 'product_sold_out') return PackageX;
+  if (kind === 'stock_discount_failed') return PackageMinus;
   if (kind === 'marketplace_mutation') return Check;
   return Clock;
 }

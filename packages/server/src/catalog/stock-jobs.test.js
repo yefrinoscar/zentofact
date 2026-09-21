@@ -9,6 +9,7 @@ import {
   jobOrderPreview,
   processStockQueue,
   recentJobs,
+  listStockJobs,
   runStockReconciliation,
   reopenReservedStockJobsForCommit,
   setPaused,
@@ -685,4 +686,50 @@ test('reabre un job done cuando la reserva debe confirmarse', async () => {
   assert.match(sql, /ready_to_ship/i);
   assert.match(sql, /job\.status='done'/i);
   assert.match(sql, /attempts=0/i);
+});
+
+test('el listado de la cola filtra por estado y pagina en el servidor', async () => {
+  const calls = [];
+  const result = await listStockJobs({ status: 'failed', page: 2, pageSize: 50 }, {
+    async query(sql, params = []) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim();
+      calls.push({ sql: compact, params });
+      if (/count\(\*\)::int as total/i.test(compact)) return { rows: [{ total: 130 }] };
+      return { rows: [{ id: 7, status: 'failed' }] };
+    },
+  });
+
+  assert.equal(result.total, 130);
+  assert.equal(result.page, 2);
+  assert.equal(result.pageSize, 50);
+  assert.equal(result.pageCount, 3);
+  assert.equal(result.rows[0].id, 7);
+
+  const listCall = calls.find((call) => /limit \$3 offset \$4/i.test(call.sql));
+  assert.ok(listCall, 'la consulta de filas pagina con limit/offset');
+  assert.equal(listCall.params[1], 'failed');
+  assert.equal(listCall.params[2], 50);
+  assert.equal(listCall.params[3], 50);
+  assert.match(listCall.sql, /order by case when j\.status in \('failed', 'skipped'\) then 0 else 1 end/i);
+
+  const countCall = calls.find((call) => /count\(\*\)::int as total/i.test(call.sql));
+  assert.ok(countCall, 'se cuenta el total con el mismo filtro');
+  assert.equal(countCall.params[0], INVENTORY_LISTEN_FROM_AT);
+  assert.match(countCall.sql, /\$2::text = 'all'/i);
+});
+
+test('un estado de filtro desconocido se normaliza a all', async () => {
+  const calls = [];
+  const result = await listStockJobs({ status: 'hack', pageSize: 20 }, {
+    async query(sql, params = []) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim();
+      calls.push({ sql: compact, params });
+      if (/count\(\*\)::int as total/i.test(compact)) return { rows: [{ total: 0 }] };
+      return { rows: [] };
+    },
+  });
+  assert.equal(result.page, 1);
+  assert.equal(result.pageCount, 1);
+  const listCall = calls.find((call) => /limit \$3 offset \$4/i.test(call.sql));
+  assert.equal(listCall.params[1], 'all');
 });

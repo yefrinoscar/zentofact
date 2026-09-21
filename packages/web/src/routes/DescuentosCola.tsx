@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, CheckCircle2, Clock, Link2, Loader2, PackageMinus, Pause, Play,
   RefreshCw, RotateCcw, XCircle,
@@ -16,17 +16,17 @@ import { logisticsChannelClass, productImageSrc } from '../lib/logistics-inbox';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  isListableStockJob,
   shouldShowStockJobAttempts,
   stockItemReason,
   stockJobChannelLabel,
   stockJobDetail,
-  stockJobFilterBucket,
   stockJobSourceLabel,
   stockOrderStatusLabel,
   stockPreviewFooter,
   visibleStockJobStatus,
 } from '../lib/stock-job-presentation';
+
+const PAGE_SIZE = 50;
 
 type Config = {
   inventoryEnabled: boolean;
@@ -87,6 +87,14 @@ type Job = {
   insufficient_items?: number;
   order_status?: string | null;
   fulfillment_status?: string | null;
+};
+
+type JobsPage = {
+  rows: Job[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
 };
 
 type OrderPreview = {
@@ -468,37 +476,57 @@ function JobProducts({ job }: { job: Job }) {
   );
 }
 
+function PageLink({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function DescuentosCola() {
   const { showSnackbar } = useOperatorSnackbar();
-  const [config, setConfig] = useState<Config | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [unmatched, setUnmatched] = useState<UnmatchedStockItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const [assignmentItem, setAssignmentItem] = useState<UnmatchedStockItem | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [submittedProductSearch, setSubmittedProductSearch] = useState('');
   const [assigningProductId, setAssigningProductId] = useState<number | null>(null);
-  const timer = useRef<number | null>(null);
 
-  const loadConfig = useCallback(async () => {
-    try { setConfig(await api.stockJobsGetConfig()); } catch { /* noop */ }
-  }, []);
+  const configQuery = useQuery<Config>({
+    queryKey: ['stock-jobs', 'config'],
+    queryFn: () => api.stockJobsGetConfig(),
+    refetchInterval: 5_000,
+  });
 
-  const loadJobs = useCallback(async (spin = false) => {
-    if (spin) setRefreshing(true);
-    try {
-      const rows = await api.stockJobsList(60);
-      setJobs(rows || []);
-    } catch { /* noop */ }
-    finally { if (spin) setRefreshing(false); }
-  }, []);
+  const jobsQuery = useQuery<JobsPage>({
+    queryKey: ['stock-jobs', 'list', filter, page],
+    queryFn: () => api.stockJobsList({ status: filter, page, pageSize: PAGE_SIZE }),
+    refetchInterval: 5_000,
+    placeholderData: keepPreviousData,
+  });
 
-  const loadUnmatched = useCallback(async () => {
-    try { setUnmatched(await api.stockJobsUnmatched()); } catch { /* noop */ }
-  }, []);
+  const unmatchedQuery = useQuery<UnmatchedStockItem[]>({
+    queryKey: ['stock-jobs', 'unmatched'],
+    queryFn: () => api.stockJobsUnmatched(),
+    refetchInterval: 15_000,
+  });
 
   useEffect(() => {
     const debounce = window.setTimeout(() => setSubmittedProductSearch(productSearch.trim()), 220);
@@ -518,21 +546,21 @@ export default function DescuentosCola() {
     staleTime: 15_000,
   });
 
-  useEffect(() => {
-    (async () => {
-      await Promise.all([loadConfig(), loadJobs(), loadUnmatched()]);
-      setLoading(false);
-    })();
-  }, [loadConfig, loadJobs, loadUnmatched]);
+  const config = configQuery.data ?? null;
+  const jobs = jobsQuery.data?.rows ?? [];
+  const total = jobsQuery.data?.total ?? 0;
+  const pageCount = jobsQuery.data?.pageCount ?? 1;
+  const servedPage = jobsQuery.data?.page ?? page;
+  const unmatched = unmatchedQuery.data ?? [];
 
-  useEffect(() => {
-    timer.current = window.setInterval(() => {
-      void loadJobs();
-      void loadConfig();
-      void loadUnmatched();
-    }, 3000);
-    return () => { if (timer.current) window.clearInterval(timer.current); };
-  }, [loadJobs, loadConfig, loadUnmatched]);
+  const refreshNow = async () => {
+    setManualRefreshing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['stock-jobs'] });
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
 
   const openAssignment = (item: UnmatchedStockItem) => {
     const suggestedSearch = item.title || item.sellerSku;
@@ -551,7 +579,7 @@ export default function DescuentosCola() {
       showSnackbar({
         message: `${assignmentItem.sellerSku} asociado a ${product.mainSku}. ${result.ordersQueued} pedido${result.ordersQueued === 1 ? '' : 's'} vuelto${result.ordersQueued === 1 ? '' : 's'} a encolar.`,
       });
-      await Promise.all([loadUnmatched(), loadJobs(), loadConfig()]);
+      await queryClient.invalidateQueries({ queryKey: ['stock-jobs'] });
     } catch (error: any) {
       showSnackbar({
         message: error?.message || 'No se pudo asociar el producto maestro.',
@@ -565,20 +593,33 @@ export default function DescuentosCola() {
 
   const togglePaused = async () => {
     if (!config) return;
-    const next = !config.paused;
-    setConfig((prev) => (prev ? { ...prev, paused: next } : prev));
-    try { await api.stockJobsSetPaused(next); } catch {
-      setConfig((prev) => (prev ? { ...prev, paused: !next } : prev));
+    try {
+      await api.stockJobsSetPaused(!config.paused);
+    } catch (error: any) {
+      showSnackbar({
+        message: error?.message || 'No se pudo cambiar la pausa de la cola.',
+        tone: 'error',
+        duration: 7000,
+      });
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ['stock-jobs', 'config'] });
     }
   };
 
   const retryJob = async (id: number) => {
-    setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, status: 'pending', last_error: null } : job)));
-    try { await api.stockJobsRetry(id); } catch { /* noop */ }
-    await Promise.all([loadJobs(), loadConfig()]);
+    try {
+      await api.stockJobsRetry(id);
+      await queryClient.invalidateQueries({ queryKey: ['stock-jobs'] });
+    } catch (error: any) {
+      showSnackbar({
+        message: error?.message || 'No se pudo reintentar el descuento.',
+        tone: 'error',
+        duration: 7000,
+      });
+    }
   };
 
-  if (loading) {
+  if (configQuery.isLoading) {
     return (
       <div className="space-y-5">
         <div className="h-9 w-40 animate-pulse rounded-lg bg-muted" />
@@ -597,10 +638,10 @@ export default function DescuentosCola() {
     );
   }
 
-  const listableJobs = jobs.filter((job) => isListableStockJob(job, config.listenFromAt));
-  const shownJobs = filter === 'all'
-    ? listableJobs
-    : listableJobs.filter((job) => stockJobFilterBucket(job, config.listenFromAt) === filter);
+  const stats = config.stats || {};
+  const allCount = Object.values(stats).reduce((sum, value) => sum + Number(value || 0), 0);
+  const failedCount = Number(stats.failed || 0);
+  const isInitialJobsLoad = jobsQuery.isLoading;
 
   return (
     <div className="space-y-5">
@@ -670,13 +711,22 @@ export default function DescuentosCola() {
         </div>
       )}
 
-      {Number(config.stats?.failed || 0) > 0 && (
+      {failedCount > 0 && (
         <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>
-            <span className="font-medium">{config.stats.failed} descuentos requieren atención.</span>{' '}
+          <span className="min-w-0 flex-1">
+            <span className="font-medium">{failedCount} descuentos requieren atención.</span>{' '}
             Revisa el motivo y corrígelos.
           </span>
+          {filter !== 'failed' ? (
+            <button
+              type="button"
+              onClick={() => { setFilter('failed'); setPage(1); }}
+              className="shrink-0 font-medium underline decoration-red-700/40 underline-offset-4 hover:decoration-red-800"
+            >
+              Verlos
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -734,16 +784,16 @@ export default function DescuentosCola() {
             <p className="text-xs text-muted-foreground">Reservado hasta listo para enviar. Cancelado no descuenta.</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 3 s. No indica si el descuento está encendido.">
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 5 s. No indica si el descuento está encendido.">
               <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" /> Actualizando
             </span>
             <button
-              onClick={() => Promise.all([loadJobs(true), loadConfig()])}
-              disabled={refreshing}
+              onClick={refreshNow}
+              disabled={manualRefreshing}
               className="rounded-md p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-60"
               title="Refrescar ahora"
             >
-              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+              <RefreshCw className={cn('h-4 w-4', manualRefreshing && 'animate-spin')} />
             </button>
           </div>
         </div>
@@ -755,9 +805,7 @@ export default function DescuentosCola() {
             className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl bg-muted p-1"
           >
             {FILTERS.map(([key, label]) => {
-              const count = key === 'all'
-                ? Object.values(config.stats || {}).reduce((sum, value) => sum + Number(value || 0), 0)
-                : Number(config.stats?.[key] || 0);
+              const count = key === 'all' ? allCount : Number(stats[key] || 0);
               const active = filter === key;
               return (
                 <button
@@ -765,7 +813,7 @@ export default function DescuentosCola() {
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => setFilter(key)}
+                  onClick={() => { setFilter(key); setPage(1); }}
                   className={cn(
                     'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl px-3 text-sm font-medium transition-colors',
                     active
@@ -794,15 +842,14 @@ export default function DescuentosCola() {
           </div>
         </div>
 
-        <div className="relative z-0 max-h-[520px] overflow-auto">
-          {refreshing && listableJobs.length === 0 ? <SkeletonRows /> : null}
-          {!refreshing && listableJobs.length === 0 ? (
-            <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay descuentos en cola.</p>
+        <div className="relative z-0 max-h-[560px] overflow-auto">
+          {isInitialJobsLoad ? <SkeletonRows /> : null}
+          {!isInitialJobsLoad && jobs.length === 0 ? (
+            <p className="p-10 text-center text-sm text-muted-foreground">
+              {filter === 'all' ? 'Aún no hay descuentos en cola.' : 'Nada en este filtro.'}
+            </p>
           ) : null}
-          {listableJobs.length > 0 && shownJobs.length === 0 ? (
-            <p className="p-10 text-center text-sm text-muted-foreground">Nada en este filtro.</p>
-          ) : null}
-          {shownJobs.length > 0 ? (
+          {jobs.length > 0 ? (
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-20 bg-card text-left text-xs text-muted-foreground">
                 <tr className="border-b border-border">
@@ -816,7 +863,7 @@ export default function DescuentosCola() {
                 </tr>
               </thead>
               <tbody>
-                {shownJobs.map((job) => {
+                {jobs.map((job) => {
                   const failed = job.status === 'failed';
                   const unmatchedItem = unmatched.find((item) => item.orderNumbers.includes(job.order_number));
                   const canRetry = (failed || job.status === 'skipped') && !unmatchedItem;
@@ -864,6 +911,25 @@ export default function DescuentosCola() {
                 })}
               </tbody>
             </table>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs text-muted-foreground">
+          <span>
+            {total > 0
+              ? `Mostrando ${jobs.length} de ${total} · corte de descuentos: ${fullDateTime(config.listenFromAt)}`
+              : `Corte de descuentos: ${fullDateTime(config.listenFromAt)}`}
+          </span>
+          {pageCount > 1 ? (
+            <div className="flex items-center gap-3">
+              <PageLink disabled={servedPage <= 1} onClick={() => setPage(Math.max(1, servedPage - 1))}>
+                Anterior
+              </PageLink>
+              <span className="tabular-nums">Página {servedPage} de {pageCount}</span>
+              <PageLink disabled={servedPage >= pageCount} onClick={() => setPage(servedPage + 1)}>
+                Siguiente
+              </PageLink>
+            </div>
           ) : null}
         </div>
       </div>
