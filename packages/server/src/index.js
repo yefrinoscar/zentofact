@@ -66,6 +66,7 @@ const orderSync = await import('./order-sync.js');
 const orderSyncSettings = await import('./order-sync-settings.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
+const listingSizeMismatch = await import('./catalog/listing-size-mismatch.js');
 const associationCandidateService = await import('./catalog/association-candidate-service.js');
 const inventoryService = await import('./catalog/inventory-service.js');
 const skuResolver = await import('./catalog/sku-resolver.js');
@@ -747,6 +748,10 @@ app.get('/products/summary', async (c) => {
 });
 app.get('/products/profit-owners', async (c) => {
   try { return ok(c, await productService.listProfitOwners()); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/listing-size-mismatches', async (c) => {
+  try { return ok(c, await listingSizeMismatch.listListingSizeMismatches()); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/products', async (c) => {

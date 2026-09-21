@@ -104,6 +104,26 @@ export type ProductAssociationCandidatesResponse = {
   hiddenByAvailabilityCount: number;
 };
 
+export type ListingSizeMismatch = {
+  productId: number;
+  mainSku: string;
+  productName: string;
+  listingId: number;
+  channelCode: string;
+  companyId: number;
+  companyName: string | null;
+  sellerSku: string;
+  shopSku: string | null;
+  title: string;
+  listingSize: string;
+  masterSize: string;
+};
+
+export type ListingSizeMismatchResponse = {
+  items: ListingSizeMismatch[];
+  total: number;
+};
+
 function rememberCsrfToken(data: any) {
   if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
 }
@@ -524,6 +544,7 @@ const apiHttp = {
     includeArchived?: boolean;
   } = {}) => req(`/products/summary${qs(filter)}`),
   listCatalogProfitOwners: () => req<{ items: string[] }>('/products/profit-owners'),
+  listCatalogListingSizeMismatches: () => req<ListingSizeMismatchResponse>('/products/listing-size-mismatches'),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
   setCatalogProductReturnIncident: (id: number, orderId: number, condition: 'not_arrived' | 'unusable') =>
