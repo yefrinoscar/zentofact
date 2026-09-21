@@ -5,6 +5,7 @@ export const OPERATOR_NOTIFICATION_KINDS = [
   'product_sold_out',
   'product_low_stock',
   'marketplace_mutation',
+  'stock_discount_failed',
 ] as const;
 
 export type OperatorNotificationKind = (typeof OPERATOR_NOTIFICATION_KINDS)[number];

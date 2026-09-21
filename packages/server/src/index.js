@@ -1002,7 +1002,13 @@ app.post('/catalog/stock-jobs/pause', async (c) => {
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/catalog/stock-jobs/jobs', async (c) => {
-  try { return ok(c, await stockJobs.recentJobs(Number(c.req.query('limit') || 60))); } catch (e) { return fail(c, e); }
+  try {
+    return ok(c, await stockJobs.listStockJobs({
+      status: c.req.query('status') || 'all',
+      page: Number(c.req.query('page') || 1),
+      pageSize: Number(c.req.query('pageSize') || c.req.query('limit') || 50),
+    }));
+  } catch (e) { return fail(c, e); }
 });
 app.get('/catalog/stock-jobs/jobs/:id/order-preview', async (c) => {
   try { return ok(c, await stockJobs.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); }

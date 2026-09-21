@@ -244,16 +244,7 @@ export async function getConfig(db) {
     catalogInventoryFlagState(db),
     getPaused(db),
     client.query(
-      `select
-            case
-              when j.status = 'done'
-               and (
-                 order_row.order_status in ('cancelled', 'failed')
-                 or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
-               )
-              then 'cancelled'
-              else j.status
-            end as status,
+      `select ${JOB_BUCKET_SQL} as status,
             count(*)::int as n
          from inventory_stock_jobs j
          left join lateral (
@@ -295,26 +286,7 @@ export async function getConfig(db) {
   };
 }
 
-export async function recentJobs(limit = 60, db) {
-  const client = await target(db);
-  const result = await client.query(
-    `select j.id, j.company_id,
-            coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company,
-            coalesce(nullif(j.order_number, ''), order_row.external_order_number) as order_number,
-            j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
-            j.created_at, j.updated_at,
-            order_row.ordered_at,
-            order_row.order_status,
-            order_row.fulfillment_status,
-            order_row.channel_code,
-            coalesce(item_summary.items, '[]'::jsonb) as items,
-            coalesce(item_summary.reserved_units, 0) as reserved_units,
-            coalesce(item_summary.applied_units, 0) as applied_units,
-            coalesce(item_summary.unmatched_items, 0)::int as unmatched_items,
-            coalesce(item_summary.insufficient_items, 0)::int as insufficient_items
-     from inventory_stock_jobs j
-     left join companies c on c.id=j.company_id
-     left join lateral (
+const ORDER_ROW_LATERAL = `left join lateral (
        select orders.id, orders.external_order_number, orders.ordered_at,
               orders.order_status, orders.fulfillment_status, channel.code as channel_code
        from orders
@@ -328,8 +300,9 @@ export async function recentJobs(limit = 60, db) {
           )
        order by (orders.id=j.order_id) desc, orders.id asc
        limit 1
-     ) order_row on true
-     left join lateral (
+     ) order_row on true`;
+
+const ITEM_SUMMARY_LATERAL = `left join lateral (
        select jsonb_agg(jsonb_build_object(
                 'id', oi.id,
                 'title', coalesce(nullif(product.name, ''), nullif(oi.description, ''), 'Producto sin nombre'),
@@ -361,13 +334,100 @@ export async function recentJobs(limit = 60, db) {
          left join products product on product.id=oi.product_id
          left join product_listings listing on listing.id=oi.listing_id
         where oi.order_id=order_row.id
-     ) item_summary on true
+     ) item_summary on true`;
+
+const JOB_LIST_COLUMNS = `j.id, j.company_id,
+            coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company,
+            coalesce(nullif(j.order_number, ''), order_row.external_order_number) as order_number,
+            j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
+            j.created_at, j.updated_at,
+            order_row.ordered_at,
+            order_row.order_status,
+            order_row.fulfillment_status,
+            order_row.channel_code,
+            coalesce(item_summary.items, '[]'::jsonb) as items,
+            coalesce(item_summary.reserved_units, 0) as reserved_units,
+            coalesce(item_summary.applied_units, 0) as applied_units,
+            coalesce(item_summary.unmatched_items, 0)::int as unmatched_items,
+            coalesce(item_summary.insufficient_items, 0)::int as insufficient_items`;
+
+// Bucket compartido por los contadores de getConfig y el listado paginado: un
+// job done de un pedido terminal se agrupa como Cancelado para que el número de
+// la pestaña y las filas navegables coincidan siempre.
+const JOB_BUCKET_SQL = `case
+              when j.status = 'done'
+               and (
+                 order_row.order_status in ('cancelled', 'failed')
+                 or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
+               )
+              then 'cancelled'
+              else j.status
+            end`;
+
+// Los que requieren atención van primero, para que no los tape el ruido de
+// los jobs que se actualizan solos con cada corrida del worker.
+const JOB_ATTENTION_ORDER_SQL = `case when j.status in ('failed', 'skipped') then 0 else 1 end, j.updated_at desc`;
+
+const JOB_STATUS_FILTERS = ['all', 'done', 'cancelled', 'pending', 'processing', 'failed', 'skipped'];
+
+function normalizeStockJobStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return JOB_STATUS_FILTERS.includes(status) ? status : 'all';
+}
+
+export async function recentJobs(limit = 60, db) {
+  const client = await target(db);
+  const result = await client.query(
+    `select ${JOB_LIST_COLUMNS}
+     from inventory_stock_jobs j
+     left join companies c on c.id=j.company_id
+     ${ORDER_ROW_LATERAL}
+     ${ITEM_SUMMARY_LATERAL}
      where order_row.ordered_at >= $2::timestamptz
      order by j.updated_at desc
      limit $1`,
     [Math.min(Math.max(Number(limit) || 60, 1), 200), INVENTORY_LISTEN_FROM_AT],
   );
   return result.rows;
+}
+
+// Listado con filtro por estado y paginación en el servidor. Los conteos de las
+// pestañas salen de getConfig; esta consulta usa el mismo bucket para que el
+// número de la pestaña y las filas navegables siempre coincidan.
+export async function listStockJobs(input = {}, db) {
+  const client = await target(db);
+  const pageSize = Math.min(Math.max(Number(input.pageSize ?? input.limit) || 50, 1), 100);
+  const requestedPage = Math.max(Number(input.page) || 1, 1);
+  const status = normalizeStockJobStatus(input.status);
+  const filterSql = `order_row.ordered_at >= $1::timestamptz and ($2::text = 'all' or ${JOB_BUCKET_SQL} = $2::text)`;
+  const totals = await client.query(
+    `select count(*)::int as total
+     from inventory_stock_jobs j
+     ${ORDER_ROW_LATERAL}
+     where ${filterSql}`,
+    [INVENTORY_LISTEN_FROM_AT, status],
+  );
+  const total = Number(totals.rows[0]?.total || 0);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, pageCount);
+  const rows = await client.query(
+    `select ${JOB_LIST_COLUMNS}
+     from inventory_stock_jobs j
+     left join companies c on c.id=j.company_id
+     ${ORDER_ROW_LATERAL}
+     ${ITEM_SUMMARY_LATERAL}
+     where ${filterSql}
+     order by ${JOB_ATTENTION_ORDER_SQL}
+     limit $3 offset $4`,
+    [INVENTORY_LISTEN_FROM_AT, status, pageSize, (page - 1) * pageSize],
+  );
+  return {
+    rows: rows.rows,
+    total,
+    page,
+    pageSize,
+    pageCount,
+  };
 }
 
 export async function retryJob(id, db) {
