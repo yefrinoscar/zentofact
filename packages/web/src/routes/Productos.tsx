@@ -10,6 +10,7 @@ import {
   ArrowDownWideNarrow,
   ArrowUpDown,
   ArrowUpNarrowWide,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -37,6 +38,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '../lib/api';
+import type { ListingSizeMismatch } from '../lib/apiHttp';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
@@ -739,6 +741,12 @@ export default function Productos() {
     staleTime: 60_000,
     retry: 1,
   });
+  const listingSizeMismatchQuery = useQuery({
+    queryKey: ['catalog-listing-size-mismatches'],
+    queryFn: () => api.listCatalogListingSizeMismatches(),
+    staleTime: 60_000,
+    retry: 1,
+  });
   const detailQuery = useQuery({
     queryKey: ['catalog-product-detail', selectedId],
     queryFn: () => api.getCatalogProduct(selectedId!),
@@ -1352,6 +1360,10 @@ export default function Productos() {
 
   return (
     <div className="space-y-4">
+      <ListingSizeNotice
+        items={listingSizeMismatchQuery.data?.items || []}
+        onOpenProduct={openProduct}
+      />
       <CatalogInventoryKpis
         summary={inventorySummary}
         productCount={summaryQuery.data?.scopedTotal ?? (productsQuery.data ? totalCount : null)}
@@ -3303,6 +3315,57 @@ function ActionFeedback({ error, message }: { error: string; message: string }) 
 function Notice({ tone, children }: { tone: 'error' | 'success' | 'info'; children: ReactNode }) {
   const classes = tone === 'error' ? 'border-red-200 bg-red-50 text-red-700' : tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700';
   return <div className={cn('flex items-start gap-2 rounded-lg border px-3 py-2 text-sm', classes)}>{tone === 'error' && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}{children}</div>;
+}
+
+function ListingSizeNotice({
+  items,
+  onOpenProduct,
+}: {
+  items: ListingSizeMismatch[];
+  onOpenProduct: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  const label = items.length === 1
+    ? '1 publicación tiene una talla distinta a la de su producto maestro.'
+    : `${items.length} publicaciones tienen una talla distinta a la de su producto maestro.`;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800">
+      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <p className="min-w-0 flex-1">{label}</p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 shrink-0 px-2 text-xs text-amber-800 hover:bg-amber-100"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {open ? 'Ocultar' : 'Ver detalle'}
+          <ChevronDown className={cn('ml-1 size-3.5 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+        </Button>
+      </div>
+      {open ? (
+        <ul className="divide-y divide-amber-200/70 border-t border-amber-200/70">
+          {items.map((item) => (
+            <li key={item.listingId}>
+              <button
+                type="button"
+                onClick={() => onOpenProduct(item.productId)}
+                className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left text-xs transition hover:bg-amber-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="font-mono font-medium">{item.mainSku}</span>
+                <span className="min-w-0 flex-1 truncate text-amber-700">{item.productName}</span>
+                <span className="shrink-0 tabular-nums">Publicación {item.listingSize} · Maestro {item.masterSize}</span>
+                <span className="shrink-0 text-amber-700">{sellerShortName(item.companyName)} · {item.channelCode} · {item.sellerSku}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function LoadingBlock() { return <div className="grid min-h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>; }
