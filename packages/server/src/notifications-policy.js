@@ -10,6 +10,7 @@ export const NOTIFICATION_KINDS = Object.freeze({
   productSoldOut: 'product_sold_out',
   productLowStock: 'product_low_stock',
   marketplaceMutation: 'marketplace_mutation',
+  stockDiscountFailed: 'stock_discount_failed',
 });
 
 export const PRODUCT_SOLD_OUT_WINDOW_DAYS = 7;
@@ -30,6 +31,7 @@ const KIND_PERMISSION = {
   [NOTIFICATION_KINDS.productSoldOut]: ['productos', 'order_management'],
   [NOTIFICATION_KINDS.productLowStock]: ['productos', 'order_management'],
   [NOTIFICATION_KINDS.marketplaceMutation]: 'productos',
+  [NOTIFICATION_KINDS.stockDiscountFailed]: 'productos',
 };
 
 const SEVERITY_RANK = {
@@ -191,11 +193,45 @@ export function buildProductLowStockNotification(product = {}) {
   };
 }
 
+export function buildStockDiscountFailedNotification({
+  count = 0,
+  unmatchedCount = 0,
+  insufficientCount = 0,
+  oldestAt,
+} = {}) {
+  const total = Number(count) || 0;
+  if (total < 1) return null;
+  const unmatched = Number(unmatchedCount) || 0;
+  const insufficient = Number(insufficientCount) || 0;
+  const other = Math.max(0, total - unmatched - insufficient);
+  const reasons = [];
+  if (insufficient > 0) reasons.push(`${countLabel(insufficient)} sin stock`);
+  if (unmatched > 0) reasons.push(`${countLabel(unmatched)} sin producto maestro`);
+  if (other > 0) reasons.push(`${countLabel(other)} con otro motivo`);
+  return {
+    id: `stock_discount_failed:${total}:${insufficient}:${unmatched}`,
+    kind: NOTIFICATION_KINDS.stockDiscountFailed,
+    severity: NOTIFICATION_SEVERITIES.critical,
+    permission: KIND_PERMISSION[NOTIFICATION_KINDS.stockDiscountFailed],
+    title: total === 1
+      ? 'Un descuento de stock requiere atención'
+      : `${countLabel(total)} descuentos de stock requieren atención`,
+    body: reasons.length
+      ? `${reasons.join(' · ')}. Repón stock o asigna el producto maestro en la cola.`
+      : 'Revisa la cola y corrige los descuentos detenidos.',
+    href: '/descuentos-stock',
+    moduleLabel: 'Catálogo',
+    count: total,
+    createdAt: isoOrNull(oldestAt),
+  };
+}
+
 export function collectLiveNotifications({
   failedEmissions = { count: 0 },
   lowInsumos = [],
   overdueBandeja = { count: 0 },
   stockProducts = [],
+  stockDiscountFailures = { count: 0 },
 } = {}) {
   const items = [];
   const emission = buildEmissionFailedNotification(failedEmissions);
@@ -210,6 +246,8 @@ export function collectLiveNotifications({
     const item = buildProductSoldOutNotification(product) || buildProductLowStockNotification(product);
     if (item) items.push(item);
   }
+  const discounts = buildStockDiscountFailedNotification(stockDiscountFailures);
+  if (discounts) items.push(discounts);
   return items;
 }
 

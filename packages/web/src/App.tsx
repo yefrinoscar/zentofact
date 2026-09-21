@@ -12,6 +12,7 @@ import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
 import Avisos from './routes/Avisos';
 import { NotificationBell } from './components/NotificationBell';
+import { OperationalAlertBanner } from './components/OperationalAlertBanner';
 import { OperatorNotificationAlerts } from './hooks/useProductSoldOutAlertSound';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
@@ -285,6 +286,8 @@ function AppLayout() {
             <NotificationBell />
           </div>
         </header>
+
+        {!scannerMode && normalizedPath !== '/avisos' ? <OperationalAlertBanner /> : null}
 
         <main className={`flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-4 md:p-6 lg:p-8'}`}>
           <div className={`mx-auto w-full ${scannerMode ? 'max-w-none md:max-w-7xl' : 'max-w-7xl'}`}>
