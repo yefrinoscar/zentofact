@@ -248,7 +248,7 @@ export async function getConfig(db) {
             count(*)::int as n
          from inventory_stock_jobs j
          left join lateral (
-           select ordered_at, order_status, fulfillment_status
+           select id, ordered_at, order_status, fulfillment_status
            from orders
            where id=j.order_id
               or (
@@ -259,6 +259,7 @@ export async function getConfig(db) {
            order by (id=j.order_id) desc, id asc
            limit 1
          ) order_row on true
+         ${JOB_REVERSAL_LATERAL}
         where order_row.ordered_at >= $1::timestamptz
         group by 1`,
       [INVENTORY_LISTEN_FROM_AT],
@@ -351,15 +352,30 @@ const JOB_LIST_COLUMNS = `j.id, j.company_id,
             coalesce(item_summary.unmatched_items, 0)::int as unmatched_items,
             coalesce(item_summary.insufficient_items, 0)::int as insufficient_items`;
 
-// Bucket compartido por los contadores de getConfig y el listado paginado: un
-// job done de un pedido terminal se agrupa como Cancelado para que el número de
-// la pestaña y las filas navegables coincidan siempre.
-const JOB_BUCKET_SQL = `case
-              when j.status = 'done'
-               and (
-                 order_row.order_status in ('cancelled', 'failed')
-                 or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
-               )
+// Señales de reversión por job, baratas de calcular (sin jsonb ni imágenes).
+// Reproduce isReintegratedStockJob del frontend: una línea reintegrada y sin
+// unidades reservadas ni descontadas no necesita atención.
+export const JOB_REVERSAL_LATERAL = `left join lateral (
+       select bool_or(oi.stock_state='reversed') as has_reversed,
+              coalesce(sum(oi.stock_applied_quantity)
+                filter (where oi.stock_state='pending'), 0) as pending_units,
+              coalesce(sum(oi.stock_applied_quantity)
+                filter (where oi.stock_state='applied'), 0) as applied_units
+         from order_items oi
+        where oi.order_id=order_row.id
+     ) reversal on true`;
+
+// Bucket compartido por los contadores de getConfig, el listado paginado y los
+// avisos. Un pedido terminal o una línea ya reintegrada mandan sobre el estado
+// del job: el descuento no hace falta y la fila va a Cancelados, igual que su
+// badge. Así el número de la pestaña y las filas navegables siempre coinciden.
+export const JOB_BUCKET_SQL = `case
+              when order_row.order_status in ('cancelled', 'failed')
+               or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
+              then 'cancelled'
+              when reversal.has_reversed
+               and reversal.pending_units = 0
+               and reversal.applied_units = 0
               then 'cancelled'
               else j.status
             end`;
@@ -404,6 +420,7 @@ export async function listStockJobs(input = {}, db) {
     `select count(*)::int as total
      from inventory_stock_jobs j
      ${ORDER_ROW_LATERAL}
+     ${JOB_REVERSAL_LATERAL}
      where ${filterSql}`,
     [INVENTORY_LISTEN_FROM_AT, status],
   );
@@ -415,6 +432,7 @@ export async function listStockJobs(input = {}, db) {
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      ${ORDER_ROW_LATERAL}
+     ${JOB_REVERSAL_LATERAL}
      ${ITEM_SUMMARY_LATERAL}
      where ${filterSql}
      order by ${JOB_ATTENTION_ORDER_SQL}
