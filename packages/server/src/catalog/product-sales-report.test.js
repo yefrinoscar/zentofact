@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lineSaleMoney, listProductSalesReport, parseProductSalesFilters, takeRateFromSamples } from './product-sales-report.js';
+import {
+  TRACKED_BUYER_MIN_GROSS_SALES,
+  lineSaleMoney,
+  listProductSalesReport,
+  parseProductSalesFilters,
+  takeRateFromSamples,
+} from './product-sales-report.js';
 
 function compact(sql) {
   return String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -126,7 +132,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
           }],
         };
       }
-      if (text.includes('units_bought > 5')) {
+      if (text.includes('units_bought > 5 or b.revenue > 500')) {
         return {
           rows: [{
             buyer_key: '74561743',
@@ -161,17 +167,12 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
               unitsBought: 7,
               grossSales: 318.5,
             }],
-          }],
-        };
-      }
-      if (text.includes('units_bought <= 5')) {
-        return {
-          rows: [{
+          }, {
             buyer_key: '22334455',
             buyer_name: 'Alexander Preview',
             buyer_document: '22334455',
             buyer_email: null,
-            buyer_phone: '999222333',
+            buyer_phone: null,
             orders_count: 2,
             units_bought: 5,
             revenue: 720,
@@ -182,6 +183,29 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
               unitsBought: 5,
               ordersCount: 2,
               grossSales: 720,
+            }],
+            products: [],
+          }],
+        };
+      }
+      if (text.includes('units_bought <= 5 and b.revenue <= 500')) {
+        return {
+          rows: [{
+            buyer_key: '11223344',
+            buyer_name: 'Ana Preview',
+            buyer_document: '11223344',
+            buyer_email: null,
+            buyer_phone: '999222333',
+            orders_count: 1,
+            units_bought: 5,
+            revenue: 400,
+            last_ordered_at: '2026-09-07T17:00:00.000Z',
+            companies: [{
+              companyId: 8,
+              companyName: 'LIMBO',
+              unitsBought: 5,
+              ordersCount: 1,
+              grossSales: 400,
             }],
             products: [],
           }],
@@ -259,7 +283,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.trackedBuyers[0].unitsBought, 7);
   assert.equal(result.trackedBuyers[0].companies[0].companyName, 'LIMBO');
   assert.equal(result.trackedBuyers[0].products[0].sku, 'BB220');
-  assert.equal(result.topBuyers[0].name, 'Alexander Preview');
+  assert.equal(result.trackedBuyers[1].name, 'Alexander Preview');
+  assert.equal(result.trackedBuyers[1].tracked, true);
+  assert.equal(result.trackedBuyers[1].phone, null);
+  assert.equal(result.topBuyers[0].name, 'Ana Preview');
   assert.equal(result.topBuyers[0].unitsBought, 5);
   assert.equal(result.topBuyers[0].tracked, false);
   assert.equal(result.topBuyers[0].phone, '999222333');
@@ -292,9 +319,11 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /having true and sum\(revenue\) >= \$/);
   assert.match(pageSql, /coalesce\(sum\(pending_arrives\), 0\) > 0/);
   assert.doesNotMatch(pageSql, /promised_shipping_at/);
-  const buyerSql = statements.find((statement) => compact(statement.sql).includes('units_bought > 5'))?.sql || '';
+  assert.equal(TRACKED_BUYER_MIN_GROSS_SALES, 500);
+  const buyerSql = statements.find((statement) => compact(statement.sql).includes('units_bought > 5 or b.revenue > 500'))?.sql || '';
   assert.match(buyerSql, /buyer_phone/);
-  assert.match(buyerSql, /nullif\(trim\(b\.buyer_phone\), ''\) is not null/);
+  assert.match(buyerSql, /b\.units_bought > 5 or b\.revenue > 500/);
+  assert.doesNotMatch(buyerSql, /nullif\(trim\(b\.buyer_phone\), ''\) is not null/);
   assert.match(buyerSql, /AddressBilling/);
   assert.equal(result.daily.length, 30);
   assert.match(buyerSql, /buyer_companies as/);

@@ -123,6 +123,7 @@ export type ProductSaleBuyer = {
 };
 
 export const TRACKED_BUYER_MIN_UNITS = 5;
+export const TRACKED_BUYER_MIN_GROSS_SALES = 500;
 
 export type BuyerSortBy = 'name' | 'phone' | 'company' | 'units' | 'grossSales';
 
@@ -289,9 +290,21 @@ export function buyerIdentity(buyer: ProductSaleBuyer) {
   return buyer.documentNumber || buyer.email || 'Sin documento';
 }
 
-export function isTrackedBuyer(buyer: Pick<ProductSaleBuyer, 'tracked' | 'unitsBought'>) {
-  if (buyer.tracked != null) return Boolean(buyer.tracked);
-  return Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS;
+export function isTrackedBuyer(buyer: {
+  tracked?: boolean;
+  unitsBought?: number;
+  grossSales?: number;
+}) {
+  if (buyer.tracked === true) return true;
+  return Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS
+    || Number(buyer.grossSales || 0) > TRACKED_BUYER_MIN_GROSS_SALES;
+}
+
+export function buyerQualificationLabels(buyer: Pick<ProductSaleBuyer, 'unitsBought' | 'grossSales'>) {
+  const labels: string[] = [];
+  if (Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS) labels.push('Más de 5 unidades');
+  if (Number(buyer.grossSales || 0) > TRACKED_BUYER_MIN_GROSS_SALES) labels.push('Más de S/ 500');
+  return labels;
 }
 
 export function splitSalesBuyers(buyers: ProductSaleBuyer[]) {
