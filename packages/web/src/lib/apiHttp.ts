@@ -447,6 +447,7 @@ const apiHttp = {
     fulfillmentStatus?: string;
     documentStatus?: string;
     connectedOnly?: boolean;
+    includeItems?: boolean;
     from?: string;
     to?: string;
     search?: string;

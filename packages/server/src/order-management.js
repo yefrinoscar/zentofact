@@ -1087,6 +1087,9 @@ export async function listOrders(filters = {}, db) {
     where.push(`o.created_by=$${values.length}`);
   }
   const salesOnly = filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true';
+  const includeItems = filters.includeItems === true
+    || String(filters.includeItems || '').toLowerCase() === 'true';
+  const withItems = salesOnly || includeItems;
   if (salesOnly) {
     where.push(`o.order_status not in ('cancelled', 'failed')`);
     where.push(`o.payment_status not in ('refunded', 'failed')`);
@@ -1108,14 +1111,14 @@ export async function listOrders(filters = {}, db) {
        a.display_name as channel_account_name,
        ${ORDER_CREATOR_SELECT},
        ${salesOnly ? `${SALESPERSON_COMMISSION_SQL} as commission,` : ''}
-       ${salesOnly ? 'lines.items,' : ''}
+       ${withItems ? 'lines.items,' : ''}
        count(*) over()::int as total_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
      left join companies c on c.id=o.company_id
      ${ORDER_CREATOR_JOIN}
-     ${salesOnly ? ORDER_LIST_ITEMS_JOIN : ''}
+     ${withItems ? ORDER_LIST_ITEMS_JOIN : ''}
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by ${orderBy}
      limit $${values.length - 1} offset $${values.length}`,

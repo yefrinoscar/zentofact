@@ -33,6 +33,7 @@ test('la bandeja avanza a hoy si permaneció abierta durante la medianoche', () 
 
 test('la bandeja de pedidos no muestra columna de teléfono', () => {
   assert.equal(MANAGED_ORDER_TABLE_COLUMNS.includes('phone'), false);
+  assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('product'));
   assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('delivery'));
   assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('customer'));
 });
@@ -62,6 +63,7 @@ test('la búsqueda de pedidos omite la fecha comercial del día', () => {
   assert.equal(dayFilters.from, '2026-09-04');
   assert.equal(dayFilters.to, '2026-09-04');
   assert.equal(dayFilters.search, undefined);
+  assert.equal(dayFilters.includeItems, true);
   assert.equal(dayFilters.limit, MANAGED_ORDER_LIST_LIMIT);
 
   const searchFilters = buildManagedOrderListFilters({
