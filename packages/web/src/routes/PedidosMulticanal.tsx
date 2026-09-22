@@ -7,7 +7,6 @@ import {
   Banknote,
   Check,
   CheckCircle2,
-  CircleDashed,
   CircleDollarSign,
   ClipboardList,
   Clock3,
@@ -19,7 +18,6 @@ import {
   Loader2,
   MoreHorizontal,
   Package,
-  PackageSearch,
   PanelTop,
   Plus,
   RefreshCw,
@@ -127,6 +125,14 @@ type OrderItem = {
   total?: number | null;
 };
 
+type ManagedOrderListItem = {
+  name?: string | null;
+  sku?: string | null;
+  quantity?: number;
+  imageUrl?: string | null;
+  shopSku?: string | null;
+};
+
 type OrderEvent = {
   id: number;
   eventType: string;
@@ -208,12 +214,13 @@ type ManagedOrder = {
       syncedAt?: string;
     };
   };
+  items?: ManagedOrderListItem[];
   orderedAt?: string | null;
   promisedShippingAt?: string | null;
   providerUpdatedAt?: string | null;
 };
 
-type OrderDetail = ManagedOrder & {
+type OrderDetail = Omit<ManagedOrder, 'items'> & {
   items: OrderItem[];
   events: OrderEvent[];
   documents: Array<{
@@ -235,49 +242,6 @@ type RipleyLogisticsOverview = {
   error: string;
 };
 
-type SalesPulseSeller = {
-  companyId: number;
-  companyName: string;
-  ordersCount: number;
-  salesTotal: number;
-  manualOrdersCount: number;
-  lastSaleAt?: string | null;
-};
-
-type SalesPulse = {
-  date: string;
-  ordersCount: number;
-  salesTotal: number;
-  unitsSold: number;
-  sellersWithSales: number;
-  sellersWithoutSales: number;
-  sellers: SalesPulseSeller[];
-  topProducts: Array<{
-    sku: string;
-    name: string;
-    imageUrl?: string | null;
-    shopSku?: string | null;
-    unitsSold: number;
-    ordersCount: number;
-    salesTotal: number;
-    sellersCount: number;
-    channelCodes: string[];
-  }>;
-  channels: Array<{
-    code: string;
-    name: string;
-    ordersCount: number;
-    salesTotal: number;
-  }>;
-  ownFleetShipping?: {
-    total: number;
-    districtTotal: number;
-    distanceTotal: number;
-    deliveries: number;
-  };
-};
-
-const RANKING_SIZE = 6;
 const SEARCH_DELAY_MS = 250;
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -601,15 +565,6 @@ function dayLabel(date: string, today = todayInLima()) {
   return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00`));
 }
 
-function pedidoCountLabel(count: number) {
-  return `${count} ${count === 1 ? 'pedido' : 'pedidos'}`;
-}
-
-function ordersHeading(count: number, date: string, today = todayInLima()) {
-  const when = date === today ? 'hoy' : `el ${dayLabel(date, today)}`;
-  return `${pedidoCountLabel(count)} ${when}`;
-}
-
 export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -640,7 +595,6 @@ export default function PedidosMulticanal() {
   const [ripleyWarehouseAddress, setRipleyWarehouseAddress] = useState('Almacén principal');
   const [ripleyAction, setRipleyAction] = useState('');
   const [ripleyActionNote, setRipleyActionNote] = useState('');
-  const [productsOpen, setProductsOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
@@ -702,47 +656,16 @@ export default function PedidosMulticanal() {
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
-  const pulseQuery = useQuery({
-    queryKey: ['managed-order-sales-pulse', date],
-    queryFn: async () => {
-      const [pulse, catalogSales] = await Promise.all([
-        api.getManagedOrderSalesPulse({ date }),
-        api.listTodayProductSales({ date, limit: 80 }).catch(() => null),
-      ]);
-      const photos = new Map<string, { imageUrl?: string | null; shopSku?: string | null }>();
-      for (const product of Array.isArray(catalogSales?.products) ? catalogSales.products : []) {
-        const key = String(product.sku || '').trim().toLowerCase();
-        if (!key) continue;
-        photos.set(key, { imageUrl: product.imageUrl, shopSku: product.shopSku });
-      }
-      return {
-        ...pulse,
-        topProducts: (pulse?.topProducts || []).map((product: SalesPulse['topProducts'][number]) => {
-          const extra = photos.get(String(product.sku || '').trim().toLowerCase());
-          return {
-            ...product,
-            imageUrl: product.imageUrl || extra?.imageUrl || null,
-            shopSku: product.shopSku || extra?.shopSku || null,
-          };
-        }),
-      } as SalesPulse;
-    },
-    placeholderData: keepPreviousData,
-    staleTime: 15_000,
-  });
 
   const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
   const channels = (Array.isArray(channelsQuery.data) ? channelsQuery.data : []) as Channel[];
   const orders = (Array.isArray(ordersQuery.data?.orders) ? ordersQuery.data.orders : []) as ManagedOrder[];
   const totalCount = Number(ordersQuery.data?.totalCount || 0);
-  const salesPulse = pulseQuery.data || null;
   const loading = ordersQuery.isPending && !ordersQuery.data;
   const fetching = ordersQuery.isFetching;
   const loadError = (ordersQuery.error as Error | undefined)?.message
     || (companiesQuery.error as Error | undefined)?.message
     || '';
-  const pulseLoading = pulseQuery.isPending && !pulseQuery.data;
-  const pulseError = (pulseQuery.error as Error | undefined)?.message || '';
 
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
@@ -925,16 +848,6 @@ export default function PedidosMulticanal() {
     });
   };
 
-  const pulseSellers = useMemo(() => {
-    const sellers = salesPulse?.sellers || [];
-    return [...sellers].sort((left, right) => {
-      if ((right.ordersCount > 0) !== (left.ordersCount > 0)) return left.ordersCount > 0 ? -1 : 1;
-      if (right.ordersCount !== left.ordersCount) return right.ordersCount - left.ordersCount;
-      return left.companyName.localeCompare(right.companyName, 'es');
-    });
-  }, [salesPulse]);
-  const soldProducts = salesPulse?.topProducts || [];
-  const rankingProducts = soldProducts.slice(0, RANKING_SIZE);
   const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || fulfillmentStatus !== 'all' || Boolean(search.trim());
   const selectedSellerName = companyId === 'all' ? '' : companyById.get(Number(companyId)) || '';
   const selectedChannelName = channelCode === 'all' ? '' : channelCatalog.find((channel) => channel.code === channelCode)?.name || channelCode;
@@ -1002,6 +915,12 @@ export default function PedidosMulticanal() {
       header: 'Pedido',
       size: 168,
       cell: ({ row }) => <CopyableOrderNumber value={row.original.externalOrderNumber} />,
+    },
+    {
+      id: 'product',
+      header: 'Producto',
+      size: 224,
+      cell: ({ row }) => <OrderProductCell items={row.original.items} />,
     },
     {
       id: 'seller',
@@ -1168,100 +1087,6 @@ export default function PedidosMulticanal() {
     <div className="space-y-4">
       <DayStrip value={date} onChange={setDate} max={today} />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            {pulseLoading ? (
-              <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-            ) : (
-              <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
-                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date, today)}
-              </h2>
-            )}
-          </div>
-          {salesPulse?.ownFleetShipping && salesPulse.ownFleetShipping.total > 0 && (
-            <p className="mt-1 text-sm text-muted-foreground">
-              Envío propio {formatMoney(salesPulse.ownFleetShipping.total)}
-              {salesPulse.ownFleetShipping.deliveries
-                ? ` · ${salesPulse.ownFleetShipping.deliveries} ${salesPulse.ownFleetShipping.deliveries === 1 ? 'entrega' : 'entregas'}`
-                : ''}
-              {` · Distrito ${formatMoney(salesPulse.ownFleetShipping.districtTotal)} · Distancia ${formatMoney(salesPulse.ownFleetShipping.distanceTotal)}`}
-            </p>
-          )}
-          {pulseError && (
-            <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
-              Reintentar
-            </Button>
-          )}
-        </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:items-center">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void syncRealData()}
-            disabled={syncing}
-            aria-live="polite"
-            className={cn(
-              'h-11 min-w-0 cursor-pointer sm:h-9 sm:min-w-36',
-              syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
-              (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
-            )}
-          >
-            {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
-            {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
-          </Button>
-          <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-11 min-w-0 cursor-pointer sm:h-9">
-            <Plus /> Registrar venta
-          </Button>
-        </div>
-      </div>
-
-      <section className="overflow-hidden rounded-md border border-border bg-card">
-        <div className="grid lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,0.5fr)]">
-          <div className="min-w-0 lg:border-r lg:border-border">
-            <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-5">
-              <h3 className="text-sm font-semibold">Productos vendidos</h3>
-              {soldProducts.length > 0 && (
-                <Button type="button" variant="link" size="xs" className="h-7 cursor-pointer px-0 text-primary" onClick={() => setProductsOpen(true)}>
-                  Ver todos
-                </Button>
-              )}
-            </div>
-            <TodayProducts products={rankingProducts} loading={pulseLoading} />
-          </div>
-
-          <aside aria-label="Sellers">
-            <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-5">
-              <h3 className="text-sm font-semibold">Sellers</h3>
-              <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                {salesPulse ? `${salesPulse.sellersWithSales}/${pulseSellers.length}` : '—'} sellers con ventas
-              </span>
-            </div>
-            <SellerList
-              sellers={pulseSellers}
-              loading={pulseLoading}
-              selectedCompanyId={companyId}
-              onSelect={(sellerId) => {
-                setCompanyId(companyId === String(sellerId) ? 'all' : String(sellerId));
-              }}
-            />
-          </aside>
-        </div>
-      </section>
-
-      {successMessage && (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
-          <span role="status" aria-live="polite" className="flex items-center gap-2"><CheckCircle2 className="size-4" /> {successMessage}</span>
-          <Button variant="ghost" size="xs" className="h-11 cursor-pointer sm:h-6" onClick={() => setSuccessMessage('')}>Cerrar</Button>
-        </div>
-      )}
-
-      {loadError && (
-        <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
-          <AlertCircle className="size-4 shrink-0" /> {loadError}
-        </div>
-      )}
-
       <div className="space-y-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative min-w-0 flex-1">
@@ -1307,6 +1132,24 @@ export default function PedidosMulticanal() {
                 Limpiar
               </Button>
             )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void syncRealData()}
+              disabled={syncing}
+              aria-live="polite"
+              className={cn(
+                'h-9 w-auto cursor-pointer',
+                syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
+                (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
+              )}
+            >
+              {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
+              {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
+            </Button>
+            <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-9 w-auto cursor-pointer">
+              <Plus /> Registrar venta
+            </Button>
           </div>
         </div>
         {hasActiveFilters && (
@@ -1321,6 +1164,19 @@ export default function PedidosMulticanal() {
           </div>
         )}
       </div>
+
+      {successMessage && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <span role="status" aria-live="polite" className="flex items-center gap-2"><CheckCircle2 className="size-4" /> {successMessage}</span>
+          <Button variant="ghost" size="xs" className="h-11 cursor-pointer sm:h-6" onClick={() => setSuccessMessage('')}>Cerrar</Button>
+        </div>
+      )}
+
+      {loadError && (
+        <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+          <AlertCircle className="size-4 shrink-0" /> {loadError}
+        </div>
+      )}
 
       <OrdersVirtualTable
         table={table}
@@ -1343,20 +1199,6 @@ export default function PedidosMulticanal() {
           </p>
         )}
       />
-
-      <Sheet open={productsOpen} onOpenChange={setProductsOpen}>
-        <SheetContent className="sm:max-w-md">
-          <SheetHeader className="border-b border-border px-5 py-4 pr-16">
-            <SheetTitle>Productos vendidos</SheetTitle>
-            <SheetDescription>
-              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date, today)}
-            </SheetDescription>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <TodayProducts products={soldProducts} loading={false} />
-          </div>
-        </SheetContent>
-      </Sheet>
 
       <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
         <SheetContent className="sm:max-w-lg">
@@ -1608,7 +1450,7 @@ function ProductThumb({ url, shopSku, sku, name }: { url?: string | null; shopSk
   const src = candidates[failedCount] || '';
   if (!src) {
     return (
-      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
+      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
         <Package className="size-4 text-muted-foreground" />
       </span>
     );
@@ -1621,108 +1463,29 @@ function ProductThumb({ url, shopSku, sku, name }: { url?: string | null; shopSk
       loading="lazy"
       decoding="async"
       onError={() => setFailedCount((current) => current + 1)}
-      className="size-10 shrink-0 rounded-md bg-muted object-cover"
+      className="size-8 shrink-0 rounded-md bg-muted object-cover"
     />
   );
 }
 
-function TodayProducts({ products, loading }: { products: SalesPulse['topProducts']; loading: boolean }) {
-  if (loading) {
+function OrderProductCell({ items }: { items?: ManagedOrderListItem[] }) {
+  const item = items?.[0];
+  if (!item) {
     return (
-      <div className="divide-y divide-border" aria-label="Cargando productos vendidos">
-        {[0, 1, 2, 3, 4, 5].map((item) => (
-          <div key={item} className="flex h-14 items-center gap-2.5 px-4 sm:px-5">
-            <div className="size-10 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
-            <div className="h-3 flex-1 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-            <div className="h-3 w-14 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-          </div>
-        ))}
-      </div>
+      <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
+        <Package className="size-4 text-muted-foreground" />
+      </span>
     );
   }
-
-  if (!products.length) {
-    return (
-      <div className="flex min-h-40 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
-        <PackageSearch className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">Aún no hay productos vendidos</p>
-        <p className="text-xs text-muted-foreground">Cuando ingrese una venta, aparecerá aquí.</p>
-      </div>
-    );
-  }
-
+  const extra = (items?.length || 1) - 1;
+  const skuLine = [item.sku, extra > 0 ? `+${extra} más` : ''].filter(Boolean).join(' · ');
   return (
-    <ol className="divide-y divide-border">
-      {products.map((product, index) => (
-        <li key={`${product.sku}:${product.name}`} className="grid grid-cols-[1.25rem_2.5rem_minmax(0,1fr)_auto] items-center gap-2.5 px-4 py-2 sm:px-5">
-          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
-          <ProductThumb url={product.imageUrl} shopSku={product.shopSku} sku={product.sku} name={product.name} />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium leading-5" title={product.name}>{product.name}</p>
-            <p className="truncate font-mono text-[11px] text-muted-foreground">{product.sku}</p>
-          </div>
-          <div className="shrink-0 text-right">
-            <p className="text-sm font-semibold tabular-nums leading-5">{formatMoney(product.salesTotal)}</p>
-            <p className="text-xs tabular-nums text-muted-foreground">{product.unitsSold} unid.</p>
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function SellerList({
-  sellers,
-  selectedCompanyId,
-  onSelect,
-  loading = false,
-}: {
-  sellers: SalesPulseSeller[];
-  selectedCompanyId: string;
-  onSelect: (companyId: number) => void;
-  loading?: boolean;
-}) {
-  if (loading) {
-    return (
-      <div className="space-y-1.5 px-4 py-2 sm:px-5" aria-label="Cargando sellers">
-        {[0, 1, 2, 3].map((item) => <div key={item} className="h-8 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />)}
+    <div className="flex min-w-0 items-center gap-2">
+      <ProductThumb url={item.imageUrl} shopSku={item.shopSku} sku={item.sku} name={item.name || 'Producto'} />
+      <div className="min-w-0">
+        <p className="truncate text-[13px] font-medium leading-5" title={item.name || ''}>{item.name || 'Producto'}</p>
+        <p className="truncate text-[11px] text-muted-foreground">{skuLine || 'Sin SKU'}</p>
       </div>
-    );
-  }
-
-  if (!sellers.length) {
-    return (
-      <div className="flex min-h-24 items-center justify-center px-4 py-6 text-sm text-muted-foreground">
-        No hay sellers activos
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-h-64 overflow-y-auto px-2 pb-2 sm:px-3">
-      {sellers.map((seller) => {
-        const selected = selectedCompanyId === String(seller.companyId);
-        const sold = seller.ordersCount > 0;
-        return (
-          <button
-            key={seller.companyId}
-            type="button"
-            onClick={() => onSelect(seller.companyId)}
-            aria-pressed={selected}
-            className={cn(
-              'flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-              selected && 'bg-primary/8 ring-1 ring-primary/20',
-              !sold && 'text-muted-foreground',
-            )}
-          >
-            {sold
-              ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
-              : <CircleDashed className="size-3.5 shrink-0" />}
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{titleCaseSeller(seller.companyName)}</span>
-            {sold && <span className="shrink-0 text-xs font-semibold tabular-nums">{pedidoCountLabel(seller.ordersCount)}</span>}
-          </button>
-        );
-      })}
     </div>
   );
 }
