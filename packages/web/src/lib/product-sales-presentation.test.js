@@ -4,6 +4,7 @@ import {
   buyerCompaniesLabel,
   buyerIdentity,
   buyerPhoneLabel,
+  buyerQualificationLabels,
   hasBuyerPhone,
   buyerProductsLabel,
   channelLabel,
@@ -33,6 +34,7 @@ import {
   stockIsLow,
   weekdayUnits,
   TRACKED_BUYER_MIN_UNITS,
+  TRACKED_BUYER_MIN_GROSS_SALES,
 } from './product-sales-presentation.ts';
 
 test('los kpis muestran ventas y unidades vendidas sin duplicar importes', () => {
@@ -114,9 +116,18 @@ test('agrupa compradores de más de 5 unidades y arma el detalle', () => {
     grossSales: 189.9,
   };
   assert.equal(TRACKED_BUYER_MIN_UNITS, 5);
+  assert.equal(TRACKED_BUYER_MIN_GROSS_SALES, 500);
   assert.equal(isTrackedBuyer(tracked), true);
   assert.equal(isTrackedBuyer({ unitsBought: 5 }), false);
   assert.equal(isTrackedBuyer({ unitsBought: 6 }), true);
+  assert.equal(isTrackedBuyer({ unitsBought: 2, grossSales: 501 }), true);
+  assert.equal(isTrackedBuyer({ tracked: false, unitsBought: 2, grossSales: 501 }), true);
+  assert.equal(isTrackedBuyer({ unitsBought: 5, grossSales: 500 }), false);
+  assert.deepEqual(buyerQualificationLabels(tracked), ['Más de 5 unidades']);
+  assert.deepEqual(
+    buyerQualificationLabels({ unitsBought: 8, grossSales: 720 }),
+    ['Más de 5 unidades', 'Más de S/ 500'],
+  );
   assert.deepEqual(splitSalesBuyers([other, tracked]).tracked.map((buyer) => buyer.name), ['Max Preview']);
   assert.equal(formatBuyerPhone('987654321'), '987 654 321');
   assert.equal(buyerPhoneLabel(tracked), '987 654 321');
