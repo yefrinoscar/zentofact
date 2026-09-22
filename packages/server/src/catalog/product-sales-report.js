@@ -40,6 +40,7 @@ const PRODUCT_SORTS = {
 
 const PAYOUT_FILTERS = new Set(['all', 'paid', 'pending']);
 export const TRACKED_BUYER_MIN_UNITS = 5;
+export const TRACKED_BUYER_MIN_GROSS_SALES = 500;
 const TRACKED_BUYER_LIMIT = 100;
 const OTHER_BUYER_LIMIT = 20;
 
@@ -527,7 +528,8 @@ function mapBuyer(row = {}) {
     documentNumber: row.buyer_document || null,
     email: row.buyer_email || null,
     phone: row.buyer_phone || null,
-    tracked: Number(row.units_bought || 0) > TRACKED_BUYER_MIN_UNITS,
+    tracked: Number(row.units_bought || 0) > TRACKED_BUYER_MIN_UNITS
+      || Number(row.revenue || 0) > TRACKED_BUYER_MIN_GROSS_SALES,
     companies: (Array.isArray(row.companies) ? row.companies : []).map(mapBuyerCompany),
     products: (Array.isArray(row.products) ? row.products : []).map(mapBuyerProduct),
     ordersCount: Number(row.orders_count || 0),
@@ -539,10 +541,10 @@ function mapBuyer(row = {}) {
 
 function buyerDetailSql(eligibleCteSql, { tracked, limit }) {
   const unitClause = tracked
-    ? `b.units_bought > ${TRACKED_BUYER_MIN_UNITS} and nullif(trim(b.buyer_phone), '') is not null`
-    : `b.units_bought <= ${TRACKED_BUYER_MIN_UNITS}`;
+    ? `(b.units_bought > ${TRACKED_BUYER_MIN_UNITS} or b.revenue > ${TRACKED_BUYER_MIN_GROSS_SALES})`
+    : `(b.units_bought <= ${TRACKED_BUYER_MIN_UNITS} and b.revenue <= ${TRACKED_BUYER_MIN_GROSS_SALES})`;
   const orderSql = tracked
-    ? 'b.units_bought desc, b.revenue desc, b.buyer_name'
+    ? 'b.revenue desc, b.units_bought desc, b.buyer_name'
     : 'b.revenue desc nulls last, b.buyer_name';
   return `with ${eligibleCteSql},
        buyer_stats as (

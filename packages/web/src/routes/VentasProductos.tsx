@@ -6,7 +6,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   BarChart3,
-  ChevronDown,
   Columns3,
   ImageIcon,
   PackageCheck,
@@ -53,6 +52,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Skeleton } from '../components/ui/skeleton';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { documentDateRangeForLastDays, type DocumentDateRange } from '../lib/documentDateRange';
 import {
@@ -61,6 +61,7 @@ import {
   buyerPhoneDigits,
   buyerPhoneLabel,
   buyerProductsLabel,
+  buyerQualificationLabels,
   formatBuyerLastOrder,
   formatCoverDays,
   formatKeepsPerDay,
@@ -68,7 +69,6 @@ import {
   formatSalesMoney,
   formatVisits,
   formatUnitsPerDay,
-  hasBuyerPhone,
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
   paidMoneyHint,
@@ -190,6 +190,7 @@ export default function VentasProductos() {
   const [offset, setOffset] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => DEFAULT_COLUMN_VISIBILITY);
+  const [activeView, setActiveView] = useState<'sales' | 'buyers'>('sales');
 
   const applySearch = (value: string, submit = false) => {
     setSearch(value);
@@ -481,76 +482,92 @@ export default function VentasProductos() {
             ))}
           </SelectContent>
         </Select>
-        <ColumnVisibilityMenu table={table} />
+        {activeView === 'sales' ? <ColumnVisibilityMenu table={table} /> : null}
       </div>
 
       {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
 
       <SalesKpis items={kpis} loading={loading} />
 
-      <TablePanel aria-label="Ventas de productos" aria-busy={loading || fetching}>
-        {loading || fetching ? (
-          <SalesTableSkeleton table={table} />
-        ) : products.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">Sin ventas en este periodo</p>
-            <p className="mt-1 text-xs text-muted-foreground">Cambia el rango o el seller para ver otros maestros.</p>
-          </div>
-        ) : (
-          <div className="min-w-0" aria-busy={fetching}>
-            <Table className="daisy-table daisy-table-sm table-fixed">
-              <ProductSalesTableHeader table={table} />
-              <TableBody>
-                {table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    className="cursor-pointer align-middle focus-visible:bg-muted/30 focus-visible:outline-none"
-                    tabIndex={0}
-                    onClick={() => setSelectedKey(row.original.productKey)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setSelectedKey(row.original.productKey);
-                      }
-                    }}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        className={cn(
-                          'px-3 py-2',
-                          COLUMN_CLASS[cell.column.id as ProductSalesColumnId],
-                          cell.column.id !== 'product' && 'tabular-nums',
-                          cell.column.id === 'product' && 'whitespace-normal',
-                        )}
+      <Tabs value={activeView} onValueChange={(value) => setActiveView(value as 'sales' | 'buyers')} className="gap-5">
+        <TabsList variant="line" aria-label="Vistas de ventas" className="h-10 w-full justify-start gap-5 border-b border-border p-0">
+          <TabsTrigger value="sales" className="h-full flex-none rounded-none px-1">Ventas</TabsTrigger>
+          <TabsTrigger value="buyers" className="h-full flex-none rounded-none px-1">
+            Compradores recurrentes
+            {!loading && trackedBuyers.length > 0 ? (
+              <span className="text-xs tabular-nums text-muted-foreground">{formatSalesCount(trackedBuyers.length)}</span>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="sales" className="space-y-5">
+          <TablePanel aria-label="Ventas de productos" aria-busy={loading || fetching}>
+            {loading || fetching ? (
+              <SalesTableSkeleton table={table} />
+            ) : products.length === 0 ? (
+              <div className="px-5 py-12 text-center">
+                <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
+                <p className="mt-3 text-sm font-medium">Sin ventas en este periodo</p>
+                <p className="mt-1 text-xs text-muted-foreground">Cambia el rango o el seller para ver otros maestros.</p>
+              </div>
+            ) : (
+              <div className="min-w-0" aria-busy={fetching}>
+                <Table className="daisy-table daisy-table-sm table-fixed">
+                  <ProductSalesTableHeader table={table} />
+                  <TableBody>
+                    {table.getRowModel().rows.map((row) => (
+                      <TableRow
+                        key={row.id}
+                        className="cursor-pointer align-middle focus-visible:bg-muted/30 focus-visible:outline-none"
+                        tabIndex={0}
+                        onClick={() => setSelectedKey(row.original.productKey)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setSelectedKey(row.original.productKey);
+                          }
+                        }}
                       >
-                        {cell.column.columnDef.cell instanceof Function
-                          ? cell.column.columnDef.cell(cell.getContext())
-                          : null}
-                      </TableCell>
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell
+                            key={cell.id}
+                            className={cn(
+                              'px-3 py-2',
+                              COLUMN_CLASS[cell.column.id as ProductSalesColumnId],
+                              cell.column.id !== 'product' && 'tabular-nums',
+                              cell.column.id === 'product' && 'whitespace-normal',
+                            )}
+                          >
+                            {cell.column.columnDef.cell instanceof Function
+                              ? cell.column.columnDef.cell(cell.getContext())
+                              : null}
+                          </TableCell>
+                        ))}
+                      </TableRow>
                     ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        {!loading && products.length > 0 ? (
-          <DataTablePagination
-            pageIndex={Math.floor(offset / PAGE_SIZE)}
-            pageSize={PAGE_SIZE}
-            totalCount={totalCount}
-            fetching={fetching}
-            onPageChange={(page) => setOffset(page * PAGE_SIZE)}
-            onPrefetch={(page) => prefetchPage(page * PAGE_SIZE)}
-          />
-        ) : null}
-      </TablePanel>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            {!loading && products.length > 0 ? (
+              <DataTablePagination
+                pageIndex={Math.floor(offset / PAGE_SIZE)}
+                pageSize={PAGE_SIZE}
+                totalCount={totalCount}
+                fetching={fetching}
+                onPageChange={(page) => setOffset(page * PAGE_SIZE)}
+                onPrefetch={(page) => prefetchPage(page * PAGE_SIZE)}
+              />
+            ) : null}
+          </TablePanel>
 
-      <SalesOverview daily={daily} loading={loading} />
+          <SalesOverview daily={daily} loading={loading} />
+        </TabsContent>
 
-      <BuyersBoard tracked={trackedBuyers} loading={loading} />
+        <TabsContent value="buyers">
+          <BuyersBoard tracked={trackedBuyers} loading={loading} />
+        </TabsContent>
+      </Tabs>
 
       <SellerSalesDrawer
         product={selected}
@@ -1240,40 +1257,36 @@ function BuyersBoard({
   loading,
 }: {
   tracked: ProductSaleBuyer[];
-  others?: ProductSaleBuyer[];
   loading: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const withPhone = tracked.filter(hasBuyerPhone);
   return (
-    <section aria-label="Compradores con teléfono">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-4 py-3 text-left hover:bg-muted/40"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span>
-          <span className="block text-sm font-medium">Compradores con teléfono</span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            Más de 5 unidades. Solo si hay celular para contactarlos.
-          </span>
-        </span>
-        <span className="flex items-center gap-2 text-sm tabular-nums text-muted-foreground">
-          {loading ? '—' : formatSalesCount(withPhone.length)}
-          <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} />
-        </span>
-      </button>
-      {open ? (
-        <div className="mt-3">
-          {loading ? <Skeleton className="h-40 w-full" /> : withPhone.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nadie con teléfono pasó de 5 u en este periodo.</p>
-          ) : (
-            <BuyersTable buyers={withPhone} defaultSort="units" detailed />
-          )}
+    <TablePanel aria-label="Clientes destacados" aria-busy={loading}>
+      <div className="flex flex-col gap-3 border-b border-border bg-muted/30 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold">Clientes destacados</h2>
+            {!loading ? <Badge variant="outline">{formatSalesCount(tracked.length)}</Badge> : null}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Compraron más de 5 unidades o superaron S/ 500 en el periodo.
+          </p>
         </div>
-      ) : null}
-    </section>
+        <div className="flex flex-wrap gap-1.5" aria-label="Criterios de clientes destacados">
+          <Badge variant="secondary">Más de 5 unidades</Badge>
+          <Badge variant="secondary">Más de S/ 500</Badge>
+        </div>
+      </div>
+      {loading ? (
+        <div className="p-4 sm:p-5"><Skeleton className="h-32 w-full" /></div>
+      ) : tracked.length === 0 ? (
+        <div className="px-5 py-8 text-center">
+          <p className="text-sm font-medium">Sin clientes destacados</p>
+          <p className="mt-1 text-xs text-muted-foreground">Nadie superó los criterios en este periodo.</p>
+        </div>
+      ) : (
+        <BuyersTable buyers={tracked} defaultSort="grossSales" detailed />
+      )}
+    </TablePanel>
   );
 }
 
@@ -1298,51 +1311,107 @@ function BuyersTable({
     setSortDir(column === 'name' || column === 'phone' || column === 'company' ? 'asc' : 'desc');
   };
   return (
-    <Table className="mt-2 table-fixed">
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[28%]">
-            <SortHeader label="Comprador" active={sortBy === 'name'} dir={sortDir} onClick={() => applySort('name')} />
-          </TableHead>
-          <TableHead className="w-[16%]">
-            <SortHeader label="Teléfono" active={sortBy === 'phone'} dir={sortDir} onClick={() => applySort('phone')} />
-          </TableHead>
-          <TableHead className="w-[28%]">
-            <SortHeader label="Empresa" active={sortBy === 'company'} dir={sortDir} onClick={() => applySort('company')} />
-          </TableHead>
-          <TableHead className="hidden w-[10%] sm:table-cell">
-            <SortHeader label="Unidades compradas" active={sortBy === 'units'} dir={sortDir} onClick={() => applySort('units')} />
-          </TableHead>
-          <TableHead className="w-[18%]">
-            <SortHeader label="Ventas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      <div className="hidden md:block">
+        <Table className="table-fixed">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[25%]">
+                <SortHeader label="Cliente" active={sortBy === 'name'} dir={sortDir} onClick={() => applySort('name')} />
+              </TableHead>
+              <TableHead className="w-[18%]">
+                <SortHeader label="Contacto" active={sortBy === 'phone'} dir={sortDir} onClick={() => applySort('phone')} />
+              </TableHead>
+              <TableHead className="w-[13%]">
+                <SortHeader label="Compra" active={sortBy === 'units'} dir={sortDir} onClick={() => applySort('units')} />
+              </TableHead>
+              <TableHead className="w-[14%]">
+                <SortHeader label="Total" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />
+              </TableHead>
+              <TableHead className="w-[30%]">
+                <SortHeader label="Sellers y productos" active={sortBy === 'company'} dir={sortDir} onClick={() => applySort('company')} />
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((buyer) => (
+              <TableRow key={buyer.buyerKey} className={cn(detailed && 'align-top')}>
+                <TableCell className="whitespace-normal">
+                  <BuyerName buyer={buyer} detailed={detailed} />
+                </TableCell>
+                <TableCell className="whitespace-normal"><BuyerContact buyer={buyer} /></TableCell>
+                <TableCell className="whitespace-normal">
+                  <span className="block font-medium tabular-nums">{formatSalesCount(buyer.unitsBought)} u</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {formatSalesCount(buyer.ordersCount)} {buyer.ordersCount === 1 ? 'pedido' : 'pedidos'}
+                  </span>
+                </TableCell>
+                <TableCell className="whitespace-normal font-medium tabular-nums">{formatSalesMoney(buyer.grossSales)}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {detailed ? <BuyerCompanies buyer={buyer} /> : <span className="text-sm">{buyerCompaniesLabel(buyer)}</span>}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="divide-y divide-border md:hidden">
         {rows.map((buyer) => (
-          <TableRow key={buyer.buyerKey} className={cn(detailed && 'align-top')}>
-            <TableCell className="whitespace-normal">
-              <span className="block text-sm font-medium">{buyer.name}</span>
-              <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{buyerIdentity(buyer)}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {formatSalesCount(buyer.ordersCount)} {buyer.ordersCount === 1 ? 'pedido' : 'pedidos'}
-                {detailed && formatBuyerLastOrder(buyer.lastOrderedAt) ? ` · ${formatBuyerLastOrder(buyer.lastOrderedAt)}` : ''}
-              </span>
-            </TableCell>
-            <TableCell className="whitespace-normal">
-              <BuyerPhone phone={buyer.phone} />
-            </TableCell>
-            <TableCell className="whitespace-normal">
-              {detailed ? <BuyerCompanies buyer={buyer} /> : (
-                <span className="text-sm">{buyerCompaniesLabel(buyer)}</span>
-              )}
-            </TableCell>
-            <TableCell className="hidden tabular-nums sm:table-cell">{formatSalesCount(buyer.unitsBought)}</TableCell>
-            <TableCell className="tabular-nums">{formatSalesMoney(buyer.grossSales)}</TableCell>
-          </TableRow>
+          <article key={buyer.buyerKey} className="px-4 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <BuyerName buyer={buyer} detailed={detailed} />
+              <span className="shrink-0 text-sm font-semibold tabular-nums">{formatSalesMoney(buyer.grossSales)}</span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Contacto</p>
+                <div className="mt-1"><BuyerContact buyer={buyer} /></div>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Compra</p>
+                <p className="mt-1 text-sm font-medium tabular-nums">
+                  {formatSalesCount(buyer.unitsBought)} u · {formatSalesCount(buyer.ordersCount)} {buyer.ordersCount === 1 ? 'pedido' : 'pedidos'}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 border-t border-border/70 pt-3"><BuyerCompanies buyer={buyer} /></div>
+          </article>
         ))}
-      </TableBody>
-    </Table>
+      </div>
+    </>
+  );
+}
+
+function BuyerName({ buyer, detailed }: { buyer: ProductSaleBuyer; detailed: boolean }) {
+  return (
+    <div>
+      <span className="block text-sm font-semibold leading-5">{buyer.name}</span>
+      <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{buyerIdentity(buyer)}</span>
+      {detailed && formatBuyerLastOrder(buyer.lastOrderedAt) ? (
+        <span className="mt-0.5 block text-xs text-muted-foreground">Última compra: {formatBuyerLastOrder(buyer.lastOrderedAt)}</span>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-1">
+        {buyerQualificationLabels(buyer).map((label) => (
+          <Badge key={label} variant="outline" className="h-5 px-1.5 text-[10px]">{label}</Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BuyerContact({ buyer }: { buyer: ProductSaleBuyer }) {
+  const hasPhone = buyerPhoneDigits(buyer.phone).length >= 6;
+  const hasEmail = Boolean(buyer.email);
+  if (!hasPhone && !hasEmail) return <span className="text-xs text-muted-foreground">Sin datos de contacto</span>;
+  return (
+    <div className="space-y-1">
+      {hasPhone ? <BuyerPhone phone={buyer.phone} /> : null}
+      {hasEmail ? (
+        <a href={`mailto:${buyer.email}`} className="block truncate text-xs text-muted-foreground hover:text-foreground hover:underline">
+          {buyer.email}
+        </a>
+      ) : null}
+    </div>
   );
 }
 
