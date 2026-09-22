@@ -1065,6 +1065,42 @@ test('lista pedidos ordenando por total o fecha con una lista blanca', async () 
   assert.doesNotMatch(seen[2], /drop table/);
 });
 
+test('la bandeja puede traer la foto del producto de cada pedido', async () => {
+  const seen = [];
+  const db = {
+    async query(sql) {
+      seen.push(sql.replace(/\s+/g, ' '));
+      return {
+        rows: [{
+          id: 51,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: 'PV-51',
+          external_order_number: 'PV-51',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          document_requirement: 'disabled',
+          document_type_policy: 'automatic',
+          currency: 'PEN',
+          total: 99.9,
+          items: [{ name: 'Mesa de noche', sku: 'HOG028', quantity: 1, imageUrl: '/seed/hog028.svg', shopSku: '118765881' }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ includeItems: true, limit: 20 }, db);
+  assert.match(seen[0], /from order_items oi/);
+  assert.equal(result.orders[0].items[0].imageUrl, '/seed/hog028.svg');
+  assert.equal(result.orders[0].items[0].shopSku, '118765881');
+  assert.equal(result.orders[0].items[0].name, 'Mesa de noche');
+
+  await listOrders({ limit: 20 }, db);
+  assert.doesNotMatch(seen[1], /from order_items oi/);
+});
+
 test('lista solo devoluciones por la fecha en que pasaron a ese estado', async () => {
   const seen = [];
   const db = {

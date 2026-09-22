@@ -1,6 +1,7 @@
 /** Columnas visibles de la bandeja multicanal. Sin Teléfono a propósito. */
 export const MANAGED_ORDER_TABLE_COLUMNS = [
   'order',
+  'product',
   'seller',
   'customer',
   'origin',
@@ -85,6 +86,7 @@ export function buildManagedOrderListFilters(input: ManagedOrderListFilterInput)
     fulfillmentStatus: input.fulfillmentStatus === 'all' ? undefined : input.fulfillmentStatus,
     ...(search ? {} : { from: input.date, to: input.date }),
     search: search || undefined,
+    includeItems: true,
     limit: MANAGED_ORDER_LIST_LIMIT,
     offset: 0,
   };
