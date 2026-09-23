@@ -62,6 +62,17 @@ export function isSameDocumentDateRange(a: DocumentDateRange, b: DocumentDateRan
   return a.from === b.from && a.to === b.to;
 }
 
+/**
+ * Primer mes visible del calendario de rango: arranca en el mes del inicio para
+ * no dejar un panel entero en el futuro cuando el rango termina hoy.
+ */
+export function documentDateRangeFirstMonth(from: string, max: string, numberOfMonths: number) {
+  const fromMonth = `${from.slice(0, 7)}-01`;
+  const [year, month] = max.slice(0, 7).split('-').map(Number);
+  const limit = dateKey(new Date(year, month - 1 - Math.max(0, numberOfMonths - 1), 1));
+  return fromMonth > limit ? limit : fromMonth;
+}
+
 function isDateKey(value: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(dateFromKey(value).getTime()));
 }
