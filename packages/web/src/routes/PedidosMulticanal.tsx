@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { ChannelMark } from '../components/channel-mark';
+import { QuantityTag } from '../components/QuantityTag';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import {
@@ -1478,14 +1479,16 @@ function OrderProductCell({ items }: { items?: ManagedOrderListItem[] }) {
     );
   }
   const extra = (items?.length || 1) - 1;
+  const units = (items || []).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
   const skuLine = [item.sku, extra > 0 ? `+${extra} más` : ''].filter(Boolean).join(' · ');
   return (
     <div className="flex min-w-0 items-center gap-2">
       <ProductThumb url={item.imageUrl} shopSku={item.shopSku} sku={item.sku} name={item.name || 'Producto'} />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-medium leading-5" title={item.name || ''}>{item.name || 'Producto'}</p>
         <p className="truncate text-[11px] text-muted-foreground">{skuLine || 'Sin SKU'}</p>
       </div>
+      <QuantityTag quantity={units} />
     </div>
   );
 }
