@@ -1296,14 +1296,14 @@ export default function PedidosMulticanal() {
                  </div>
                </SheetHeader>
                  <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
-                 <TabsList aria-label="Secciones del pedido" className="mx-5 mt-4 h-11 w-auto shrink-0 justify-start gap-1 rounded-xl bg-muted/60 p-1">
-                   <TabsTrigger value="summary" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                 <TabsList aria-label="Secciones del pedido" className="h-16 w-full shrink-0 justify-start gap-1 border-b border-border px-6 py-2">
+                   <TabsTrigger value="summary" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
                      <PanelTop /> Resumen
                    </TabsTrigger>
-                   <TabsTrigger value="products" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                   <TabsTrigger value="products" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
                      <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
                    </TabsTrigger>
-                   <TabsTrigger value="activity" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                   <TabsTrigger value="activity" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
                     <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
                   </TabsTrigger>
                 </TabsList>
@@ -1490,6 +1490,12 @@ export default function PedidosMulticanal() {
                                   aria-label="Monto de comisión en soles"
                                   className="h-10 w-32 rounded-lg pl-9 pr-3 text-right text-base tabular-nums [appearance:textfield]"
                                   value={commissionDraft}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      event.preventDefault();
+                                      void saveCommission(item);
+                                    }
+                                  }}
                                   onChange={(event) => {
                                     const next = event.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
                                     const [whole, decimals = ''] = next.split('.');
