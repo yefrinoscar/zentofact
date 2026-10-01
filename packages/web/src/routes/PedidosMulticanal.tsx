@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Package,
   PanelTop,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -32,6 +33,15 @@ import { ChannelMark } from '../components/channel-mark';
 import { QuantityTag } from '../components/QuantityTag';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { usePermissions } from '../hooks/usePermissions';
+import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import {
+  buildManualOrderEditPayload,
+  MANUAL_EDIT_DOCUMENT_TYPES,
+  validateManualOrderEdit,
+  type ManualOrderEditDraft,
+  type ManualOrderEditLine,
+} from '../lib/manual-order-edit';
 import {
   buildManagedOrderListFilters,
   deliveryLabel,
@@ -123,6 +133,7 @@ type OrderItem = {
   sku?: string | null;
   description: string;
   quantity: number;
+  unitPrice?: number | null;
   total?: number | null;
 };
 
@@ -202,6 +213,7 @@ type ManagedOrder = {
     paymentMethod?: string;
     saleSource?: string;
     delivery?: string;
+    deliveryDate?: string;
     shippingCarrier?: string;
     receivedBy?: string;
     paidTo?: string;
@@ -470,7 +482,7 @@ function canRecordPayment(order: ManagedOrder) {
 
 function originLabel(order: ManagedOrder) {
   if (order.channelCode === 'manual') {
-    return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Manual';
+    return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Tienda';
   }
   return order.channelName;
 }
@@ -570,6 +582,7 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
 
   const goToGenerateDocument = useCallback((order: ManagedOrder) => {
     const kind = pendingDocumentKind(order);
@@ -597,6 +610,9 @@ export default function PedidosMulticanal() {
   const [ripleyAction, setRipleyAction] = useState('');
   const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
+  const [editOrder, setEditOrder] = useState<OrderDetail | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
   const todayRef = useRef(today);
@@ -767,6 +783,19 @@ export default function PedidosMulticanal() {
     }
   };
 
+  const openEdit = async (order: ManagedOrder) => {
+    setEditOpen(true);
+    setEditOrder(null);
+    setEditLoading(true);
+    try {
+      setEditOrder(await api.getManagedOrder(order.id));
+    } catch {
+      setEditOpen(false);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const runRipleyAction = async (action: string, operation: () => Promise<string>) => {
     setRipleyAction(action);
     setRipleyActionNote('');
@@ -906,6 +935,21 @@ export default function PedidosMulticanal() {
       void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
       setPaymentOrder(null);
       setSuccessMessage(`Pago de ${updated.externalOrderNumber || input.order.externalOrderNumber} registrado.`);
+    },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: (input: { orderId: number; payload: ReturnType<typeof buildManualOrderEditPayload> }) =>
+      api.updateManagedOrder(input.orderId, input.payload),
+    onSuccess: (updated, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+      setEditOpen(false);
+      setEditOrder(null);
+      if (detail?.id === input.orderId) {
+        void api.getManagedOrder(input.orderId).then(setDetail).catch(() => {});
+      }
+      setSuccessMessage(`Venta ${updated?.externalOrderNumber || ''} actualizada.`);
     },
   });
 
@@ -1058,6 +1102,14 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              {isAdmin && row.original.channelCode === 'manual' && (
+                <>
+                  <DropdownMenuItem onClick={() => void openEdit(row.original)}>
+                    <Pencil /> Editar venta
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
@@ -1072,7 +1124,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById, goToGenerateDocument, searchIgnoresDate]);
+  }, [companyById, goToGenerateDocument, isAdmin, searchIgnoresDate]);
 
   const table = useReactTable({
     data: orders,
@@ -1428,6 +1480,23 @@ export default function PedidosMulticanal() {
           paymentMutation.mutate({ order: paymentOrder, ...input });
         }}
       />
+
+      <EditManualOrderDialog
+        open={editOpen}
+        order={editOrder}
+        loading={editLoading}
+        busy={editMutation.isPending}
+        error={(editMutation.error as Error | undefined)?.message || ''}
+        onClose={() => {
+          editMutation.reset();
+          setEditOpen(false);
+          setEditOrder(null);
+        }}
+        onSubmit={(payload) => {
+          if (!editOrder) return;
+          editMutation.mutate({ orderId: editOrder.id, payload });
+        }}
+      />
     </div>
   );
 }
@@ -1502,6 +1571,235 @@ function DetailField({ icon, label, content }: { icon: React.ReactNode; label: s
       </p>
       <div className="min-w-0 text-sm text-foreground">{content}</div>
     </div>
+  );
+}
+
+const EMPTY_MANUAL_EDIT_DRAFT: ManualOrderEditDraft = {
+  customerName: '',
+  customerPhone: '',
+  documentType: '1',
+  documentNumber: '',
+  legalName: '',
+  deliveryType: 'recojo',
+  carrier: '',
+  address: '',
+  reference: '',
+  deliveryDate: '',
+  lines: [],
+};
+
+function manualEditDraftFromOrder(order: OrderDetail): ManualOrderEditDraft {
+  const shipping = order.shipping || {};
+  return {
+    customerName: order.customer?.name || '',
+    customerPhone: order.customer?.phone || '',
+    documentType: String(order.customer?.documentType || '1'),
+    documentNumber: order.customer?.documentNumber || '',
+    legalName: order.customer?.legalName || '',
+    deliveryType: shipping.type === 'envio' ? 'envio' : 'recojo',
+    carrier: String(shipping.carrier || order.metadata?.shippingCarrier || ''),
+    address: String(shipping.address || ''),
+    reference: String(shipping.reference || ''),
+    deliveryDate: String(order.metadata?.deliveryDate || '').slice(0, 10),
+    lines: order.items.map((item) => ({
+      id: item.id,
+      name: item.description || item.sku || `Producto ${item.id}`,
+      quantity: String(item.quantity ?? 1),
+      unitPrice: item.unitPrice == null ? '' : String(item.unitPrice),
+    })),
+  };
+}
+
+function EditManualOrderDialog({
+  open,
+  order,
+  loading,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  order: OrderDetail | null;
+  loading: boolean;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onSubmit: (payload: ReturnType<typeof buildManualOrderEditPayload>) => void;
+}) {
+  const [draft, setDraft] = useState<ManualOrderEditDraft>(EMPTY_MANUAL_EDIT_DRAFT);
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    if (!order) {
+      setDraft(EMPTY_MANUAL_EDIT_DRAFT);
+      return;
+    }
+    setDraft(manualEditDraftFromOrder(order));
+    setLocalError('');
+  }, [order]);
+
+  const patch = (change: Partial<ManualOrderEditDraft>) =>
+    setDraft((current) => ({ ...current, ...change }));
+  const patchLine = (id: number, change: Partial<ManualOrderEditLine>) =>
+    setDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...change } : line)),
+    }));
+
+  const submit = () => {
+    const invalid = validateManualOrderEdit(draft);
+    if (invalid) {
+      setLocalError(invalid);
+      return;
+    }
+    setLocalError('');
+    onSubmit(buildManualOrderEditPayload(draft));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar venta</DialogTitle>
+          <DialogDescription>
+            {order ? `Pedido ${order.externalOrderNumber}. Corrige cliente, entrega o líneas.` : 'Cargando pedido…'}
+          </DialogDescription>
+        </DialogHeader>
+        {(localError || error) && (
+          <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+            <AlertCircle className="size-4 shrink-0" /> {localError || error}
+          </div>
+        )}
+        {loading || !order ? (
+          <div className="flex flex-1 items-center justify-center gap-2 py-10 text-muted-foreground">
+            <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando pedido…
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cliente</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-customer-name">Nombre</Label>
+                <Input id="edit-customer-name" value={draft.customerName} onChange={(event) => patch({ customerName: event.target.value })} />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-phone">Teléfono</Label>
+                  <Input id="edit-customer-phone" inputMode="numeric" value={draft.customerPhone} onChange={(event) => patch({ customerPhone: event.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-document">Documento</Label>
+                  <div className="flex gap-2">
+                    <Select value={draft.documentType} onValueChange={(value) => patch({ documentType: value })}>
+                      <SelectTrigger className="w-24" aria-label="Tipo de documento"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MANUAL_EDIT_DOCUMENT_TYPES.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input id="edit-customer-document" value={draft.documentNumber} onChange={(event) => patch({ documentNumber: event.target.value })} />
+                  </div>
+                </div>
+              </div>
+              {draft.documentType === '6' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-legal">Razón social</Label>
+                  <Input id="edit-customer-legal" value={draft.legalName} onChange={(event) => patch({ legalName: event.target.value })} />
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Entrega</p>
+              <div className="flex flex-wrap gap-2">
+                {(['recojo', 'envio'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => patch({ deliveryType: option, ...(option === 'recojo' ? { carrier: '' } : {}) })}
+                    className={cn(
+                      'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
+                      draft.deliveryType === option ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
+                    )}
+                  >
+                    {option === 'recojo' ? 'Recojo' : 'Envío'}
+                  </button>
+                ))}
+              </div>
+              {draft.deliveryType === 'envio' && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Repartidor</Label>
+                    <Select value={draft.carrier} onValueChange={(value) => patch({ carrier: value })}>
+                      <SelectTrigger aria-label="Repartidor"><SelectValue placeholder="Elige repartidor" /></SelectTrigger>
+                      <SelectContent>
+                        {SHIPPING_CARRIERS.map((carrier) => (
+                          <SelectItem key={carrier.value} value={carrier.value}>{carrier.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-address">Dirección</Label>
+                    <Input id="edit-address" value={draft.address} onChange={(event) => patch({ address: event.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-reference">Referencia</Label>
+                    <Input id="edit-reference" value={draft.reference} onChange={(event) => patch({ reference: event.target.value })} />
+                  </div>
+                </>
+              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-delivery-date">Fecha de entrega</Label>
+                <Input id="edit-delivery-date" type="date" value={draft.deliveryDate} onChange={(event) => patch({ deliveryDate: event.target.value })} />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Productos</p>
+              <ul className="divide-y divide-border rounded-md border border-border">
+                {draft.lines.map((line) => (
+                  <li key={line.id} className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem] items-center gap-2 px-3 py-2">
+                    <span className="truncate text-sm" title={line.name}>{line.name}</span>
+                    <Input
+                      aria-label={`Cantidad de ${line.name}`}
+                      inputMode="numeric"
+                      value={line.quantity}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        if (!/^\d*$/.test(raw)) return;
+                        patchLine(line.id, { quantity: raw });
+                      }}
+                      className="h-9"
+                    />
+                    <Input
+                      aria-label={`Precio de ${line.name}`}
+                      inputMode="decimal"
+                      value={line.unitPrice}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        if (!/^\d*(?:[.,]\d*)?$/.test(raw)) return;
+                        patchLine(line.id, { unitPrice: raw });
+                      }}
+                      className="h-9"
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">Cantidad y precio de cada línea. El comprobante emitido no cambia.</p>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" className="h-10 cursor-pointer sm:h-9" onClick={onClose} disabled={busy}>Cancelar</Button>
+          <Button className="h-10 cursor-pointer sm:h-9" onClick={submit} disabled={busy || loading || !order}>
+            {busy ? <><Loader2 className="animate-spin motion-reduce:animate-none" /> Guardando…</> : 'Guardar cambios'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -513,6 +513,26 @@ const apiHttp = {
     method: 'PATCH',
     body: JSON.stringify(data),
   }),
+  updateManagedOrder: (id: number, data: {
+    customer?: {
+      name?: string;
+      phone?: string;
+      documentType?: string;
+      documentNumber?: string;
+      legalName?: string;
+    };
+    shipping?: {
+      type?: 'envio' | 'recojo';
+      carrier?: string;
+      address?: string;
+      reference?: string;
+    };
+    deliveryDate?: string;
+    items?: Array<{ id: number; quantity: number; unitPrice: number }>;
+  }) => req(`/order-management/orders/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
   createManagedOrder: (data: Record<string, unknown> & { idempotencyKey?: string }) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return req('/order-management/orders/manual', {

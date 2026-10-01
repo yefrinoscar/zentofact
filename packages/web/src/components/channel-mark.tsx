@@ -35,7 +35,7 @@ export function ChannelMark({
     compact === 'falabella' ? 'Falabella'
       : compact === 'ripley' ? 'Ripley'
         : compact === 'mercadolibre' ? 'Mercado Libre'
-          : compact === 'manual' ? 'Manual'
+          : compact === 'manual' ? 'Tienda'
             : undefined
   );
 
@@ -84,7 +84,19 @@ export function ChannelMark({
     );
   }
 
-  if (compact === 'manual' || !name) {
+  if (compact === 'manual') {
+    return (
+      <span
+        className={cn('grid shrink-0 place-items-center rounded-[3px] bg-teal-100 text-[9px] font-bold text-teal-800', box, className)}
+        title={label || 'Tienda'}
+        aria-label="Tienda"
+      >
+        T
+      </span>
+    );
+  }
+
+  if (!name) {
     return (
       <span
         className={cn('grid shrink-0 place-items-center rounded-[3px] bg-teal-100 text-[9px] font-bold text-teal-800', box, className)}
