@@ -1284,6 +1284,9 @@ app.get('/boletas/:id/xml', async (c) => {
 });
 // Los generadores del core devuelven un objeto { html, numeroCompleto, ... } → JSON, no c.html.
 app.get('/boletas/:id/preview', async (c) => { try { return ok(c, await core.generateAcceptedBoletaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+// Reconciliar con SUNAT una nota no confirmada (nunca emite otra a ciegas).
+app.post('/credit-notes/:id/reemit', requirePermission('credit_notes_manage'), async (c) => { try { return ok(c, await core.reEmitCreditNote(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
+app.post('/credit-notes/:id/refresh-status', requirePermission('credit_notes_manage'), async (c) => { try { return ok(c, await core.refreshCreditNoteStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.get('/credit-notes/:id/preview', requirePermission('credit_notes_manage'), async (c) => { try { return ok(c, await core.generatePreviewCreditNoteHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/boletas/preview', async (c) => {
   try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewBoletaHtmlForVenta(companyId, venta)); }

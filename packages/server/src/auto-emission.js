@@ -5,7 +5,8 @@
 // Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
-import {
+import core from '@zentofact/core';
+const {
   getCompany,
   listCompanies,
   listBranches,
@@ -20,22 +21,38 @@ import {
   sendFacturaToSunat,
   reEmitBoleta,
   reEmitFactura,
+  reEmitCreditNote,
+  auditSaleAgainstSource,
+  markStaleSendingAsUnconfirmed,
+  listDocumentsNeedingReconciliation,
+  listOverdueDocuments,
+  refreshDocumentStatus,
+  probeSeriesCollision,
+  isSunatProduction,
   createAndSendCreditNoteFromBoleta,
   createAndSendCreditNoteFromFactura,
-} from '@zentofact/core';
+} = core;
 import { FalabellaApiClient } from '@zentofact/falabella-api';
+
+// Mantener esta constante en el worker evita depender de un named export
+// dinámico del paquete CommonJS de core durante el arranque ESM.
+const SUNAT_SEND_DEADLINE_DAYS = 3;
 import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { fetchFalabellaWebhookOrder, upsertFalabellaWebhookOrder } from './falabella-sync.js';
 import {
   JOB_KIND_CREDIT_NOTE,
   JOB_KIND_INVOICE,
   decideCreditNoteJob,
+  decideExistingDocumentJob,
+  creditNoteReconciliationOutcome,
   isPendingStatus,
   isReadyStatus,
   jobKindForStatus,
   normStatus,
+  reconciliationJobOutcome,
+  sweepDocumentAction,
 } from './auto-emission-policy.js';
-import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
+import { buildSunatAttentionEmail, deliverAlertEmail, notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
 import { isMailerConfigured, sendEmail } from './mailer.js';
 import { listUsers } from './users.js';
 
@@ -271,6 +288,7 @@ function toFacturaInput({ company, branch, venta, orderNumber }) {
     branch_id: branch.id,
     order_number: orderNumber,
     serie: venta.serie || 'F001',
+    expected_total: Number(venta.total) > 0 ? { total: Number(venta.total), source: 'total del pedido Falabella' } : undefined,
     fecha_emision: venta.fechaEmision || today(),
     moneda: venta.moneda || 'PEN',
     tipo_operacion: '0101',
@@ -363,6 +381,13 @@ export async function ensureTables() {
       updated_at timestamptz not null default now()
     );
     alter table auto_emission_config add column if not exists webhook_secret text;
+    create table if not exists sunat_document_alerts (
+      document_table text not null,
+      document_id integer not null,
+      kind text not null,
+      created_at timestamptz not null default now(),
+      primary key (document_table, document_id, kind)
+    );
     create table if not exists auto_emission_state (
       id integer primary key default 1,
       paused boolean not null default false,
@@ -882,31 +907,30 @@ async function processJob(job, setStep = async () => {}) {
   }
 
   // 3) ¿ya tiene documento? Solo cuenta como emitido si está ACEPTADO por SUNAT.
-  //    Si existe pero está RECHAZADO/sin aceptar → falla visible (no se oculta como "Emitida").
+  //    Si existe sin aceptar, se reconcilia con SUNAT antes de cualquier reemisión.
   await setStep('revisando documento existente');
   const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
   const existingDoc = requiresInvoice ? doc?.factura : doc?.boleta;
   if (existingDoc) {
-    const est = String(existingDoc.estadoSunat || existingDoc.estado || '').toUpperCase();
     const tipo = requiresInvoice ? 'factura' : 'boleta';
-    if (est === 'ACEPTADO') {
-      return { status: 'done', result: `ya tenía ${tipo} ${existingDoc.numeroCompleto}`, boletaNumero: existingDoc.numeroCompleto };
-    }
-    const reemitted = requiresInvoice
+    const existing = decideExistingDocumentJob({ document: existingDoc, tipo, dryRun: await getDryRun() });
+    if (existing.action === 'done') return { status: 'done', result: existing.result, boletaNumero: existing.boletaNumero };
+    if (existing.action === 'fail') return { status: 'failed', result: existing.result, boletaNumero: existing.boletaNumero };
+    if (existing.action === 'skip') return { status: 'skipped', result: existing.result, boletaNumero: existing.boletaNumero };
+
+    await setStep(`reconciliando ${tipo} ${existingDoc.numeroCompleto} con SUNAT`);
+    const reconciled = requiresInvoice
       ? await reEmitFactura(existingDoc.id)
       : await reEmitBoleta(existingDoc.id);
-    if (reemitted?.success) {
-      return {
-        status: 'done',
-        result: reemitted.message || `${tipo} ${existingDoc.numeroCompleto} validada/reemitida con SUNAT`,
-        boletaNumero: reemitted.numeroCompleto || existingDoc.numeroCompleto,
-      };
-    }
-    return {
-      status: 'failed',
-      result: reemitted?.message || `${tipo} ${existingDoc.numeroCompleto} requiere revisión antes de reemitir`,
-      boletaNumero: existingDoc.numeroCompleto,
-    };
+    const outcome = reconciliationJobOutcome(reconciled, { tipo, document: existingDoc });
+    if (outcome.action === 'retry') return { retry: true, error: outcome.error };
+    if (outcome.action === 'fail') return { status: 'failed', result: outcome.result, boletaNumero: outcome.boletaNumero };
+
+    log(`orden ${orderNumber} -> ${outcome.note}`);
+    const uploadNote = requiresInvoice
+      ? await uploadAcceptedFactura({ job, order, orderNumber, facturaId: outcome.documentId, setStep })
+      : await uploadAcceptedBoleta({ job, order, orderNumber, boletaId: outcome.documentId, setStep });
+    return { status: 'done', result: `${outcome.note}${uploadNote}`, boletaNumero: outcome.numeroCompleto };
   }
 
   if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };
@@ -915,6 +939,8 @@ async function processJob(job, setStep = async () => {}) {
     await setStep('construyendo factura');
     const built = await falabellaBuildFacturaVenta({ companyId: job.company_id, order });
     if (built.error) throw new Error(`build-factura: ${built.error}`);
+    const audit = auditBuiltSale(built.venta);
+    if (!audit.ok) return { status: 'failed', result: `factura no emitida: ${audit.mismatches.join('; ')}` };
     await setStep('creando factura');
     const branch = await getOrCreateMainBranch(company);
     const created = await createFactura(toFacturaInput({ company, branch, venta: built.venta, orderNumber }));
@@ -923,24 +949,9 @@ async function processJob(job, setStep = async () => {}) {
     if (!sent?.success) throw new Error(sent?.message || 'SUNAT no aceptó la factura');
     log(`orden ${orderNumber} -> factura ${created.numeroCompleto} ACEPTADA`);
 
-    let uploadNote = '';
-    try {
-      await setStep('subiendo factura a Falabella');
-      const up = await falabellaUploadInvoicePdf({
-        companyId: job.company_id,
-        facturaId: created.id,
-        orderNumber,
-        orderItemIds: built.orderItemIds || [],
-        invoiceNumber: created.numeroCompleto,
-        invoiceDate: created.fechaEmision,
-        invoiceType: 'FACTURA',
-        source: 'local_factura',
-      });
-      uploadNote = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || 'ver logs'})`;
-      log(`orden ${orderNumber} factura subida a Falabella:`, uploadNote);
-    } catch (e) {
-      uploadNote = ` (subida falló: ${e.message})`;
-    }
+    const uploadNote = await uploadAcceptedFactura({
+      job, order, orderNumber, facturaId: created.id, orderItemIds: built.orderItemIds || [], setStep,
+    });
 
     return { status: 'done', result: `factura ${created.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: created.numeroCompleto };
   }
@@ -949,6 +960,8 @@ async function processJob(job, setStep = async () => {}) {
   await setStep('construyendo boleta');
   const built = await falabellaBuildBoletaVenta({ companyId: job.company_id, order });
   if (built.error) throw new Error(`build-venta: ${built.error}`);
+  const audit = auditBuiltSale(built.venta);
+  if (!audit.ok) return { status: 'failed', result: `boleta no emitida: ${audit.mismatches.join('; ')}` };
   await setStep('emitiendo boleta en SUNAT');
   const result = await processWorkflow(buildConfig(company), [built.venta]);
   const b = result?.boletas?.[0];
@@ -958,30 +971,79 @@ async function processJob(job, setStep = async () => {}) {
   log(`orden ${orderNumber} -> boleta ${b.numeroCompleto} ACEPTADA`);
 
   // 5) Subir la boleta a Falabella (necesita Chromium para el PDF; ver nota de deploy).
-  let uploadNote = '';
+  const uploadNote = await uploadAcceptedBoleta({ job, order, orderNumber, setStep });
+
+  return { status: 'done', result: `boleta ${b.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: b.numeroCompleto };
+}
+
+// La venta construida debe sumar el total del pedido antes de reservar un número.
+function auditBuiltSale(venta) {
+  return auditSaleAgainstSource({
+    sourceTotal: venta?.total,
+    sourceLabel: 'total del pedido Falabella',
+    lines: venta?.detalles || [],
+  });
+}
+
+// Sube a Falabella la boleta aceptada de la orden. Devuelve una nota para el resultado del job.
+async function uploadAcceptedBoleta({ job, order, orderNumber, boletaId = null, setStep }) {
   try {
     await setStep('subiendo boleta a Falabella');
     const emitted = (await pool.query(
-      `select id, numero_completo, fecha_emision from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' order by id desc limit 1`,
-      [job.company_id, orderNumber],
+      `select id, numero_completo, fecha_emision from boletas
+        where company_id=$1 and estado_sunat='ACEPTADO'
+          and (($3::int is not null and id=$3) or ($3::int is null and order_number=$2))
+        order by id desc limit 1`,
+      [job.company_id, orderNumber, boletaId],
     )).rows[0];
-    if (emitted) {
-      const up = await falabellaUploadBoletaPdf({
-        companyId: job.company_id,
-        boletaId: emitted.id,
-        orderNumber,
-        orderId: order.OrderId,
-        invoiceNumber: emitted.numero_completo,
-        invoiceDate: emitted.fecha_emision,
-      });
-      uploadNote = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || up?.skipped || 'ver logs'})`;
-      log(`orden ${orderNumber} subida a Falabella:`, uploadNote);
-    }
+    if (!emitted) return ' (subida omitida: no hay boleta aceptada)';
+    const up = await falabellaUploadBoletaPdf({
+      companyId: job.company_id,
+      boletaId: emitted.id,
+      orderNumber,
+      orderId: order.OrderId,
+      invoiceNumber: emitted.numero_completo,
+      invoiceDate: emitted.fecha_emision,
+    });
+    const note = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || up?.skipped || 'ver logs'})`;
+    log(`orden ${orderNumber} subida a Falabella:`, note);
+    return note;
   } catch (e) {
-    uploadNote = ` (subida falló: ${e.message})`;
+    return ` (subida falló: ${e.message})`;
   }
+}
 
-  return { status: 'done', result: `boleta ${b.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: b.numeroCompleto };
+// Sube a Falabella la factura aceptada. Si no se conocen los ítems de la orden, los consulta.
+async function uploadAcceptedFactura({ job, order, orderNumber, facturaId, orderItemIds = null, setStep }) {
+  try {
+    await setStep('subiendo factura a Falabella');
+    const emitted = (await pool.query(
+      `select id, numero_completo, fecha_emision from facturas where id=$1 and company_id=$2 and estado_sunat='ACEPTADO'`,
+      [facturaId, job.company_id],
+    )).rows[0];
+    if (!emitted) return ' (subida omitida: no hay factura aceptada)';
+    let itemIds = orderItemIds;
+    if (!itemIds) {
+      const built = await falabellaBuildFacturaVenta({ companyId: job.company_id, order });
+      if (built.error) return ` (subida falló: ${built.error})`;
+      itemIds = built.orderItemIds || [];
+    }
+    const up = await falabellaUploadInvoicePdf({
+      companyId: job.company_id,
+      facturaId: emitted.id,
+      orderNumber,
+      orderItemIds: itemIds,
+      invoiceNumber: emitted.numero_completo,
+      invoiceDate: emitted.fecha_emision,
+      invoiceType: 'FACTURA',
+      source: 'local_factura',
+    });
+    const note = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || 'ver logs'})`;
+    log(`orden ${orderNumber} factura subida a Falabella:`, note);
+    return note;
+  } catch (e) {
+    return ` (subida falló: ${e.message})`;
+  }
 }
 
 async function processCreditNoteJob(job, { order, orderNumber, orderDate, setStep }) {
@@ -1002,13 +1064,21 @@ async function processCreditNoteJob(job, { order, orderNumber, orderDate, setSte
   if (decided.action === 'skip') return { status: 'skipped', result: decided.result, boletaNumero: decided.boletaNumero || null };
   if (decided.action === 'fail') return { status: 'failed', result: decided.result, boletaNumero: decided.boletaNumero || null };
   if (decided.action === 'done') return { status: 'done', result: decided.result, boletaNumero: decided.boletaNumero || null };
+  if (decided.action === 'reconcile') {
+    await setStep(`reconciliando nota de crédito ${decided.boletaNumero || ''} con SUNAT`.trim());
+    const outcome = creditNoteReconciliationOutcome(await reEmitCreditNote(decided.creditNoteId), { numero: decided.boletaNumero || '' });
+    if (outcome.action === 'retry') return { retry: true, error: outcome.error };
+    return { status: outcome.action === 'done' ? 'done' : 'failed', result: outcome.result, boletaNumero: outcome.boletaNumero };
+  }
 
   await setStep(decided.source === 'factura' ? 'emitiendo nota de crédito de factura' : 'emitiendo nota de crédito de boleta');
   const sent = decided.source === 'factura'
     ? await createAndSendCreditNoteFromFactura(decided.documentId, CREDIT_NOTE_OPTIONS)
     : await createAndSendCreditNoteFromBoleta(decided.documentId, CREDIT_NOTE_OPTIONS);
   if (!sent?.success) {
-    throw new Error(sent?.error?.message || sent?.message || 'SUNAT no aceptó la nota de crédito');
+    // Rechazada: se descartó y el reintento emite otra. Sin confirmar: se
+    // conserva y el reintento la reconcilia antes de emitir nada.
+    return { retry: true, error: sent?.error?.message || sent?.message || 'SUNAT no aceptó la nota de crédito' };
   }
   const numero = sent.numeroCompleto || decided.boletaNumero;
   log(`orden ${orderNumber} -> nota de crédito ${numero} ACEPTADA`);
@@ -1266,10 +1336,126 @@ export async function reconcile() {
 }
 
 // ── Arranque de los loops ──
+// ── Barrido SUNAT: nada queda sin confirmar en silencio ──
+const SUNAT_SWEEP_INTERVAL_MS = 15 * 60_000;
+const SERIES_SENTINEL_INTERVAL_MS = 6 * 3600_000;
+let lastSeriesSentinelAt = 0;
+
+/**
+ * 1. ENVIANDO abandonado (el proceso murió durante el envío) → NO_CONFIRMADO.
+ * 2. Comprobantes sin confirmar: si su job falló se reencola (reconcilia y sube
+ *    a Falabella); si no tienen job, se consulta SUNAT en modo lectura.
+ * 3. Aviso por correo, una vez por comprobante, de lo que sigue sin aceptación
+ *    cerca del plazo de SUNAT.
+ * 4. Cada 6 h, centinela de serie para todas las empresas que emiten: si otro
+ *    sistema ya usó los próximos números de B001/F001, se avisa. Cada emisión
+ *    que choque queda protegida por la reconciliación (revisión manual).
+ */
+export async function sweepSunatDocuments({ now = Date.now() } = {}) {
+  const summary = { recovered: 0, requeued: 0, refreshed: 0, alerted: 0, collisions: 0 };
+  const recovered = await markStaleSendingAsUnconfirmed();
+  summary.recovered = recovered.length;
+  for (const doc of recovered) log(`SUNAT: ${doc.numeroCompleto} quedó ENVIANDO sin respuesta → NO_CONFIRMADO`);
+
+  const enabledIds = new Set((await pool.query('select company_id from auto_emission_config where enabled=true')).rows.map((r) => r.company_id));
+  for (const doc of await listDocumentsNeedingReconciliation()) {
+    const kind = doc.table === 'credit_notes' ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE;
+    const job = doc.orderNumber
+      ? (await pool.query(
+        `select id, status from emission_jobs where company_id=$1 and order_number=$2 and coalesce(kind, 'invoice')=$3`,
+        [doc.companyId, doc.orderNumber, kind],
+      )).rows[0]
+      : null;
+    const action = sweepDocumentAction({ document: doc, job, companyEnabled: enabledIds.has(doc.companyId) });
+    try {
+      if (action === 'requeue') {
+        await retryJob(job.id);
+        summary.requeued += 1;
+        log(`SUNAT: ${doc.numeroCompleto} sin confirmar → job ${job.id} reencolado para reconciliar`);
+      } else if (action === 'refresh' && isSunatProduction()) {
+        // getStatusCdr solo existe en producción; en beta no hay nada que consultar.
+        await refreshDocumentStatus(doc.table, doc.id);
+        summary.refreshed += 1;
+      }
+    } catch (error) {
+      log(`SUNAT: no se pudo reconciliar ${doc.numeroCompleto}:`, error.message);
+    }
+  }
+
+  const overdue = await pendingAlerts(await listOverdueDocuments(), 'OVERDUE');
+  const sentinelDue = now - lastSeriesSentinelAt >= SERIES_SENTINEL_INTERVAL_MS;
+  if (sentinelDue) lastSeriesSentinelAt = now;
+  const collisions = sentinelDue ? await runSeriesSentinel() : [];
+  summary.collisions = collisions.length;
+
+  if (overdue.length || collisions.length) {
+    const names = new Map((await listCompanies()).map((c) => [c.id, c.nombre]));
+    const result = await deliverAlertEmail({
+      email: buildSunatAttentionEmail({
+        overdue: overdue.map((doc) => ({ ...doc, companyName: names.get(doc.companyId) })),
+        collisions: collisions.map((probe) => ({ ...probe, companyName: names.get(probe.companyId) })),
+        deadlineDays: SUNAT_SEND_DEADLINE_DAYS,
+      }),
+      ...(await alertMailerOptions()),
+    });
+    if (result.notified) {
+      for (const doc of overdue) {
+        await pool.query(
+          `insert into sunat_document_alerts (document_table, document_id, kind) values ($1, $2, 'OVERDUE') on conflict do nothing`,
+          [doc.table, doc.id],
+        );
+      }
+      summary.alerted = overdue.length;
+    }
+  }
+  return summary;
+}
+
+async function pendingAlerts(documents, kind) {
+  if (!documents.length) return [];
+  const alerted = new Set((await pool.query(
+    `select document_table || ':' || document_id as key from sunat_document_alerts where kind=$1`,
+    [kind],
+  )).rows.map((r) => r.key));
+  return documents.filter((doc) => !alerted.has(`${doc.table}:${doc.id}`));
+}
+
+/**
+ * Centinela de serie para todas las empresas con comprobantes en los últimos
+ * 30 días, sobre las series que realmente usan (B001 / F001).
+ */
+async function runSeriesSentinel() {
+  if (!isSunatProduction()) return [];
+  const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+  const series = (await pool.query(
+    `select distinct company_id, '03' as tipo, serie from boletas where coalesce(updated_at, 0) >= $1
+     union
+     select distinct company_id, '01' as tipo, serie from facturas where coalesce(updated_at, 0) >= $1`,
+    [since],
+  )).rows;
+  const collisions = [];
+  for (const { company_id: companyId, tipo: tipoDocumento, serie } of series) {
+    try {
+      const probe = await probeSeriesCollision({ companyId, tipoDocumento, serie });
+      if (probe.verdict !== 'COLLISION') continue;
+      collisions.push({ ...probe, companyId });
+      log(`SUNAT: la serie ${serie} de la empresa ${companyId} ya tiene números que ZentoFact no emitió`);
+    } catch (error) {
+      log(`SUNAT: centinela de serie ${serie} empresa ${companyId}:`, error.message);
+    }
+  }
+  return collisions;
+}
+
 export function startAutoEmission() {
   if (!AUTO_ENABLED) { log('apagado por kill-switch (AUTO_EMIT_ENABLED=false)'); return; }
   log('activo. worker cada 20s. modo (simular/emitir) y cron se leen de la config.');
   setInterval(() => { processQueue().catch((e) => log('worker error:', e.message)); }, 20_000);
+  setInterval(() => {
+    sweepSunatDocuments()
+      .then((r) => { if (r.recovered || r.requeued || r.alerted || r.collisions) log('barrido SUNAT:', JSON.stringify(r)); })
+      .catch((e) => log('barrido SUNAT error:', e.message));
+  }, SUNAT_SWEEP_INTERVAL_MS);
   if (!RECONCILE_ENABLED) { log('cron deshabilitado por env (AUTO_EMIT_RECONCILE=false)'); return; }
 
   // Cron auto-reprogramable: lee frecuencia de la config cada vez (encender/apagar/frecuencia en caliente).

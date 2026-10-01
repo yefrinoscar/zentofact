@@ -3,7 +3,12 @@ import { db } from '../db';
 import { boletas, clients, companies, branches, dailySummaries } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
-import { classifySunatSendResult } from './sunat.service';
+import { sendDocumentOnce } from './document-sender';
+import { withActiveOrderDocumentGuard } from './order-document-guard';
+import { withExpectedAmount } from './amount-audit';
+import { CLOSED_STATES } from './sunat-reconciliation';
+import { reconcileAndReemit, refreshStatusFromSunat } from './reemission.service';
+import type { ReemissionAdapter } from './reemission.service';
 import type { CompanyConfig, BoletaSunatData } from './sunat.service';
 import { readArchive, saveCdr, saveSummaryCdr, saveXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
@@ -43,6 +48,8 @@ export interface CreateBoletaInput {
   usuario_creacion?: string;
   // false en beta: se asigna el correlativo pero NO se avanza el contador (la boleta beta se limpia después).
   persistCorrelative?: boolean;
+  /** Total del origen (por ejemplo el pedido de Falabella); se audita antes de enviar a SUNAT. */
+  expected_total?: { total: number; source: string };
 }
 
 function now(): number {
@@ -78,7 +85,15 @@ async function findBoletasForVoidSummary(summary: { companyId: number; orderNumb
   return rows.filter(boleta => identifiers.has(boleta.orderNumber || '') || identifiers.has(boleta.numeroCompleto));
 }
 
+// Una orden tiene a lo sumo un comprobante activo; ver withActiveOrderDocumentGuard.
 export async function createBoleta(input: CreateBoletaInput) {
+  return withActiveOrderDocumentGuard(
+    { table: 'boletas', companyId: input.company_id, orderNumber: input.order_number },
+    () => insertBoleta(input),
+  );
+}
+
+async function insertBoleta(input: CreateBoletaInput) {
   const company = (await db.select().from(companies).where(eq(companies.id, input.company_id)).limit(1))[0];
   if (!company || !company.activo) throw new Error('Empresa no encontrada o inactiva');
 
@@ -120,7 +135,7 @@ export async function createBoleta(input: CreateBoletaInput) {
   const correlativo = await getNextCorrelative(input.branch_id, '03', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
   const issueDate = resolveIssueDate(input.fecha_emision, '03');
-  const datosAdicionales = withIssueDateTrace(input.datos_adicionales, issueDate);
+  const datosAdicionales = withExpectedAmount(withIssueDateTrace(input.datos_adicionales, issueDate), input.expected_total);
   const totals = calculateTotals(input.detalles);
   const ts = now();
 
@@ -156,6 +171,10 @@ export async function sendBoletaToSunat(id: number) {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
+  const estadoActual = String(boleta.estadoSunat || '').toUpperCase();
+  if (CLOSED_STATES.includes(estadoActual)) {
+    return { success: false, blocked: true, error_code: 'DOCUMENT_CLOSED', message: `No se envía: la boleta ${boleta.numeroCompleto} está ${estadoActual}.` };
+  }
 
   const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -195,179 +214,44 @@ export async function sendBoletaToSunat(id: number) {
     mtoImpVenta: Number(boleta.mtoImpVenta || 0), formaPagoTipo: 'Contado',
   };
 
-  const fileName = `${company.ruc}-03-${boleta.serie}-${boleta.correlativo}`;
-  let signedXml: string;
-  let xmlPath = boleta.xmlPath;
-  try {
-    if (xmlPath) {
-      signedXml = (await readArchive(xmlPath)).toString('utf8');
-    } else {
-      const xml = sunatService.buildUBLXml(boletaData);
-      signedXml = sunatService.signDocument(xml);
-      xmlPath = await saveXml(
-        { serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) },
-        signedXml,
-      );
-      await db.update(boletas).set({
-        xmlPath,
-        codigoHash: sunatService.getHashFromXml(signedXml) || null,
-        updatedAt: now(),
-      }).where(eq(boletas.id, id));
-    }
-  } catch (error: any) {
-    const errorData = { code: 'ARCHIVE_ERROR', message: `No se pudo guardar o leer el XML firmado: ${error.message}` };
-    await db.update(boletas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(boletas.id, id));
-    return { success: false, message: errorData.message, error_code: errorData.code };
-  }
-
-  const result = await sunatService.sendSignedDocument(signedXml, fileName);
-
-  const sendState = classifySunatSendResult(result);
-  if (sendState === 'ACEPTADO' && result.xml) {
-    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
-    try {
-      if (result.cdrZip) updates.cdrPath = await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip);
-    } catch (error: any) {
-      const errorData = { code: 'CDR_ARCHIVE_ERROR', message: `SUNAT respondió aceptación, pero no se pudo guardar el CDR: ${error.message}` };
-      await db.update(boletas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(boletas.id, id));
-      return { success: false, message: errorData.message, error_code: errorData.code };
-    }
-    await db.update(boletas).set(updates).where(eq(boletas.id, id));
-    return { success: true, message: 'Boleta enviada exitosamente a SUNAT' };
-  }
-  const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  const cdrPath = result.cdrZip
-    ? await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip)
-    : boleta.cdrPath;
-  await db.update(boletas).set({
-    estadoSunat: sendState,
-    cdrPath,
-    respuestaSunat: JSON.stringify(errorData),
-    updatedAt: Math.floor(Date.now() / 1000),
-  }).where(eq(boletas.id, id));
-  return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
-}
-
-// Un rechazo "transitorio" (documento aún en proceso en SUNAT) NO quema el número.
-export function isTransientSunatRejection(respuestaSunat: string | null | undefined): boolean {
-  if (!respuestaSunat) return false;
-  let code = '', message = '';
-  try { const p = JSON.parse(respuestaSunat); code = String(p.code || ''); message = String(p.message || ''); }
-  catch { message = String(respuestaSunat); }
-  const t = `${code} ${message}`.toLowerCase();
-  return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
-}
-
-// El estado local puede ser RECHAZADO aunque SUNAT haya aceptado el documento
-// después de un error técnico (por ejemplo, al guardar el ZIP). Antes de
-// quemar el número y crear otro, consultar siempre el CDR autoritativo.
-async function refreshBoletaBeforeReemit(boleta: any, company: any) {
-  const sunat = new SunatService({
+  const sent = await sendDocumentOnce({
+    documentTable: 'boletas',
+    table: boletas,
+    tipoDocumento: '03',
     ruc: company.ruc,
-    razonSocial: company.razonSocial,
-    direccion: company.direccion || '',
-    ubigeo: company.ubigeo || '',
-    usuarioSol: company.usuarioSol || '',
-    claveSol: company.claveSol || '',
-    certificado: company.certificado || '',
-    certificadoPassword: company.certificadoPassword || '',
+    doc: boleta,
+    reference: boleta.orderNumber,
+    sunat: sunatService,
+    buildUnsignedXml: () => sunatService.buildUBLXml(boletaData),
+    saveXml,
+    saveCdr,
   });
-  const result = await sunat.getStatusCdr(company.ruc, boleta.tipoDocumento || '03', boleta.serie, boleta.correlativo);
-  if (!result.success) {
-    return {
-      success: false,
-      state: String(boleta.estadoSunat || '').toUpperCase(),
-      message: result.error?.message || 'SUNAT no respondió la consulta del comprobante.',
-    };
-  }
-
-  const responseCode = String(result.cdrResponse?.code ?? '').trim();
-  const responseText = String(result.cdrResponse?.description || result.statusMessage || '').trim();
-  const notFound = result.statusCode === '0127' || /(?:ticket|comprobante).*(?:no existe|no encontrado)/i.test(responseText);
-  const state = responseCode === '0'
-    ? 'ACEPTADO'
-    : responseCode
-      ? 'RECHAZADO'
-      : notFound
-        ? 'NO_ENVIADA'
-        : 'PENDIENTE';
-  const cdrPath = result.cdrZip ? await saveCdr(boleta, result.cdrZip) : boleta.cdrPath;
-  const respuestaSunat = JSON.stringify({
-    source: 'SUNAT_GET_STATUS_CDR_BEFORE_REEMIT',
-    statusCode: result.statusCode || null,
-    statusMessage: result.statusMessage || null,
-    code: responseCode || null,
-    description: responseText || null,
-    checkedAt: new Date().toISOString(),
-  });
-  await db.update(boletas).set({
-    estadoSunat: state,
-    respuestaSunat,
-    cdrPath,
-    updatedAt: now(),
-  }).where(eq(boletas.id, boleta.id));
-  return { success: true, state, message: responseText || result.statusMessage || `SUNAT devolvió ${state}.` };
+  return sent.success ? { ...sent, message: 'Boleta enviada exitosamente a SUNAT' } : sent;
 }
 
-// Re-emite una boleta RECHAZADA. Transitorio → reintenta el mismo número. Definitivo →
-// mantiene la rechazada como evidencia (sin la orden) y crea una NUEVA con el siguiente
-// correlativo disponible, que se lleva la orden, y esa se emite.
+const BOLETA_REEMISSION: ReemissionAdapter = {
+  documentTable: 'boletas',
+  table: boletas,
+  tipoDocumento: '03',
+  label: 'boleta',
+  send: (id) => sendBoletaToSunat(id),
+  saveCdr: (doc, cdrZip) => saveCdr(doc, cdrZip),
+  replacementOverrides: { dailySummaryId: null },
+};
+
+// Consulta getStatusCdr de una boleta individual sin enviar ni reemitir.
+export async function refreshIndividualBoletaStatus(id: number) {
+  return refreshStatusFromSunat(BOLETA_REEMISSION, id);
+}
+
+// Reemite una boleta no aceptada solo después de reconciliarla con SUNAT. Ver
+// reconcileAndReemit para las reglas: nunca se usa otro número mientras el
+// anterior pueda existir en SUNAT.
 export async function reEmitBoleta(id: number) {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
-
-  const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
-  if (!company) throw new Error('Empresa no encontrada');
-  const checked = await refreshBoletaBeforeReemit(boleta, company);
-  if (!checked.success) {
-    return {
-      success: false,
-      blocked: true,
-      error_code: 'SUNAT_STATUS_CHECK_FAILED',
-      message: `No se reemite: no se pudo confirmar el estado en SUNAT. ${checked.message}`,
-    };
-  }
-  if (checked.state === 'ACEPTADO') {
-    return { success: true, reemitted: false, refreshed: true, estadoSunat: 'ACEPTADO', message: 'SUNAT confirmó que la boleta ya estaba aceptada; se recuperó su CDR.' };
-  }
-  if (checked.state === 'PENDIENTE') {
-    return { success: false, blocked: true, error_code: 'SUNAT_STATUS_PENDING', message: 'No se reemite: SUNAT todavía no confirmó el estado del comprobante.' };
-  }
-
-  // Una respuesta de CDR con código de rechazo es autoritativa: el número ya
-  // fue procesado por SUNAT y no se debe volver a enviar con el mismo número.
-  const burned = checked.state === 'RECHAZADO';
-  if (!burned) return sendBoletaToSunat(id);
-
-  const now = Math.floor(Date.now() / 1000);
-  const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
-  const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
-  const issueDate = resolveIssueDate(boleta.fechaEmision, '03');
-  const datosAdicionales = withIssueDateTrace(boleta.datosAdicionales, issueDate);
-
-  await db.update(boletas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(boletas.id, id));
-
-  const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = boleta as any;
-  const inserted = await db.insert(boletas).values({
-    ...rest,
-    correlativo: nextCorrelativo,
-    numeroCompleto,
-    orderNumber: boleta.orderNumber,
-    fechaEmision: issueDate.fechaEmision,
-    dailySummaryId: null,
-    datosAdicionales,
-    estadoSunat: 'PENDIENTE',
-    respuestaSunat: null,
-    xmlPath: null,
-    cdrPath: null,
-    pdfPath: null,
-    codigoHash: null,
-    createdAt: now,
-    updatedAt: now,
-  }).returning({ id: boletas.id });
-
-  return sendBoletaToSunat(inserted[0].id);
+  return reconcileAndReemit(BOLETA_REEMISSION, id);
 }
 
 export async function checkDailySummaryStatus(summaryId: number) {

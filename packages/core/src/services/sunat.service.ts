@@ -5,6 +5,7 @@ import { signXml, extractHashFromXml } from '../utils/xml-signer';
 import { parsePem, parsePfxToPem } from '../utils/certificate';
 import type { CertificateKeys } from '../utils/certificate';
 import { isSunatProduction } from '../utils/sunat-env';
+import { cdrVerdict } from './sunat-reconciliation';
 
 dotenv.config();
 
@@ -38,12 +39,15 @@ export interface SendResult {
 
 /**
  * A transport response is not enough to decide the tax status. Only an
- * explicit accepted CDR closes the attempt; an explicit rejected CDR burns the
- * number. Everything else must remain eligible for status verification.
+ * explicit accepted CDR (0 or 4000+ with observations) closes the attempt; an
+ * explicit rejected CDR (2000-3999) burns the number. Everything else,
+ * including SOAP faults such as 1033 or 0130, must remain eligible for status
+ * verification.
  */
 export function classifySunatSendResult(result: Pick<SendResult, 'success' | 'cdrResponse'>): 'ACEPTADO' | 'RECHAZADO' | 'NO_CONFIRMADO' {
-  if (result.success && result.cdrResponse?.code === '0') return 'ACEPTADO';
-  if (result.cdrResponse?.code && result.cdrResponse.code !== '0') return 'RECHAZADO';
+  const verdict = cdrVerdict(result.cdrResponse?.code);
+  if (verdict === 'ACCEPTED') return 'ACEPTADO';
+  if (verdict === 'REJECTED') return 'RECHAZADO';
   return 'NO_CONFIRMADO';
 }
 
@@ -490,7 +494,15 @@ export class SunatService {
         : undefined;
 
       const cdrResponse = cdrZip ? this.parseCdrResponse(cdrZip) : null;
-      if (cdrResponse?.code && cdrResponse.code !== '0') {
+      if (!cdrResponse?.code) {
+        return {
+          success: false,
+          xml: signedXml,
+          cdrZip,
+          error: { code: 'NO_CDR', message: '[Paso 3/3 - Enviar a SUNAT] SUNAT respondió sin un CDR legible.' },
+        };
+      }
+      if (cdrVerdict(cdrResponse.code) !== 'ACCEPTED') {
         return {
           success: false,
           xml: signedXml,

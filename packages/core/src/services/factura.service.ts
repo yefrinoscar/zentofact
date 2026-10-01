@@ -2,7 +2,13 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
 import { facturas, clients, companies, branches } from '../db/schema';
 import { getNextCorrelative, isRemoteSunatRejection, markCorrelativeUsed } from './correlative.service';
-import { SunatService, classifySunatSendResult } from './sunat.service';
+import { SunatService } from './sunat.service';
+import { sendDocumentOnce } from './document-sender';
+import { withActiveOrderDocumentGuard } from './order-document-guard';
+import { withExpectedAmount } from './amount-audit';
+import { CLOSED_STATES } from './sunat-reconciliation';
+import { reconcileAndReemit, refreshStatusFromSunat } from './reemission.service';
+import type { ReemissionAdapter } from './reemission.service';
 import type { CompanyConfig } from './sunat.service';
 import { readArchive, saveFacturaCdr, saveFacturaPdf, saveFacturaXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
@@ -42,6 +48,8 @@ export interface CreateFacturaInput {
   datos_adicionales?: any[];
   usuario_creacion?: string;
   persistCorrelative?: boolean;
+  /** Total del origen (por ejemplo el pedido de Falabella); se audita antes de enviar a SUNAT. */
+  expected_total?: { total: number; source: string };
 }
 
 function now(): number {
@@ -118,7 +126,15 @@ function isProductionFacturaEmission(factura: any): boolean {
   return isSunatProduction() && !isBetaFalabellaEmission(factura);
 }
 
+// Una orden tiene a lo sumo un comprobante activo; ver withActiveOrderDocumentGuard.
 export async function createFactura(input: CreateFacturaInput) {
+  return withActiveOrderDocumentGuard(
+    { table: 'facturas', companyId: input.company_id, orderNumber: input.order_number },
+    () => insertFactura(input),
+  );
+}
+
+async function insertFactura(input: CreateFacturaInput) {
   const company = (await db.select().from(companies).where(eq(companies.id, input.company_id)).limit(1))[0];
   if (!company || !company.activo) throw new Error('Empresa no encontrada o inactiva');
 
@@ -168,7 +184,7 @@ export async function createFactura(input: CreateFacturaInput) {
   const correlativo = await getNextCorrelative(input.branch_id, '01', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
   const issueDate = resolveIssueDate(input.fecha_emision, '01');
-  const datosAdicionales = withIssueDateTrace(input.datos_adicionales, issueDate);
+  const datosAdicionales = withExpectedAmount(withIssueDateTrace(input.datos_adicionales, issueDate), input.expected_total);
   const detalles = normalizeFacturaDetalles(input.detalles);
   const totals = calculateTotals(detalles);
   const ts = now();
@@ -214,6 +230,10 @@ export async function sendFacturaToSunat(id: number) {
   const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.estadoSunat === 'ACEPTADO') throw new Error('La factura ya fue aceptada por SUNAT');
+  const estadoActual = String(factura.estadoSunat || '').toUpperCase();
+  if (CLOSED_STATES.includes(estadoActual)) {
+    return { success: false, blocked: true, error_code: 'DOCUMENT_CLOSED', message: `No se envía: la factura ${factura.numeroCompleto} está ${estadoActual}.` };
+  }
 
   const company = (await db.select().from(companies).where(eq(companies.id, factura.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -253,205 +273,56 @@ export async function sendFacturaToSunat(id: number) {
     mtoImpVenta: Number(factura.mtoImpVenta || 0), formaPagoTipo: 'Contado',
   };
 
-  const fileName = `${company.ruc}-01-${factura.serie}-${factura.correlativo}`;
-  let signedXml: string;
-  let xmlPath = factura.xmlPath;
-  try {
-    if (xmlPath) {
-      signedXml = (await readArchive(xmlPath)).toString('utf8');
-    } else {
-      const xml = sunatService.buildUBLXml(facturaData);
-      signedXml = sunatService.signDocument(xml);
-      xmlPath = await saveFacturaXml(
-        { serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) },
-        signedXml,
-      );
-      await db.update(facturas).set({
-        xmlPath,
-        codigoHash: sunatService.getHashFromXml(signedXml) || null,
-        updatedAt: now(),
-      }).where(eq(facturas.id, id));
-    }
-  } catch (error: any) {
-    const errorData = { code: 'ARCHIVE_ERROR', message: `No se pudo guardar o leer el XML firmado: ${error.message}` };
-    await db.update(facturas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(facturas.id, id));
-    return { success: false, message: errorData.message, error_code: errorData.code };
-  }
+  const sent = await sendDocumentOnce({
+    documentTable: 'facturas',
+    table: facturas,
+    tipoDocumento: '01',
+    ruc: company.ruc,
+    doc: factura,
+    reference: factura.orderNumber,
+    sunat: sunatService,
+    buildUnsignedXml: () => sunatService.buildUBLXml(facturaData),
+    saveXml: saveFacturaXml,
+    saveCdr: saveFacturaCdr,
+  });
+  if (sent.success) return { ...sent, message: 'Factura enviada exitosamente a SUNAT' };
 
-  const result = await sunatService.sendSignedDocument(signedXml, fileName);
-
-  const sendState = classifySunatSendResult(result);
-  if (sendState === 'ACEPTADO' && result.xml) {
-    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
-    try {
-      if (result.cdrZip) updates.cdrPath = await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip);
-    } catch (error: any) {
-      const errorData = { code: 'CDR_ARCHIVE_ERROR', message: `SUNAT respondió aceptación, pero no se pudo guardar el CDR: ${error.message}` };
-      await db.update(facturas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(facturas.id, id));
-      return { success: false, message: errorData.message, error_code: errorData.code };
-    }
-    await db.update(facturas).set(updates).where(eq(facturas.id, id));
-    return { success: true, message: 'Factura enviada exitosamente a SUNAT' };
-  }
-  const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
   if (!isProductionFacturaEmission(factura)) {
-    if (isRemoteSunatRejection(errorData.code, errorData.message)) {
+    // Factura de prueba: se descarta. Si salió hacia SUNAT producción o SUNAT la
+    // procesó, su número nunca se reutiliza.
+    if (isSunatProduction() || isRemoteSunatRejection(sent.error_code, sent.message)) {
       await markCorrelativeUsed(factura.branchId, '01', factura.serie, factura.correlativo);
     }
     await db.delete(facturas).where(eq(facturas.id, id));
-    return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
   }
-  const cdrPath = result.cdrZip
-    ? await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip)
-    : factura.cdrPath;
-  await db.update(facturas).set({
-    estadoSunat: sendState,
-    cdrPath,
-    respuestaSunat: JSON.stringify(errorData),
-    updatedAt: Math.floor(Date.now() / 1000),
-  }).where(eq(facturas.id, id));
-  return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
+  return sent;
 }
 
-// Un rechazo "transitorio" (documento aún en proceso en SUNAT) NO quema el número:
-// se puede reintentar con el MISMO correlativo. Un rechazo definitivo sí lo quema.
-export function isTransientSunatRejection(respuestaSunat: string | null | undefined): boolean {
-  if (!respuestaSunat) return false;
-  let code = '', message = '';
-  try { const p = JSON.parse(respuestaSunat); code = String(p.code || ''); message = String(p.message || ''); }
-  catch { message = String(respuestaSunat); }
-  const t = `${code} ${message}`.toLowerCase();
-  return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
-}
+const FACTURA_REEMISSION: ReemissionAdapter = {
+  documentTable: 'facturas',
+  table: facturas,
+  tipoDocumento: '01',
+  label: 'factura',
+  send: (id) => sendFacturaToSunat(id),
+  saveCdr: (doc, cdrZip) => saveFacturaCdr(doc, cdrZip),
+  replacementOverrides: { respuestaFalabella: null },
+};
 
-// Re-emite una factura RECHAZADA.
-// - Rechazo transitorio (documento en proceso): el número NO está quemado → se reintenta
-//   el MISMO registro con el mismo número.
-// - Rechazo definitivo: SUNAT ya registró ese número como rechazado/anulado ("ya está
-//   informado") y NO se puede reutilizar. Se CONSERVA el registro rechazado como
-//   evidencia del hueco (pero se le quita la orden) y se crea un registro NUEVO con el
-//   siguiente correlativo disponible, que se lleva la orden, y ese es el que se emite.
+// Reemite una factura no aceptada solo después de reconciliarla con SUNAT. Ver
+// reconcileAndReemit para las reglas: nunca se usa otro número mientras el
+// anterior pueda existir en SUNAT.
 export async function reEmitFactura(id: number) {
   const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.estadoSunat === 'ACEPTADO') throw new Error('La factura ya fue aceptada por SUNAT');
-
-  // Un error local al enviar/guardar el ZIP no demuestra que SUNAT no haya
-  // aceptado el documento. Consultar el CDR antes de quemar el correlativo.
-  const checked = await refreshFacturaStatus(id);
-  if (!checked.success) {
-    return {
-      success: false,
-      blocked: true,
-      error_code: 'SUNAT_STATUS_CHECK_FAILED',
-      message: `No se reemite: no se pudo confirmar el estado en SUNAT. ${checked.message || ''}`.trim(),
-    };
-  }
-  if (checked.estadoSunat === 'ACEPTADO') {
-    return { success: true, reemitted: false, refreshed: true, estadoSunat: 'ACEPTADO', message: 'SUNAT confirmó que la factura ya estaba aceptada; se recuperó su CDR.' };
-  }
-  if (['PENDIENTE', 'SIN_CDR'].includes(String(checked.estadoSunat || '').toUpperCase())) {
-    return { success: false, blocked: true, error_code: 'SUNAT_STATUS_PENDING', message: 'No se reemite: SUNAT todavía no confirmó el estado de la factura.' };
-  }
-
-  const burned = String(checked.estadoSunat || '').toUpperCase() === 'RECHAZADO';
-  if (!burned) return sendFacturaToSunat(id);
-
-  const now = Math.floor(Date.now() / 1000);
-  const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
-  const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
-  const issueDate = resolveIssueDate(factura.fechaEmision, '01');
-  const datosAdicionales = withIssueDateTrace(factura.datosAdicionales, issueDate);
-
-  // La rechazada se mantiene como evidencia del hueco (conserva el motivo), pero libera
-  // la orden y pasa a REEMPLAZADO para que no vuelva a ofrecer reintento.
-  await db.update(facturas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(facturas.id, id));
-
-  // Nuevo registro = copia de la rechazada con nuevo número y la orden; estado limpio.
-  const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = factura as any;
-  const inserted = await db.insert(facturas).values({
-    ...rest,
-    correlativo: nextCorrelativo,
-    numeroCompleto,
-    orderNumber: factura.orderNumber,
-    fechaEmision: issueDate.fechaEmision,
-    datosAdicionales,
-    estadoSunat: 'PENDIENTE',
-    respuestaSunat: null,
-    xmlPath: null,
-    cdrPath: null,
-    pdfPath: null,
-    codigoHash: null,
-    respuestaFalabella: null,
-    createdAt: now,
-    updatedAt: now,
-  }).returning({ id: facturas.id });
-
-  return sendFacturaToSunat(inserted[0].id);
+  return reconcileAndReemit(FACTURA_REEMISSION, id);
 }
 
 // Consulta a SUNAT por RUC, tipo, serie y correlativo y sincroniza el estado local
-// usando el CDR autoritativo. "REGISTRADO" solo significa que el documento existe
-// localmente; nunca se interpreta como aceptación tributaria.
+// usando el CDR autoritativo. Solo marca ACEPTADO si el CDR corresponde a esta
+// factura; "REGISTRADO" nunca se interpreta como aceptación tributaria.
 export async function refreshFacturaStatus(id: number) {
-  const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
-  if (!factura) throw new Error('Factura no encontrada');
-  if (factura.estadoSunat === 'ACEPTADO') return { estadoSunat: 'ACEPTADO', changed: false };
-
-  const company = (await db.select().from(companies).where(eq(companies.id, factura.companyId)).limit(1))[0];
-  if (!company) throw new Error('Empresa no encontrada');
-
-  const sunat = new SunatService(buildCompanyConfig(company));
-  const result = await sunat.getStatusCdr(
-    company.ruc,
-    factura.tipoDocumento || '01',
-    factura.serie,
-    factura.correlativo,
-  );
-
-  if (!result.success) {
-    const respuesta = result.error || { code: 'SUNAT_QUERY_ERROR', message: 'SUNAT no respondió la consulta.' };
-    await db.update(facturas).set({
-      respuestaSunat: JSON.stringify(respuesta),
-      updatedAt: now(),
-    }).where(eq(facturas.id, id));
-    return { estadoSunat: factura.estadoSunat, changed: false, success: false, ...respuesta };
-  }
-
-  const cdr = result.cdrResponse;
-  const responseCode = String(cdr?.code ?? '').trim();
-  const responseText = String(cdr?.description || result.statusMessage || '').trim();
-  let estadoSunat = String(factura.estadoSunat || 'REGISTRADO').toUpperCase();
-
-  if (responseCode === '0') estadoSunat = 'ACEPTADO';
-  else if (responseCode) estadoSunat = 'RECHAZADO';
-  else if (result.statusCode === '0125' || /no se pudo obtener la constancia/i.test(responseText)) estadoSunat = 'SIN_CDR';
-  else if (/no (?:existe|encontrad)|no est[aá] registrad/i.test(responseText)) estadoSunat = 'NO_ENCONTRADO';
-
-  const cdrPath = result.cdrZip ? await saveFacturaCdr(factura, result.cdrZip) : factura.cdrPath;
-  const respuestaSunat = JSON.stringify({
-    source: 'SUNAT_GET_STATUS_CDR',
-    statusCode: result.statusCode || null,
-    statusMessage: result.statusMessage || null,
-    code: responseCode || null,
-    description: responseText || null,
-    checkedAt: new Date().toISOString(),
-  });
-
-  await db.update(facturas).set({
-    estadoSunat,
-    respuestaSunat,
-    cdrPath,
-    updatedAt: now(),
-  }).where(eq(facturas.id, id));
-
-  return {
-    success: true,
-    estadoSunat,
-    changed: estadoSunat !== String(factura.estadoSunat || '').toUpperCase(),
-    statusCode: result.statusCode,
-    message: responseText || `SUNAT devolvió el estado ${estadoSunat}.`,
-  };
+  return refreshStatusFromSunat(FACTURA_REEMISSION, id);
 }
 
 
