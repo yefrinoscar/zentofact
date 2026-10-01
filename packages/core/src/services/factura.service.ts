@@ -2,7 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
 import { facturas, clients, companies, branches } from '../db/schema';
 import { getNextCorrelative, isRemoteSunatRejection, markCorrelativeUsed } from './correlative.service';
-import { SunatService } from './sunat.service';
+import { SunatService, classifySunatSendResult } from './sunat.service';
 import type { CompanyConfig } from './sunat.service';
 import { readArchive, saveFacturaCdr, saveFacturaPdf, saveFacturaXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
@@ -280,7 +280,8 @@ export async function sendFacturaToSunat(id: number) {
 
   const result = await sunatService.sendSignedDocument(signedXml, fileName);
 
-  if (result.success && result.xml && result.cdrResponse?.code === '0') {
+  const sendState = classifySunatSendResult(result);
+  if (sendState === 'ACEPTADO' && result.xml) {
     const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
     try {
       if (result.cdrZip) updates.cdrPath = await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip);
@@ -300,12 +301,11 @@ export async function sendFacturaToSunat(id: number) {
     await db.delete(facturas).where(eq(facturas.id, id));
     return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
   }
-  const hasAuthoritativeRejection = Boolean(result.cdrResponse?.code && result.cdrResponse.code !== '0');
   const cdrPath = result.cdrZip
     ? await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip)
     : factura.cdrPath;
   await db.update(facturas).set({
-    estadoSunat: hasAuthoritativeRejection ? 'RECHAZADO' : 'NO_CONFIRMADO',
+    estadoSunat: sendState,
     cdrPath,
     respuestaSunat: JSON.stringify(errorData),
     updatedAt: Math.floor(Date.now() / 1000),

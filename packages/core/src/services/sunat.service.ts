@@ -36,6 +36,17 @@ export interface SendResult {
   error?: { code: string; message: string };
 }
 
+/**
+ * A transport response is not enough to decide the tax status. Only an
+ * explicit accepted CDR closes the attempt; an explicit rejected CDR burns the
+ * number. Everything else must remain eligible for status verification.
+ */
+export function classifySunatSendResult(result: Pick<SendResult, 'success' | 'cdrResponse'>): 'ACEPTADO' | 'RECHAZADO' | 'NO_CONFIRMADO' {
+  if (result.success && result.cdrResponse?.code === '0') return 'ACEPTADO';
+  if (result.cdrResponse?.code && result.cdrResponse.code !== '0') return 'RECHAZADO';
+  return 'NO_CONFIRMADO';
+}
+
 export interface SummarySendResult {
   success: boolean;
   xml?: string;

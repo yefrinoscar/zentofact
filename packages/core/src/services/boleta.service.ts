@@ -3,6 +3,7 @@ import { db } from '../db';
 import { boletas, clients, companies, branches, dailySummaries } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
+import { classifySunatSendResult } from './sunat.service';
 import type { CompanyConfig, BoletaSunatData } from './sunat.service';
 import { readArchive, saveCdr, saveSummaryCdr, saveXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
@@ -221,7 +222,8 @@ export async function sendBoletaToSunat(id: number) {
 
   const result = await sunatService.sendSignedDocument(signedXml, fileName);
 
-  if (result.success && result.xml && result.cdrResponse?.code === '0') {
+  const sendState = classifySunatSendResult(result);
+  if (sendState === 'ACEPTADO' && result.xml) {
     const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
     try {
       if (result.cdrZip) updates.cdrPath = await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip);
@@ -234,12 +236,11 @@ export async function sendBoletaToSunat(id: number) {
     return { success: true, message: 'Boleta enviada exitosamente a SUNAT' };
   }
   const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  const hasAuthoritativeRejection = Boolean(result.cdrResponse?.code && result.cdrResponse.code !== '0');
   const cdrPath = result.cdrZip
     ? await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip)
     : boleta.cdrPath;
   await db.update(boletas).set({
-    estadoSunat: hasAuthoritativeRejection ? 'RECHAZADO' : 'NO_CONFIRMADO',
+    estadoSunat: sendState,
     cdrPath,
     respuestaSunat: JSON.stringify(errorData),
     updatedAt: Math.floor(Date.now() / 1000),
