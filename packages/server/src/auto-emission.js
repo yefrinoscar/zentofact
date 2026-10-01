@@ -1374,8 +1374,18 @@ export async function sweepSunatDocuments({ now = Date.now() } = {}) {
         log(`SUNAT: ${doc.numeroCompleto} sin confirmar → job ${job.id} reencolado para reconciliar`);
       } else if (action === 'refresh' && isSunatProduction()) {
         // getStatusCdr solo existe en producción; en beta no hay nada que consultar.
-        await refreshDocumentStatus(doc.table, doc.id);
+        const refreshed = await refreshDocumentStatus(doc.table, doc.id);
         summary.refreshed += 1;
+        // Un job agotado no vuelve a cero solo porque siga incierto. Se devuelve
+        // a la cola únicamente cuando SUNAT entrega una respuesta accionable;
+        // así el siguiente ciclo consulta nuevamente y no produce el intento
+        // 518 que se repetía indefinidamente.
+        if (job?.status === 'failed' && enabledIds.has(doc.companyId)
+          && ['ACEPTADO', 'NO_ENCONTRADO', 'RECHAZADO'].includes(String(refreshed?.estadoSunat || '').toUpperCase())) {
+          await retryJob(job.id);
+          summary.requeued += 1;
+          log(`SUNAT: ${doc.numeroCompleto} obtuvo estado accionable (${refreshed.estadoSunat}) → job ${job.id} reencolado`);
+        }
       }
     } catch (error) {
       log(`SUNAT: no se pudo reconciliar ${doc.numeroCompleto}:`, error.message);
