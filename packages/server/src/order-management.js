@@ -934,8 +934,8 @@ export async function ingestOrder(input, db) {
 }
 
 const SALESPERSON_COMMISSION_SQL = `coalesce(
-  (select sum(p.commission_amount * oi.quantity)
-   from order_items oi join products p on p.id=oi.product_id
+    (select sum(coalesce(oi.commission_amount, p.commission_amount) * oi.quantity)
+     from order_items oi join products p on p.id=oi.product_id
    where oi.order_id=o.id),
   round(coalesce(o.total, 0) * coalesce(
     (select u.commission_percent from "user" u where u.id=o.created_by), 0
@@ -1824,11 +1824,14 @@ export async function getOrder(orderId, db) {
       [id],
     ),
     target.query(
-      `select id, external_item_id, sku, provider_sku, description, quantity,
-         unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data,
-         product_id, listing_id, main_sku, stock_state, stock_applied_quantity, stock_revision,
-         created_at, updated_at
-       from order_items where order_id=$1 order by id`,
+       `select oi.id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity,
+          oi.unit_price, oi.discount_amount, oi.tax_amount, oi.total,
+          coalesce(oi.commission_amount, p.commission_amount) as commission_amount,
+          oi.provider_status, oi.metadata, oi.raw_data,
+          oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity, oi.stock_revision,
+          oi.created_at, oi.updated_at
+        from order_items oi left join products p on p.id=oi.product_id
+        where oi.order_id=$1 order by oi.id`,
       [id],
     ),
     target.query(
@@ -1870,6 +1873,7 @@ export async function getOrder(orderId, db) {
       discountAmount: row.discount_amount == null ? null : Number(row.discount_amount),
       taxAmount: row.tax_amount == null ? null : Number(row.tax_amount),
       total: row.total == null ? null : Number(row.total),
+      commissionAmount: row.commission_amount == null ? null : Number(row.commission_amount),
       providerStatus: row.provider_status,
       productId: row.product_id == null ? null : Number(row.product_id),
       listingId: row.listing_id == null ? null : Number(row.listing_id),
@@ -1991,6 +1995,30 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     channel_name: existing.channel_name,
     channel_account_name: existing.channel_account_name,
   });
+}
+
+/** Actualiza la comisión fija de una sola línea, conservando el valor del catálogo. */
+export async function updateOrderItemCommission(orderId, itemId, input = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const id = positiveInt(orderId, 'orderId');
+  const lineId = positiveInt(itemId, 'itemId');
+  const value = nullableNumber(input.commissionAmount, 'commissionAmount');
+  if (value == null || value < 0) throw new Error('La comisión debe ser un monto mayor o igual a cero.');
+  const result = await target.query(
+    `update order_items set commission_amount=$3, updated_at=now()
+     where id=$1 and order_id=$2 returning id`,
+    [lineId, id, roundMoney(value)],
+  );
+  if (!result.rowCount) throw new Error('Producto no encontrado en este pedido.');
+  await target.query(
+    `insert into order_events (order_id, event_type, source, actor_user_id,
+       previous_values, new_values, payload)
+     values ($1, 'order.item_commission_updated', 'user', $2, $3::jsonb, $4::jsonb, $5::jsonb)`,
+    [id, optionalText(input.actorUserId, 300), JSON.stringify({ itemId: lineId }),
+      JSON.stringify({ itemId: lineId, commissionAmount: roundMoney(value) }),
+      JSON.stringify({ itemId: lineId, commissionAmount: roundMoney(value) })],
+  );
+  return getOrder(id, target);
 }
 
 const MANUAL_EDIT_CUSTOMER_KEYS = ['name', 'phone', 'documentType', 'documentNumber', 'legalName'];

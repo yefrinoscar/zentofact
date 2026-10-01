@@ -1195,6 +1195,16 @@ const DDL = `
   -- Comisión, precio por mayor y beneficiario en productos existentes.
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  -- Permite corregir la comisión únicamente en una línea de un pedido, sin
+  -- cambiar la comisión base del catálogo ni de otras ventas.
+  ALTER TABLE order_items
+    ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  DO $$ BEGIN
+    ALTER TABLE order_items
+      ADD CONSTRAINT order_items_commission_amount_nonnegative
+      CHECK (commission_amount IS NULL OR commission_amount >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(14,2);
   ALTER TABLE products

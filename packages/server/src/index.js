@@ -736,6 +736,16 @@ app.patch('/order-management/orders/:id/payment', async (c) => {
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });
+app.patch('/order-management/orders/:id/items/:itemId/commission', requireAdmin(), async (c) => {
+  try {
+    const body = await c.req.json();
+    const order = await orderManagement.updateOrderItemCommission(
+      Number(c.req.param('id')), Number(c.req.param('itemId')),
+      { ...body, actorUserId: c.get('user')?.id },
+    );
+    return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
+  } catch (e) { return fail(c, e, 400); }
+});
 // Solo administradores corrigen una venta manual ya registrada.
 app.patch('/order-management/orders/:id', requireAdmin(), async (c) => {
   try {

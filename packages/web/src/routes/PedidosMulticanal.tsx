@@ -135,6 +135,7 @@ type OrderItem = {
   quantity: number;
   unitPrice?: number | null;
   total?: number | null;
+  commissionAmount?: number | null;
 };
 
 type ManagedOrderListItem = {
@@ -613,6 +614,9 @@ export default function PedidosMulticanal() {
   const [editOrder, setEditOrder] = useState<OrderDetail | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
+  const [commissionEditing, setCommissionEditing] = useState<number | null>(null);
+  const [commissionDraft, setCommissionDraft] = useState('');
+  const [commissionSaving, setCommissionSaving] = useState(false);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
   const todayRef = useRef(today);
@@ -780,6 +784,20 @@ export default function PedidosMulticanal() {
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const saveCommission = async (item: OrderItem) => {
+    if (!detail) return;
+    const amount = Number(commissionDraft);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    setCommissionSaving(true);
+    try {
+      const updated = await api.updateManagedOrderItemCommission(detail.id, item.id, amount);
+      setDetail(updated);
+      setCommissionEditing(null);
+    } finally {
+      setCommissionSaving(false);
     }
   };
 
@@ -1254,41 +1272,52 @@ export default function PedidosMulticanal() {
       />
 
       <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
-        <SheetContent className="sm:max-w-lg">
+         <SheetContent className="sm:max-w-xl">
           {detailLoading ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
               <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando detalle…
             </div>
           ) : detail ? (
             <>
-              <SheetHeader className="border-b border-border px-5 py-4 pr-16">
-                <div className="flex min-w-0 items-center gap-3">
-                  <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
-                  <div className="min-w-0">
-                    <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
-                    <SheetDescription className="mt-1 truncate">
-                      {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
-                    </SheetDescription>
-                  </div>
-                </div>
-              </SheetHeader>
-              <Tabs key={detail.id} defaultValue="summary" className="min-h-0 flex-1 gap-0 overflow-hidden">
-                <TabsList variant="line" aria-label="Secciones del pedido" className="h-11 w-full shrink-0 justify-start gap-0 border-b border-border px-4 py-0">
-                  <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3">
-                    <PanelTop /> Resumen
-                  </TabsTrigger>
-                  <TabsTrigger value="products" className="h-full flex-none rounded-none px-3">
-                    <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3">
+               <SheetHeader className="border-b border-border bg-muted/20 px-6 py-5 pr-16">
+                 <div className="flex min-w-0 items-start gap-3">
+                   <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
+                   <div className="min-w-0 flex-1">
+                     <SheetDescription className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Detalle de pedido</SheetDescription>
+                     <SheetTitle className="text-2xl tracking-tight">{detail.externalOrderNumber}</SheetTitle>
+                     <p className="mt-1 truncate text-sm text-muted-foreground">
+                       {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
+                     </p>
+                   </div>
+                   <div className="hidden shrink-0 text-right sm:block">
+                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</p>
+                     <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</p>
+                   </div>
+                 </div>
+               </SheetHeader>
+               <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
+                 <TabsList variant="line" aria-label="Secciones del pedido" className="h-12 w-full shrink-0 justify-start gap-0 border-b border-border px-5 py-0">
+                   <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3 text-sm">
+                     <PanelTop /> Resumen
+                   </TabsTrigger>
+                   <TabsTrigger value="products" className="h-full flex-none rounded-none px-3 text-sm">
+                     <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
+                   </TabsTrigger>
+                   <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3 text-sm">
                     <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
                   </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="summary" className="min-h-0 overflow-y-auto">
-                  <section className="px-5 py-5">
-                    <h3 className="mb-3 text-sm font-semibold">Pedido</h3>
-                    <div className="space-y-0.5">
+                   <section className="border-b border-border px-6 py-5">
+                     <div className="mb-4 flex items-end justify-between gap-3">
+                       <div>
+                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Estado actual</p>
+                         <h3 className="mt-1 text-lg font-semibold tracking-tight">Resumen del pedido</h3>
+                       </div>
+                       <span className="text-xs text-muted-foreground">{detail.items.length} {detail.items.length === 1 ? 'producto' : 'productos'}</span>
+                     </div>
+                     <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
@@ -1306,7 +1335,7 @@ export default function PedidosMulticanal() {
                           </Button>
                         </div>
                       )}
-                      <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
+                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
                         // Un solo cobro, el de la zona. Los kilómetros son referencia.
                         <DetailField
@@ -1328,7 +1357,7 @@ export default function PedidosMulticanal() {
                   </section>
 
                   {detail.channelCode === 'ripley' && (
-                    <section className="border-t border-border px-5 py-5">
+                   <section className="border-b border-border px-6 py-5">
                       <div className="mb-3 flex items-center gap-2">
                         <h3 className="text-sm font-semibold">Logística Ripley</h3>
                         {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
@@ -1428,19 +1457,54 @@ export default function PedidosMulticanal() {
                   )}
                 </TabsContent>
 
-                <TabsContent value="products" className="min-h-0 overflow-y-auto px-5 py-5">
-                  <h3 className="mb-3 text-sm font-semibold">Productos del pedido</h3>
-                  <div className="space-y-1">
-                    {detail.items.length ? detail.items.map((item) => (
-                      <div key={item.id} className="flex items-start justify-between gap-4 py-2.5">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <Package className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0">
-                            <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
-                          </div>
-                        </div>
-                        <span className="shrink-0 font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                 <TabsContent value="products" className="min-h-0 overflow-y-auto px-6 py-5">
+                   <div className="mb-5 flex items-end justify-between gap-3">
+                     <div>
+                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Detalle comercial</p>
+                       <h3 className="mt-1 text-lg font-semibold tracking-tight">Productos del pedido</h3>
+                     </div>
+                     <p className="text-right text-xs text-muted-foreground">Comisión fija<br />por unidad</p>
+                   </div>
+                   <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+                     {detail.items.length ? detail.items.map((item) => (
+                       <div key={item.id} className="flex items-start justify-between gap-4 px-4 py-4 transition-colors hover:bg-muted/30">
+                         <div className="flex min-w-0 items-start gap-3">
+                           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Package className="size-4" /></span>
+                           <div className="min-w-0">
+                             <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
+                             <p className="mt-1 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · {item.quantity} {Number(item.quantity) === 1 ? 'unidad' : 'unidades'}</p>
+                           </div>
+                         </div>
+                         <div className="shrink-0 text-right">
+                           <span className="block font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                           {commissionEditing === item.id ? (
+                             <div className="mt-1 flex items-center justify-end gap-1">
+                               <Label htmlFor={`commission-${item.id}`} className="sr-only">Comisión fija</Label>
+                               <Input
+                                 id={`commission-${item.id}`}
+                                 type="number"
+                                 min="0"
+                                 step="0.01"
+                                 className="h-8 w-24 text-right tabular-nums"
+                                 value={commissionDraft}
+                                 onChange={(event) => setCommissionDraft(event.target.value)}
+                                 autoFocus
+                               />
+                               <Button size="sm" className="h-8 px-2" disabled={commissionSaving} onClick={() => void saveCommission(item)}>
+                                 {commissionSaving ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                               </Button>
+                               <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => setCommissionEditing(null)}><X className="size-3" /></Button>
+                             </div>
+                           ) : isAdmin ? (
+                             <button
+                               type="button"
+                               className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                               onClick={() => { setCommissionEditing(item.id); setCommissionDraft(String(item.commissionAmount ?? 0)); }}
+                             >
+                               Comisión {formatMoney(item.commissionAmount, detail.currency)} <Pencil className="size-3" />
+                             </button>
+                           ) : <span className="mt-1 block text-xs text-muted-foreground">Comisión {formatMoney(item.commissionAmount, detail.currency)}</span>}
+                         </div>
                       </div>
                     )) : <p className="py-3 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
                   </div>
