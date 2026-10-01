@@ -2,7 +2,6 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import type { DateRange } from 'react-day-picker';
 import {
   Activity,
   ArrowRight,
@@ -21,8 +20,10 @@ import {
   YAxis,
 } from 'recharts';
 import api from '../lib/api';
+import type { DocumentDateRange } from '../lib/documentDateRange';
 import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
+import { RangeCalendar } from '@/components/RangeCalendar';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -79,13 +80,6 @@ function addDays(value: string, amount: number) {
 function dateFromKey(value: string) {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(year, month - 1, day, 12);
-}
-
-function dateKey(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function rangeLabel(from: string, to: string) {
@@ -212,14 +206,11 @@ function SkeletonDashboard() {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const initialRange = useMemo(() => rangeFor('month'), []);
   const [filters, setFilters] = useState<DashboardFilters>(initialRange);
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [selectedRange, setSelectedRange] = useState<DateRange>({
-    from: dateFromKey(initialRange.from),
-    to: dateFromKey(initialRange.to),
-  });
 
   const query = useQuery({
     queryKey: ['dashboard', filters],
@@ -239,13 +230,10 @@ export default function Dashboard() {
     const nextRange = rangeFor(next);
     setPeriod(next);
     setFilters((current) => ({ ...current, ...nextRange }));
-    setSelectedRange({ from: dateFromKey(nextRange.from), to: dateFromKey(nextRange.to) });
   };
-  const chooseRange = (next: DateRange | undefined) => {
-    setSelectedRange(next || { from: undefined, to: undefined });
-    if (!next?.from || !next?.to) return;
+  const commitRange = (range: DocumentDateRange) => {
     setPeriod('custom');
-    setFilters((current) => ({ ...current, from: dateKey(next.from!), to: dateKey(next.to!) }));
+    setFilters((current) => ({ ...current, from: range.from, to: range.to }));
     setCalendarOpen(false);
   };
 
@@ -312,16 +300,12 @@ export default function Dashboard() {
                 <span className="truncate">{rangeLabel(filters.from, filters.to)}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto max-w-[calc(100vw-2rem)] overflow-auto p-1.5">
-              <Calendar
-                mode="range"
-                selected={selectedRange}
-                onSelect={chooseRange}
-                defaultMonth={selectedRange.from}
-                numberOfMonths={2}
-                locale={es}
-                disabled={{ after: dateFromKey(localToday()) }}
-                autoFocus
+            <PopoverContent align="end" className="w-auto max-w-[calc(100vw-2rem)] overflow-auto p-2">
+              <RangeCalendar
+                value={{ from: filters.from, to: filters.to }}
+                max={localToday()}
+                onCommit={commitRange}
+                numberOfMonths={isMobile ? 1 : 2}
               />
             </PopoverContent>
           </Popover>

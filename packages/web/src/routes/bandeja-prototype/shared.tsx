@@ -25,7 +25,6 @@ import {
   logisticsDeadlineLabel,
   logisticsElapsedLabel,
   logisticsNextStep,
-  logisticsQuantityLabel,
   logisticsUpdatedClock,
   logisticsUrgency,
   logisticsUrgencyMeta,
@@ -48,6 +47,7 @@ import { useOperatorSnackbar } from '../../components/OperatorSnackbar';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { QuantityTag as QuantityTagBase } from '../../components/QuantityTag';
 
 export type LogisticsItem = {
   id: number;
@@ -294,15 +294,7 @@ export function CopyableOrderNumber({ value }: { value: string }) {
 }
 
 export function QuantityTag({ item }: { item: LogisticsItem }) {
-  const many = item.quantity > 1;
-  return (
-    <span className={cn(
-      'inline-flex shrink-0 items-center justify-center rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums',
-      many ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-    )}>
-      {logisticsQuantityLabel(item)}
-    </span>
-  );
+  return <QuantityTagBase quantity={item.quantity} />;
 }
 
 export function ActionButton({

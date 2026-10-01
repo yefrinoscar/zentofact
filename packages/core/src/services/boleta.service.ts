@@ -3,8 +3,14 @@ import { db } from '../db';
 import { boletas, clients, companies, branches, dailySummaries } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
+import { sendDocumentOnce } from './document-sender';
+import { withActiveOrderDocumentGuard } from './order-document-guard';
+import { withExpectedAmount } from './amount-audit';
+import { CLOSED_STATES } from './sunat-reconciliation';
+import { reconcileAndReemit, refreshStatusFromSunat } from './reemission.service';
+import type { ReemissionAdapter } from './reemission.service';
 import type { CompanyConfig, BoletaSunatData } from './sunat.service';
-import { readArchive, saveSummaryCdr } from './file.service';
+import { readArchive, saveCdr, saveSummaryCdr, saveXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
 import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
@@ -42,6 +48,8 @@ export interface CreateBoletaInput {
   usuario_creacion?: string;
   // false en beta: se asigna el correlativo pero NO se avanza el contador (la boleta beta se limpia después).
   persistCorrelative?: boolean;
+  /** Total del origen (por ejemplo el pedido de Falabella); se audita antes de enviar a SUNAT. */
+  expected_total?: { total: number; source: string };
 }
 
 function now(): number {
@@ -77,7 +85,15 @@ async function findBoletasForVoidSummary(summary: { companyId: number; orderNumb
   return rows.filter(boleta => identifiers.has(boleta.orderNumber || '') || identifiers.has(boleta.numeroCompleto));
 }
 
+// Una orden tiene a lo sumo un comprobante activo; ver withActiveOrderDocumentGuard.
 export async function createBoleta(input: CreateBoletaInput) {
+  return withActiveOrderDocumentGuard(
+    { table: 'boletas', companyId: input.company_id, orderNumber: input.order_number },
+    () => insertBoleta(input),
+  );
+}
+
+async function insertBoleta(input: CreateBoletaInput) {
   const company = (await db.select().from(companies).where(eq(companies.id, input.company_id)).limit(1))[0];
   if (!company || !company.activo) throw new Error('Empresa no encontrada o inactiva');
 
@@ -119,7 +135,7 @@ export async function createBoleta(input: CreateBoletaInput) {
   const correlativo = await getNextCorrelative(input.branch_id, '03', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
   const issueDate = resolveIssueDate(input.fecha_emision, '03');
-  const datosAdicionales = withIssueDateTrace(input.datos_adicionales, issueDate);
+  const datosAdicionales = withExpectedAmount(withIssueDateTrace(input.datos_adicionales, issueDate), input.expected_total);
   const totals = calculateTotals(input.detalles);
   const ts = now();
 
@@ -155,6 +171,10 @@ export async function sendBoletaToSunat(id: number) {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
+  const estadoActual = String(boleta.estadoSunat || '').toUpperCase();
+  if (CLOSED_STATES.includes(estadoActual)) {
+    return { success: false, blocked: true, error_code: 'DOCUMENT_CLOSED', message: `No se envía: la boleta ${boleta.numeroCompleto} está ${estadoActual}.` };
+  }
 
   const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -194,72 +214,44 @@ export async function sendBoletaToSunat(id: number) {
     mtoImpVenta: Number(boleta.mtoImpVenta || 0), formaPagoTipo: 'Contado',
   };
 
-  const xml = sunatService.buildUBLXml(boletaData);
-  const result = await sunatService.sendDocument(xml, `${company.ruc}-03-${boleta.serie}-${boleta.correlativo}`);
-  const { saveXml, saveCdr } = await import('./file.service');
-
-  if (result.success && result.xml) {
-    const xmlPath = await saveXml({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.xml);
-    const hash = sunatService.getHashFromXml(result.xml);
-    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse || { status: 'accepted' }), codigoHash: hash || null, updatedAt: Math.floor(Date.now() / 1000) };
-    if (result.cdrZip) updates.cdrPath = await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip);
-    await db.update(boletas).set(updates).where(eq(boletas.id, id));
-    return { success: true, message: 'Boleta enviada exitosamente a SUNAT' };
-  }
-  const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  await db.update(boletas).set({ estadoSunat: 'RECHAZADO', respuestaSunat: JSON.stringify(errorData), updatedAt: Math.floor(Date.now() / 1000) }).where(eq(boletas.id, id));
-  return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
+  const sent = await sendDocumentOnce({
+    documentTable: 'boletas',
+    table: boletas,
+    tipoDocumento: '03',
+    ruc: company.ruc,
+    doc: boleta,
+    reference: boleta.orderNumber,
+    sunat: sunatService,
+    buildUnsignedXml: () => sunatService.buildUBLXml(boletaData),
+    saveXml,
+    saveCdr,
+  });
+  return sent.success ? { ...sent, message: 'Boleta enviada exitosamente a SUNAT' } : sent;
 }
 
-// Un rechazo "transitorio" (documento aún en proceso en SUNAT) NO quema el número.
-export function isTransientSunatRejection(respuestaSunat: string | null | undefined): boolean {
-  if (!respuestaSunat) return false;
-  let code = '', message = '';
-  try { const p = JSON.parse(respuestaSunat); code = String(p.code || ''); message = String(p.message || ''); }
-  catch { message = String(respuestaSunat); }
-  const t = `${code} ${message}`.toLowerCase();
-  return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
+const BOLETA_REEMISSION: ReemissionAdapter = {
+  documentTable: 'boletas',
+  table: boletas,
+  tipoDocumento: '03',
+  label: 'boleta',
+  send: (id) => sendBoletaToSunat(id),
+  saveCdr: (doc, cdrZip) => saveCdr(doc, cdrZip),
+  replacementOverrides: { dailySummaryId: null },
+};
+
+// Consulta getStatusCdr de una boleta individual sin enviar ni reemitir.
+export async function refreshIndividualBoletaStatus(id: number) {
+  return refreshStatusFromSunat(BOLETA_REEMISSION, id);
 }
 
-// Re-emite una boleta RECHAZADA. Transitorio → reintenta el mismo número. Definitivo →
-// mantiene la rechazada como evidencia (sin la orden) y crea una NUEVA con el siguiente
-// correlativo disponible, que se lleva la orden, y esa se emite.
+// Reemite una boleta no aceptada solo después de reconciliarla con SUNAT. Ver
+// reconcileAndReemit para las reglas: nunca se usa otro número mientras el
+// anterior pueda existir en SUNAT.
 export async function reEmitBoleta(id: number) {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
-
-  const burned = boleta.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(boleta.respuestaSunat);
-  if (!burned) return sendBoletaToSunat(id);
-
-  const now = Math.floor(Date.now() / 1000);
-  const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
-  const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
-  const issueDate = resolveIssueDate(boleta.fechaEmision, '03');
-  const datosAdicionales = withIssueDateTrace(boleta.datosAdicionales, issueDate);
-
-  await db.update(boletas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(boletas.id, id));
-
-  const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = boleta as any;
-  const inserted = await db.insert(boletas).values({
-    ...rest,
-    correlativo: nextCorrelativo,
-    numeroCompleto,
-    orderNumber: boleta.orderNumber,
-    fechaEmision: issueDate.fechaEmision,
-    dailySummaryId: null,
-    datosAdicionales,
-    estadoSunat: 'PENDIENTE',
-    respuestaSunat: null,
-    xmlPath: null,
-    cdrPath: null,
-    pdfPath: null,
-    codigoHash: null,
-    createdAt: now,
-    updatedAt: now,
-  }).returning({ id: boletas.id });
-
-  return sendBoletaToSunat(inserted[0].id);
+  return reconcileAndReemit(BOLETA_REEMISSION, id);
 }
 
 export async function checkDailySummaryStatus(summaryId: number) {

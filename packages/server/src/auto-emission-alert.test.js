@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   FAILED_EMISSION_ALERT_AFTER_ATTEMPTS,
   buildFailedEmissionAlertEmail,
+  buildSunatAttentionEmail,
   notifyFailedEmissionIfNeeded,
   parseAlertEmailInput,
   parseAlertEmails,
@@ -197,4 +198,19 @@ test('un job de dos intentos no llama al correo', async () => {
   });
   assert.equal(result.skipped, true);
   assert.equal(called, false);
+});
+
+test('aviso SUNAT: lista comprobantes cerca del plazo y series en conflicto, escapando HTML', () => {
+  const email = buildSunatAttentionEmail({
+    deadlineDays: 3,
+    overdue: [{ table: 'boletas', numeroCompleto: 'B001-000580', estadoSunat: 'NO_CONFIRMADO', fechaEmision: '2026-09-28', orderNumber: '3248821186', companyName: 'BEAUTY <HOME>' }],
+    collisions: [{ companyName: 'LIMBO', serie: 'B001', checked: [{ numero: 'B001-000611', kind: 'NOT_FOUND' }, { numero: 'B001-000612', kind: 'ACCEPTED' }] }],
+  });
+  assert.match(email.subject, /Series usadas por otro sistema y 1 comprobante/);
+  assert.match(email.text, /Boleta B001-000580 · NO_CONFIRMADO · emitido 2026-09-28 · orden 3248821186/);
+  assert.match(email.text, /plazo de envío a SUNAT es de 3 días/);
+  assert.match(email.text, /LIMBO: la serie B001 .*B001-000612\)/);
+  assert.match(email.text, /quedarán en revisión manual/);
+  assert.doesNotMatch(email.text, /B001-000611/, 'solo se listan los números que existen');
+  assert.match(email.html, /BEAUTY &lt;HOME&gt;/);
 });

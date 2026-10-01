@@ -143,8 +143,27 @@ export {
   createAndSendCreditNoteFromFactura,
   createAndSendCreditNotesFromBoletas,
   generatePreviewCreditNoteHtml,
+  reEmitCreditNote,
+  refreshCreditNoteStatus,
 } from './services/credit-note.service';
 export type { CreateCreditNoteFromBoletaOptions, CreateCreditNoteFromFacturaOptions } from './services/credit-note.service';
+// Emisión segura ante fallas de SUNAT: reconciliación, barrido y auditoría.
+export {
+  markStaleSendingAsUnconfirmed,
+  listDocumentsNeedingReconciliation,
+  listOverdueDocuments,
+  refreshDocumentStatus,
+  probeSeriesCollision,
+  seriesProbeVerdict,
+  SUNAT_SEND_DEADLINE_DAYS,
+  DEADLINE_ALERT_DAYS,
+} from './services/sunat-sweep.service';
+export type { SweepDocument, SeriesProbe, SeriesProbeVerdict } from './services/sunat-sweep.service';
+export { auditSaleAgainstSource } from './services/amount-audit';
+export { buildSunatReconciliationReport, applySunatReconciliationReport, suggestReportAction } from './services/sunat-report.service';
+export type { ReportRow } from './services/sunat-report.service';
+export { ActiveOrderDocumentError } from './services/order-document-guard';
+export { MANUAL_REVIEW_STATE } from './services/sunat-reconciliation';
 export { getCorrelatives } from './services/correlative-query.service';
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaCheckReadyToShipStatus, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,

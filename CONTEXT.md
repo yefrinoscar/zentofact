@@ -40,6 +40,18 @@ _Avoid_: Emisión automática, facturación
 Proceso de facturación que genera comprobantes para Pedidos elegibles. Es independiente de la Sincronización de pedidos.
 _Avoid_: Sincronización, importación de pedidos
 
+**Comprobante no confirmado**:
+Comprobante cuyo envío a SUNAT terminó sin una respuesta que pruebe aceptación o rechazo (timeout, conexión cortada, `1033`, `0130`). SUNAT pudo haberlo registrado, así que se reconcilia antes de reenviarlo o de usar otro número. Se guarda como `NO_CONFIRMADO`.
+_Avoid_: Rechazado, fallido
+
+**Número quemado**:
+Correlativo que SUNAT procesó y rechazó con CDR (códigos 2000-3999). Nunca se reutiliza; la venta continúa con un número nuevo.
+_Avoid_: Número libre, número anulado
+
+**Revisión manual**:
+Estado de un comprobante que ningún proceso automático vuelve a enviar ni reemplaza: el número existe en SUNAT con datos de otro comprobante, los montos no cuadran o se agotaron los reintentos. Se guarda como `REVISION_MANUAL`.
+_Avoid_: Bloqueado, error
+
 **Estado del canal**:
 Estado original que un canal asigna a un Pedido. Se conserva aunque ZentoFact todavía no conozca su significado operativo.
 _Avoid_: Estado operativo

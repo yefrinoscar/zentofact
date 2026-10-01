@@ -2010,4 +2010,57 @@ export async function runMigrations(pool: Pool): Promise<void> {
   `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
+  await pool.query(SUNAT_LEDGER_DDL);
 }
+
+// Historial SUNAT inmutable. sunat_document_xml fija el único XML firmado de
+// cada número en producción; sunat_emission_attempts guarda cada envío,
+// consulta o bloqueo. Ninguna de las dos admite UPDATE ni DELETE.
+const SUNAT_LEDGER_DDL = `
+  CREATE TABLE IF NOT EXISTS sunat_document_xml (
+    id SERIAL PRIMARY KEY,
+    ruc TEXT NOT NULL,
+    tipo_documento TEXT NOT NULL,
+    serie TEXT NOT NULL,
+    correlativo INTEGER NOT NULL,
+    document_table TEXT NOT NULL,
+    document_id INTEGER NOT NULL,
+    xml_sha256 TEXT NOT NULL,
+    xml_path TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (ruc, tipo_documento, serie, correlativo)
+  );
+  CREATE TABLE IF NOT EXISTS sunat_emission_attempts (
+    id SERIAL PRIMARY KEY,
+    ambiente TEXT NOT NULL,
+    ruc TEXT NOT NULL,
+    tipo_documento TEXT NOT NULL,
+    serie TEXT NOT NULL,
+    correlativo INTEGER NOT NULL,
+    document_table TEXT NOT NULL,
+    document_id INTEGER NOT NULL,
+    reference TEXT,
+    kind TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    response_code TEXT,
+    response_message TEXT,
+    xml_sha256 TEXT,
+    cdr_path TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_sunat_attempts_document ON sunat_emission_attempts(document_table, document_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_sunat_attempts_number ON sunat_emission_attempts(ruc, tipo_documento, serie, correlativo);
+  CREATE INDEX IF NOT EXISTS idx_sunat_attempts_reference ON sunat_emission_attempts(ruc, tipo_documento, reference);
+
+  CREATE OR REPLACE FUNCTION sunat_ledger_immutable() RETURNS trigger AS $$
+  BEGIN
+    RAISE EXCEPTION 'El historial SUNAT (%) es inmutable', TG_TABLE_NAME;
+  END
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_sunat_document_xml_immutable ON sunat_document_xml;
+  CREATE TRIGGER trg_sunat_document_xml_immutable BEFORE UPDATE OR DELETE ON sunat_document_xml
+    FOR EACH ROW EXECUTE FUNCTION sunat_ledger_immutable();
+  DROP TRIGGER IF EXISTS trg_sunat_attempts_immutable ON sunat_emission_attempts;
+  CREATE TRIGGER trg_sunat_attempts_immutable BEFORE UPDATE OR DELETE ON sunat_emission_attempts
+    FOR EACH ROW EXECUTE FUNCTION sunat_ledger_immutable();
+`;
