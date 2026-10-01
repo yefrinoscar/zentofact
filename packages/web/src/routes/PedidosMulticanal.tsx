@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Package,
   PanelTop,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -32,6 +33,15 @@ import { ChannelMark } from '../components/channel-mark';
 import { QuantityTag } from '../components/QuantityTag';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { usePermissions } from '../hooks/usePermissions';
+import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import {
+  buildManualOrderEditPayload,
+  MANUAL_EDIT_DOCUMENT_TYPES,
+  validateManualOrderEdit,
+  type ManualOrderEditDraft,
+  type ManualOrderEditLine,
+} from '../lib/manual-order-edit';
 import {
   buildManagedOrderListFilters,
   deliveryLabel,
@@ -123,7 +133,9 @@ type OrderItem = {
   sku?: string | null;
   description: string;
   quantity: number;
+  unitPrice?: number | null;
   total?: number | null;
+  commissionAmount?: number | null;
 };
 
 type ManagedOrderListItem = {
@@ -202,6 +214,7 @@ type ManagedOrder = {
     paymentMethod?: string;
     saleSource?: string;
     delivery?: string;
+    deliveryDate?: string;
     shippingCarrier?: string;
     receivedBy?: string;
     paidTo?: string;
@@ -470,7 +483,7 @@ function canRecordPayment(order: ManagedOrder) {
 
 function originLabel(order: ManagedOrder) {
   if (order.channelCode === 'manual') {
-    return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Manual';
+    return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Tienda';
   }
   return order.channelName;
 }
@@ -570,6 +583,7 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
 
   const goToGenerateDocument = useCallback((order: ManagedOrder) => {
     const kind = pendingDocumentKind(order);
@@ -597,6 +611,12 @@ export default function PedidosMulticanal() {
   const [ripleyAction, setRipleyAction] = useState('');
   const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
+  const [editOrder, setEditOrder] = useState<OrderDetail | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [commissionEditing, setCommissionEditing] = useState<number | null>(null);
+  const [commissionDraft, setCommissionDraft] = useState('');
+  const [commissionSaving, setCommissionSaving] = useState(false);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
   const todayRef = useRef(today);
@@ -767,6 +787,33 @@ export default function PedidosMulticanal() {
     }
   };
 
+  const saveCommission = async (item: OrderItem) => {
+    if (!detail) return;
+    const amount = Number(commissionDraft);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    setCommissionSaving(true);
+    try {
+      const updated = await api.updateManagedOrderItemCommission(detail.id, item.id, amount);
+      setDetail(updated);
+      setCommissionEditing(null);
+    } finally {
+      setCommissionSaving(false);
+    }
+  };
+
+  const openEdit = async (order: ManagedOrder) => {
+    setEditOpen(true);
+    setEditOrder(null);
+    setEditLoading(true);
+    try {
+      setEditOrder(await api.getManagedOrder(order.id));
+    } catch {
+      setEditOpen(false);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const runRipleyAction = async (action: string, operation: () => Promise<string>) => {
     setRipleyAction(action);
     setRipleyActionNote('');
@@ -906,6 +953,21 @@ export default function PedidosMulticanal() {
       void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
       setPaymentOrder(null);
       setSuccessMessage(`Pago de ${updated.externalOrderNumber || input.order.externalOrderNumber} registrado.`);
+    },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: (input: { orderId: number; payload: ReturnType<typeof buildManualOrderEditPayload> }) =>
+      api.updateManagedOrder(input.orderId, input.payload),
+    onSuccess: (updated, input) => {
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+      setEditOpen(false);
+      setEditOrder(null);
+      if (detail?.id === input.orderId) {
+        void api.getManagedOrder(input.orderId).then(setDetail).catch(() => {});
+      }
+      setSuccessMessage(`Venta ${updated?.externalOrderNumber || ''} actualizada.`);
     },
   });
 
@@ -1058,6 +1120,14 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              {isAdmin && row.original.channelCode === 'manual' && (
+                <>
+                  <DropdownMenuItem onClick={() => void openEdit(row.original)}>
+                    <Pencil /> Editar venta
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
@@ -1072,7 +1142,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById, goToGenerateDocument, searchIgnoresDate]);
+  }, [companyById, goToGenerateDocument, isAdmin, searchIgnoresDate]);
 
   const table = useReactTable({
     data: orders,
@@ -1202,41 +1272,52 @@ export default function PedidosMulticanal() {
       />
 
       <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
-        <SheetContent className="sm:max-w-lg">
+         <SheetContent className="sm:max-w-xl">
           {detailLoading ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
               <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando detalle…
             </div>
           ) : detail ? (
             <>
-              <SheetHeader className="border-b border-border px-5 py-4 pr-16">
-                <div className="flex min-w-0 items-center gap-3">
-                  <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
-                  <div className="min-w-0">
-                    <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
-                    <SheetDescription className="mt-1 truncate">
-                      {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
-                    </SheetDescription>
-                  </div>
-                </div>
-              </SheetHeader>
-              <Tabs key={detail.id} defaultValue="summary" className="min-h-0 flex-1 gap-0 overflow-hidden">
-                <TabsList variant="line" aria-label="Secciones del pedido" className="h-11 w-full shrink-0 justify-start gap-0 border-b border-border px-4 py-0">
-                  <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3">
-                    <PanelTop /> Resumen
-                  </TabsTrigger>
-                  <TabsTrigger value="products" className="h-full flex-none rounded-none px-3">
-                    <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3">
+               <SheetHeader className="border-b border-border bg-muted/20 px-6 py-5 pr-16">
+                 <div className="flex min-w-0 items-start gap-3">
+                   <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
+                   <div className="min-w-0 flex-1">
+                     <SheetDescription className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Detalle de pedido</SheetDescription>
+                     <SheetTitle className="text-2xl tracking-tight">{detail.externalOrderNumber}</SheetTitle>
+                     <p className="mt-1 truncate text-sm text-muted-foreground">
+                       {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
+                     </p>
+                   </div>
+                   <div className="hidden shrink-0 text-right sm:block">
+                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</p>
+                     <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</p>
+                   </div>
+                 </div>
+               </SheetHeader>
+               <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
+                 <TabsList variant="line" aria-label="Secciones del pedido" className="h-12 w-full shrink-0 justify-start gap-0 border-b border-border px-5 py-0">
+                   <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3 text-sm">
+                     <PanelTop /> Resumen
+                   </TabsTrigger>
+                   <TabsTrigger value="products" className="h-full flex-none rounded-none px-3 text-sm">
+                     <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
+                   </TabsTrigger>
+                   <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3 text-sm">
                     <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
                   </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="summary" className="min-h-0 overflow-y-auto">
-                  <section className="px-5 py-5">
-                    <h3 className="mb-3 text-sm font-semibold">Pedido</h3>
-                    <div className="space-y-0.5">
+                   <section className="border-b border-border px-6 py-5">
+                     <div className="mb-4 flex items-end justify-between gap-3">
+                       <div>
+                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Estado actual</p>
+                         <h3 className="mt-1 text-lg font-semibold tracking-tight">Resumen del pedido</h3>
+                       </div>
+                       <span className="text-xs text-muted-foreground">{detail.items.length} {detail.items.length === 1 ? 'producto' : 'productos'}</span>
+                     </div>
+                     <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
@@ -1254,7 +1335,7 @@ export default function PedidosMulticanal() {
                           </Button>
                         </div>
                       )}
-                      <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
+                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
                         // Un solo cobro, el de la zona. Los kilómetros son referencia.
                         <DetailField
@@ -1276,7 +1357,7 @@ export default function PedidosMulticanal() {
                   </section>
 
                   {detail.channelCode === 'ripley' && (
-                    <section className="border-t border-border px-5 py-5">
+                   <section className="border-b border-border px-6 py-5">
                       <div className="mb-3 flex items-center gap-2">
                         <h3 className="text-sm font-semibold">Logística Ripley</h3>
                         {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
@@ -1376,19 +1457,54 @@ export default function PedidosMulticanal() {
                   )}
                 </TabsContent>
 
-                <TabsContent value="products" className="min-h-0 overflow-y-auto px-5 py-5">
-                  <h3 className="mb-3 text-sm font-semibold">Productos del pedido</h3>
-                  <div className="space-y-1">
-                    {detail.items.length ? detail.items.map((item) => (
-                      <div key={item.id} className="flex items-start justify-between gap-4 py-2.5">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <Package className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0">
-                            <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
-                          </div>
-                        </div>
-                        <span className="shrink-0 font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                 <TabsContent value="products" className="min-h-0 overflow-y-auto px-6 py-5">
+                   <div className="mb-5 flex items-end justify-between gap-3">
+                     <div>
+                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Detalle comercial</p>
+                       <h3 className="mt-1 text-lg font-semibold tracking-tight">Productos del pedido</h3>
+                     </div>
+                     <p className="text-right text-xs text-muted-foreground">Comisión fija<br />por unidad</p>
+                   </div>
+                   <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+                     {detail.items.length ? detail.items.map((item) => (
+                       <div key={item.id} className="flex items-start justify-between gap-4 px-4 py-4 transition-colors hover:bg-muted/30">
+                         <div className="flex min-w-0 items-start gap-3">
+                           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Package className="size-4" /></span>
+                           <div className="min-w-0">
+                             <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
+                             <p className="mt-1 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · {item.quantity} {Number(item.quantity) === 1 ? 'unidad' : 'unidades'}</p>
+                           </div>
+                         </div>
+                         <div className="shrink-0 text-right">
+                           <span className="block font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                           {commissionEditing === item.id ? (
+                             <div className="mt-1 flex items-center justify-end gap-1">
+                               <Label htmlFor={`commission-${item.id}`} className="sr-only">Comisión fija</Label>
+                               <Input
+                                 id={`commission-${item.id}`}
+                                 type="number"
+                                 min="0"
+                                 step="0.01"
+                                 className="h-8 w-24 text-right tabular-nums"
+                                 value={commissionDraft}
+                                 onChange={(event) => setCommissionDraft(event.target.value)}
+                                 autoFocus
+                               />
+                               <Button size="sm" className="h-8 px-2" disabled={commissionSaving} onClick={() => void saveCommission(item)}>
+                                 {commissionSaving ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                               </Button>
+                               <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => setCommissionEditing(null)}><X className="size-3" /></Button>
+                             </div>
+                           ) : isAdmin ? (
+                             <button
+                               type="button"
+                               className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                               onClick={() => { setCommissionEditing(item.id); setCommissionDraft(String(item.commissionAmount ?? 0)); }}
+                             >
+                               Comisión {formatMoney(item.commissionAmount, detail.currency)} <Pencil className="size-3" />
+                             </button>
+                           ) : <span className="mt-1 block text-xs text-muted-foreground">Comisión {formatMoney(item.commissionAmount, detail.currency)}</span>}
+                         </div>
                       </div>
                     )) : <p className="py-3 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
                   </div>
@@ -1426,6 +1542,23 @@ export default function PedidosMulticanal() {
         onSubmit={(input) => {
           if (!paymentOrder) return;
           paymentMutation.mutate({ order: paymentOrder, ...input });
+        }}
+      />
+
+      <EditManualOrderDialog
+        open={editOpen}
+        order={editOrder}
+        loading={editLoading}
+        busy={editMutation.isPending}
+        error={(editMutation.error as Error | undefined)?.message || ''}
+        onClose={() => {
+          editMutation.reset();
+          setEditOpen(false);
+          setEditOrder(null);
+        }}
+        onSubmit={(payload) => {
+          if (!editOrder) return;
+          editMutation.mutate({ orderId: editOrder.id, payload });
         }}
       />
     </div>
@@ -1502,6 +1635,235 @@ function DetailField({ icon, label, content }: { icon: React.ReactNode; label: s
       </p>
       <div className="min-w-0 text-sm text-foreground">{content}</div>
     </div>
+  );
+}
+
+const EMPTY_MANUAL_EDIT_DRAFT: ManualOrderEditDraft = {
+  customerName: '',
+  customerPhone: '',
+  documentType: '1',
+  documentNumber: '',
+  legalName: '',
+  deliveryType: 'recojo',
+  carrier: '',
+  address: '',
+  reference: '',
+  deliveryDate: '',
+  lines: [],
+};
+
+function manualEditDraftFromOrder(order: OrderDetail): ManualOrderEditDraft {
+  const shipping = order.shipping || {};
+  return {
+    customerName: order.customer?.name || '',
+    customerPhone: order.customer?.phone || '',
+    documentType: String(order.customer?.documentType || '1'),
+    documentNumber: order.customer?.documentNumber || '',
+    legalName: order.customer?.legalName || '',
+    deliveryType: shipping.type === 'envio' ? 'envio' : 'recojo',
+    carrier: String(shipping.carrier || order.metadata?.shippingCarrier || ''),
+    address: String(shipping.address || ''),
+    reference: String(shipping.reference || ''),
+    deliveryDate: String(order.metadata?.deliveryDate || '').slice(0, 10),
+    lines: order.items.map((item) => ({
+      id: item.id,
+      name: item.description || item.sku || `Producto ${item.id}`,
+      quantity: String(item.quantity ?? 1),
+      unitPrice: item.unitPrice == null ? '' : String(item.unitPrice),
+    })),
+  };
+}
+
+function EditManualOrderDialog({
+  open,
+  order,
+  loading,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  order: OrderDetail | null;
+  loading: boolean;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onSubmit: (payload: ReturnType<typeof buildManualOrderEditPayload>) => void;
+}) {
+  const [draft, setDraft] = useState<ManualOrderEditDraft>(EMPTY_MANUAL_EDIT_DRAFT);
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    if (!order) {
+      setDraft(EMPTY_MANUAL_EDIT_DRAFT);
+      return;
+    }
+    setDraft(manualEditDraftFromOrder(order));
+    setLocalError('');
+  }, [order]);
+
+  const patch = (change: Partial<ManualOrderEditDraft>) =>
+    setDraft((current) => ({ ...current, ...change }));
+  const patchLine = (id: number, change: Partial<ManualOrderEditLine>) =>
+    setDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...change } : line)),
+    }));
+
+  const submit = () => {
+    const invalid = validateManualOrderEdit(draft);
+    if (invalid) {
+      setLocalError(invalid);
+      return;
+    }
+    setLocalError('');
+    onSubmit(buildManualOrderEditPayload(draft));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar venta</DialogTitle>
+          <DialogDescription>
+            {order ? `Pedido ${order.externalOrderNumber}. Corrige cliente, entrega o líneas.` : 'Cargando pedido…'}
+          </DialogDescription>
+        </DialogHeader>
+        {(localError || error) && (
+          <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+            <AlertCircle className="size-4 shrink-0" /> {localError || error}
+          </div>
+        )}
+        {loading || !order ? (
+          <div className="flex flex-1 items-center justify-center gap-2 py-10 text-muted-foreground">
+            <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando pedido…
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cliente</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-customer-name">Nombre</Label>
+                <Input id="edit-customer-name" value={draft.customerName} onChange={(event) => patch({ customerName: event.target.value })} />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-phone">Teléfono</Label>
+                  <Input id="edit-customer-phone" inputMode="numeric" value={draft.customerPhone} onChange={(event) => patch({ customerPhone: event.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-document">Documento</Label>
+                  <div className="flex gap-2">
+                    <Select value={draft.documentType} onValueChange={(value) => patch({ documentType: value })}>
+                      <SelectTrigger className="w-24" aria-label="Tipo de documento"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MANUAL_EDIT_DOCUMENT_TYPES.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input id="edit-customer-document" value={draft.documentNumber} onChange={(event) => patch({ documentNumber: event.target.value })} />
+                  </div>
+                </div>
+              </div>
+              {draft.documentType === '6' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-customer-legal">Razón social</Label>
+                  <Input id="edit-customer-legal" value={draft.legalName} onChange={(event) => patch({ legalName: event.target.value })} />
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Entrega</p>
+              <div className="flex flex-wrap gap-2">
+                {(['recojo', 'envio'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => patch({ deliveryType: option, ...(option === 'recojo' ? { carrier: '' } : {}) })}
+                    className={cn(
+                      'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
+                      draft.deliveryType === option ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
+                    )}
+                  >
+                    {option === 'recojo' ? 'Recojo' : 'Envío'}
+                  </button>
+                ))}
+              </div>
+              {draft.deliveryType === 'envio' && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Repartidor</Label>
+                    <Select value={draft.carrier} onValueChange={(value) => patch({ carrier: value })}>
+                      <SelectTrigger aria-label="Repartidor"><SelectValue placeholder="Elige repartidor" /></SelectTrigger>
+                      <SelectContent>
+                        {SHIPPING_CARRIERS.map((carrier) => (
+                          <SelectItem key={carrier.value} value={carrier.value}>{carrier.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-address">Dirección</Label>
+                    <Input id="edit-address" value={draft.address} onChange={(event) => patch({ address: event.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-reference">Referencia</Label>
+                    <Input id="edit-reference" value={draft.reference} onChange={(event) => patch({ reference: event.target.value })} />
+                  </div>
+                </>
+              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-delivery-date">Fecha de entrega</Label>
+                <Input id="edit-delivery-date" type="date" value={draft.deliveryDate} onChange={(event) => patch({ deliveryDate: event.target.value })} />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Productos</p>
+              <ul className="divide-y divide-border rounded-md border border-border">
+                {draft.lines.map((line) => (
+                  <li key={line.id} className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem] items-center gap-2 px-3 py-2">
+                    <span className="truncate text-sm" title={line.name}>{line.name}</span>
+                    <Input
+                      aria-label={`Cantidad de ${line.name}`}
+                      inputMode="numeric"
+                      value={line.quantity}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        if (!/^\d*$/.test(raw)) return;
+                        patchLine(line.id, { quantity: raw });
+                      }}
+                      className="h-9"
+                    />
+                    <Input
+                      aria-label={`Precio de ${line.name}`}
+                      inputMode="decimal"
+                      value={line.unitPrice}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        if (!/^\d*(?:[.,]\d*)?$/.test(raw)) return;
+                        patchLine(line.id, { unitPrice: raw });
+                      }}
+                      className="h-9"
+                    />
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">Cantidad y precio de cada línea. El comprobante emitido no cambia.</p>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" className="h-10 cursor-pointer sm:h-9" onClick={onClose} disabled={busy}>Cancelar</Button>
+          <Button className="h-10 cursor-pointer sm:h-9" onClick={submit} disabled={busy || loading || !order}>
+            {busy ? <><Loader2 className="animate-spin motion-reduce:animate-none" /> Guardando…</> : 'Guardar cambios'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

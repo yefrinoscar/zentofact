@@ -503,6 +503,10 @@ const apiHttp = {
   detachRipleyManifestLabels: (companyId: number, manifestId: string, data: { labelIds: string[]; sandbox?: boolean }) =>
     req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  updateManagedOrderItemCommission: (orderId: number, itemId: number, commissionAmount: number) =>
+    req(`/order-management/orders/${orderId}/items/${itemId}/commission`, {
+      method: 'PATCH', body: JSON.stringify({ commissionAmount }),
+    }),
   updateManagedOrderPayment: (id: number, data: {
     paymentMethod: string;
     paymentStatus?: string;
@@ -510,6 +514,26 @@ const apiHttp = {
     paidTo?: string;
     paymentProof?: { name: string; type: string; dataUrl: string } | null;
   }) => req(`/order-management/orders/${id}/payment`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
+  updateManagedOrder: (id: number, data: {
+    customer?: {
+      name?: string;
+      phone?: string;
+      documentType?: string;
+      documentNumber?: string;
+      legalName?: string;
+    };
+    shipping?: {
+      type?: 'envio' | 'recojo';
+      carrier?: string;
+      address?: string;
+      reference?: string;
+    };
+    deliveryDate?: string;
+    items?: Array<{ id: number; quantity: number; unitPrice: number }>;
+  }) => req(`/order-management/orders/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
   }),

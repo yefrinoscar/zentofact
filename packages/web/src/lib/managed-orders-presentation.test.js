@@ -38,8 +38,8 @@ test('la bandeja de pedidos no muestra columna de teléfono', () => {
   assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('customer'));
 });
 
-test('deliveryLabel resume recojo, repartidor, envío y marketplace', () => {
-  assert.equal(deliveryLabel({ shipping: { type: 'recojo' } }), 'Recojo');
+test('deliveryLabel resume tienda, repartidor, envío y marketplace', () => {
+  assert.equal(deliveryLabel({ shipping: { type: 'recojo' } }), 'Tienda');
   assert.equal(deliveryLabel({ shipping: { type: 'envio', carrier: 'marvisuar' } }), 'Marvisuar');
   assert.equal(deliveryLabel({ shipping: { type: 'envio' } }), 'Envío');
   assert.equal(deliveryLabel({ channelCode: 'falabella', shipping: {} }), 'Marketplace');

@@ -40,7 +40,7 @@ function carrierLabel(value?: string | null) {
 
 export function deliveryLabel(order: ManagedOrderDeliveryInput) {
   const type = order.shipping?.type || order.metadata?.delivery || '';
-  if (type === 'recojo') return 'Recojo';
+  if (type === 'recojo') return 'Tienda';
   const carrier = carrierLabel(order.shipping?.carrier || order.metadata?.shippingCarrier);
   if (carrier) return carrier;
   if (type === 'envio') return 'Envío';
