@@ -18,6 +18,8 @@ import {
   falabellaUploadBoletaPdf,
   createFactura,
   sendFacturaToSunat,
+  reEmitBoleta,
+  reEmitFactura,
   createAndSendCreditNoteFromBoleta,
   createAndSendCreditNoteFromFactura,
 } from '@zentofact/core';
@@ -890,7 +892,21 @@ async function processJob(job, setStep = async () => {}) {
     if (est === 'ACEPTADO') {
       return { status: 'done', result: `ya tenía ${tipo} ${existingDoc.numeroCompleto}`, boletaNumero: existingDoc.numeroCompleto };
     }
-    return { status: 'failed', result: `${tipo} ${existingDoc.numeroCompleto} existe pero está ${est || 'SIN ACEPTAR'} en SUNAT — revisar (no se re-emite para evitar duplicados)`, boletaNumero: existingDoc.numeroCompleto };
+    const reemitted = requiresInvoice
+      ? await reEmitFactura(existingDoc.id)
+      : await reEmitBoleta(existingDoc.id);
+    if (reemitted?.success) {
+      return {
+        status: 'done',
+        result: reemitted.message || `${tipo} ${existingDoc.numeroCompleto} validada/reemitida con SUNAT`,
+        boletaNumero: reemitted.numeroCompleto || existingDoc.numeroCompleto,
+      };
+    }
+    return {
+      status: 'failed',
+      result: reemitted?.message || `${tipo} ${existingDoc.numeroCompleto} requiere revisión antes de reemitir`,
+      boletaNumero: existingDoc.numeroCompleto,
+    };
   }
 
   if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };

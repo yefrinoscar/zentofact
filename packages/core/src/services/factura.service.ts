@@ -253,14 +253,42 @@ export async function sendFacturaToSunat(id: number) {
     mtoImpVenta: Number(factura.mtoImpVenta || 0), formaPagoTipo: 'Contado',
   };
 
-  const xml = sunatService.buildUBLXml(facturaData);
-  const result = await sunatService.sendDocument(xml, `${company.ruc}-01-${factura.serie}-${factura.correlativo}`);
+  const fileName = `${company.ruc}-01-${factura.serie}-${factura.correlativo}`;
+  let signedXml: string;
+  let xmlPath = factura.xmlPath;
+  try {
+    if (xmlPath) {
+      signedXml = (await readArchive(xmlPath)).toString('utf8');
+    } else {
+      const xml = sunatService.buildUBLXml(facturaData);
+      signedXml = sunatService.signDocument(xml);
+      xmlPath = await saveFacturaXml(
+        { serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) },
+        signedXml,
+      );
+      await db.update(facturas).set({
+        xmlPath,
+        codigoHash: sunatService.getHashFromXml(signedXml) || null,
+        updatedAt: now(),
+      }).where(eq(facturas.id, id));
+    }
+  } catch (error: any) {
+    const errorData = { code: 'ARCHIVE_ERROR', message: `No se pudo guardar o leer el XML firmado: ${error.message}` };
+    await db.update(facturas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(facturas.id, id));
+    return { success: false, message: errorData.message, error_code: errorData.code };
+  }
 
-  if (result.success && result.xml) {
-    const xmlPath = await saveFacturaXml({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.xml);
-    const hash = sunatService.getHashFromXml(result.xml);
-    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse || { status: 'accepted' }), codigoHash: hash || null, updatedAt: Math.floor(Date.now() / 1000) };
-    if (result.cdrZip) updates.cdrPath = await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip);
+  const result = await sunatService.sendSignedDocument(signedXml, fileName);
+
+  if (result.success && result.xml && result.cdrResponse?.code === '0') {
+    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
+    try {
+      if (result.cdrZip) updates.cdrPath = await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip);
+    } catch (error: any) {
+      const errorData = { code: 'CDR_ARCHIVE_ERROR', message: `SUNAT respondió aceptación, pero no se pudo guardar el CDR: ${error.message}` };
+      await db.update(facturas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(facturas.id, id));
+      return { success: false, message: errorData.message, error_code: errorData.code };
+    }
     await db.update(facturas).set(updates).where(eq(facturas.id, id));
     return { success: true, message: 'Factura enviada exitosamente a SUNAT' };
   }
@@ -272,7 +300,16 @@ export async function sendFacturaToSunat(id: number) {
     await db.delete(facturas).where(eq(facturas.id, id));
     return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
   }
-  await db.update(facturas).set({ estadoSunat: 'RECHAZADO', respuestaSunat: JSON.stringify(errorData), updatedAt: Math.floor(Date.now() / 1000) }).where(eq(facturas.id, id));
+  const hasAuthoritativeRejection = Boolean(result.cdrResponse?.code && result.cdrResponse.code !== '0');
+  const cdrPath = result.cdrZip
+    ? await saveFacturaCdr({ serie: factura.serie, correlativo: factura.correlativo, fechaEmision: String(factura.fechaEmision) }, result.cdrZip)
+    : factura.cdrPath;
+  await db.update(facturas).set({
+    estadoSunat: hasAuthoritativeRejection ? 'RECHAZADO' : 'NO_CONFIRMADO',
+    cdrPath,
+    respuestaSunat: JSON.stringify(errorData),
+    updatedAt: Math.floor(Date.now() / 1000),
+  }).where(eq(facturas.id, id));
   return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
 }
 
@@ -299,7 +336,25 @@ export async function reEmitFactura(id: number) {
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.estadoSunat === 'ACEPTADO') throw new Error('La factura ya fue aceptada por SUNAT');
 
-  const burned = factura.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(factura.respuestaSunat);
+  // Un error local al enviar/guardar el ZIP no demuestra que SUNAT no haya
+  // aceptado el documento. Consultar el CDR antes de quemar el correlativo.
+  const checked = await refreshFacturaStatus(id);
+  if (!checked.success) {
+    return {
+      success: false,
+      blocked: true,
+      error_code: 'SUNAT_STATUS_CHECK_FAILED',
+      message: `No se reemite: no se pudo confirmar el estado en SUNAT. ${checked.message || ''}`.trim(),
+    };
+  }
+  if (checked.estadoSunat === 'ACEPTADO') {
+    return { success: true, reemitted: false, refreshed: true, estadoSunat: 'ACEPTADO', message: 'SUNAT confirmó que la factura ya estaba aceptada; se recuperó su CDR.' };
+  }
+  if (['PENDIENTE', 'SIN_CDR'].includes(String(checked.estadoSunat || '').toUpperCase())) {
+    return { success: false, blocked: true, error_code: 'SUNAT_STATUS_PENDING', message: 'No se reemite: SUNAT todavía no confirmó el estado de la factura.' };
+  }
+
+  const burned = String(checked.estadoSunat || '').toUpperCase() === 'RECHAZADO';
   if (!burned) return sendFacturaToSunat(id);
 
   const now = Math.floor(Date.now() / 1000);

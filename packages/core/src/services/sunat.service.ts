@@ -437,13 +437,24 @@ export class SunatService {
   }
 
   async sendDocument(xmlContent: string, fileName: string): Promise<SendResult> {
-    let signedXml: string;
     try {
-      signedXml = signXml(xmlContent, this.keys.privateKey, this.keys.certificate);
+      const signedXml = this.signDocument(xmlContent);
+      return this.sendSignedDocument(signedXml, fileName);
     } catch (e: any) {
       return { success: false, error: { code: 'SIGN_ERROR', message: `[Paso 1/3 - Firmar XML] ${e.message}` } };
     }
+  }
 
+  signDocument(xmlContent: string): string {
+    return signXml(xmlContent, this.keys.privateKey, this.keys.certificate);
+  }
+
+  /**
+   * Sends an already signed XML without signing it again. The signed bytes are
+   * part of the evidence for a SUNAT attempt and must remain identical across
+   * retries for the same document number.
+   */
+  async sendSignedDocument(signedXml: string, fileName: string): Promise<SendResult> {
     const zip = new AdmZip();
     zip.addFile(`${fileName}.xml`, Buffer.from(signedXml, 'utf-8'));
     const zipContent = zip.toBuffer();

@@ -4,7 +4,7 @@ import { boletas, clients, companies, branches, dailySummaries } from '../db/sch
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
 import type { CompanyConfig, BoletaSunatData } from './sunat.service';
-import { readArchive, saveSummaryCdr } from './file.service';
+import { readArchive, saveCdr, saveSummaryCdr, saveXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
 import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
@@ -194,20 +194,56 @@ export async function sendBoletaToSunat(id: number) {
     mtoImpVenta: Number(boleta.mtoImpVenta || 0), formaPagoTipo: 'Contado',
   };
 
-  const xml = sunatService.buildUBLXml(boletaData);
-  const result = await sunatService.sendDocument(xml, `${company.ruc}-03-${boleta.serie}-${boleta.correlativo}`);
-  const { saveXml, saveCdr } = await import('./file.service');
+  const fileName = `${company.ruc}-03-${boleta.serie}-${boleta.correlativo}`;
+  let signedXml: string;
+  let xmlPath = boleta.xmlPath;
+  try {
+    if (xmlPath) {
+      signedXml = (await readArchive(xmlPath)).toString('utf8');
+    } else {
+      const xml = sunatService.buildUBLXml(boletaData);
+      signedXml = sunatService.signDocument(xml);
+      xmlPath = await saveXml(
+        { serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) },
+        signedXml,
+      );
+      await db.update(boletas).set({
+        xmlPath,
+        codigoHash: sunatService.getHashFromXml(signedXml) || null,
+        updatedAt: now(),
+      }).where(eq(boletas.id, id));
+    }
+  } catch (error: any) {
+    const errorData = { code: 'ARCHIVE_ERROR', message: `No se pudo guardar o leer el XML firmado: ${error.message}` };
+    await db.update(boletas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(boletas.id, id));
+    return { success: false, message: errorData.message, error_code: errorData.code };
+  }
 
-  if (result.success && result.xml) {
-    const xmlPath = await saveXml({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.xml);
-    const hash = sunatService.getHashFromXml(result.xml);
-    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse || { status: 'accepted' }), codigoHash: hash || null, updatedAt: Math.floor(Date.now() / 1000) };
-    if (result.cdrZip) updates.cdrPath = await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip);
+  const result = await sunatService.sendSignedDocument(signedXml, fileName);
+
+  if (result.success && result.xml && result.cdrResponse?.code === '0') {
+    const updates: any = { estadoSunat: 'ACEPTADO', xmlPath, respuestaSunat: JSON.stringify(result.cdrResponse), codigoHash: sunatService.getHashFromXml(result.xml) || null, updatedAt: Math.floor(Date.now() / 1000) };
+    try {
+      if (result.cdrZip) updates.cdrPath = await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip);
+    } catch (error: any) {
+      const errorData = { code: 'CDR_ARCHIVE_ERROR', message: `SUNAT respondió aceptación, pero no se pudo guardar el CDR: ${error.message}` };
+      await db.update(boletas).set({ estadoSunat: 'NO_CONFIRMADO', respuestaSunat: JSON.stringify(errorData), updatedAt: now() }).where(eq(boletas.id, id));
+      return { success: false, message: errorData.message, error_code: errorData.code };
+    }
     await db.update(boletas).set(updates).where(eq(boletas.id, id));
     return { success: true, message: 'Boleta enviada exitosamente a SUNAT' };
   }
   const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  await db.update(boletas).set({ estadoSunat: 'RECHAZADO', respuestaSunat: JSON.stringify(errorData), updatedAt: Math.floor(Date.now() / 1000) }).where(eq(boletas.id, id));
+  const hasAuthoritativeRejection = Boolean(result.cdrResponse?.code && result.cdrResponse.code !== '0');
+  const cdrPath = result.cdrZip
+    ? await saveCdr({ serie: boleta.serie, correlativo: boleta.correlativo, fechaEmision: String(boleta.fechaEmision) }, result.cdrZip)
+    : boleta.cdrPath;
+  await db.update(boletas).set({
+    estadoSunat: hasAuthoritativeRejection ? 'RECHAZADO' : 'NO_CONFIRMADO',
+    cdrPath,
+    respuestaSunat: JSON.stringify(errorData),
+    updatedAt: Math.floor(Date.now() / 1000),
+  }).where(eq(boletas.id, id));
   return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
 }
 
@@ -221,6 +257,57 @@ export function isTransientSunatRejection(respuestaSunat: string | null | undefi
   return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
 }
 
+// El estado local puede ser RECHAZADO aunque SUNAT haya aceptado el documento
+// después de un error técnico (por ejemplo, al guardar el ZIP). Antes de
+// quemar el número y crear otro, consultar siempre el CDR autoritativo.
+async function refreshBoletaBeforeReemit(boleta: any, company: any) {
+  const sunat = new SunatService({
+    ruc: company.ruc,
+    razonSocial: company.razonSocial,
+    direccion: company.direccion || '',
+    ubigeo: company.ubigeo || '',
+    usuarioSol: company.usuarioSol || '',
+    claveSol: company.claveSol || '',
+    certificado: company.certificado || '',
+    certificadoPassword: company.certificadoPassword || '',
+  });
+  const result = await sunat.getStatusCdr(company.ruc, boleta.tipoDocumento || '03', boleta.serie, boleta.correlativo);
+  if (!result.success) {
+    return {
+      success: false,
+      state: String(boleta.estadoSunat || '').toUpperCase(),
+      message: result.error?.message || 'SUNAT no respondió la consulta del comprobante.',
+    };
+  }
+
+  const responseCode = String(result.cdrResponse?.code ?? '').trim();
+  const responseText = String(result.cdrResponse?.description || result.statusMessage || '').trim();
+  const notFound = result.statusCode === '0127' || /(?:ticket|comprobante).*(?:no existe|no encontrado)/i.test(responseText);
+  const state = responseCode === '0'
+    ? 'ACEPTADO'
+    : responseCode
+      ? 'RECHAZADO'
+      : notFound
+        ? 'NO_ENVIADA'
+        : 'PENDIENTE';
+  const cdrPath = result.cdrZip ? await saveCdr(boleta, result.cdrZip) : boleta.cdrPath;
+  const respuestaSunat = JSON.stringify({
+    source: 'SUNAT_GET_STATUS_CDR_BEFORE_REEMIT',
+    statusCode: result.statusCode || null,
+    statusMessage: result.statusMessage || null,
+    code: responseCode || null,
+    description: responseText || null,
+    checkedAt: new Date().toISOString(),
+  });
+  await db.update(boletas).set({
+    estadoSunat: state,
+    respuestaSunat,
+    cdrPath,
+    updatedAt: now(),
+  }).where(eq(boletas.id, boleta.id));
+  return { success: true, state, message: responseText || result.statusMessage || `SUNAT devolvió ${state}.` };
+}
+
 // Re-emite una boleta RECHAZADA. Transitorio → reintenta el mismo número. Definitivo →
 // mantiene la rechazada como evidencia (sin la orden) y crea una NUEVA con el siguiente
 // correlativo disponible, que se lleva la orden, y esa se emite.
@@ -229,7 +316,27 @@ export async function reEmitBoleta(id: number) {
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
 
-  const burned = boleta.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(boleta.respuestaSunat);
+  const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
+  if (!company) throw new Error('Empresa no encontrada');
+  const checked = await refreshBoletaBeforeReemit(boleta, company);
+  if (!checked.success) {
+    return {
+      success: false,
+      blocked: true,
+      error_code: 'SUNAT_STATUS_CHECK_FAILED',
+      message: `No se reemite: no se pudo confirmar el estado en SUNAT. ${checked.message}`,
+    };
+  }
+  if (checked.state === 'ACEPTADO') {
+    return { success: true, reemitted: false, refreshed: true, estadoSunat: 'ACEPTADO', message: 'SUNAT confirmó que la boleta ya estaba aceptada; se recuperó su CDR.' };
+  }
+  if (checked.state === 'PENDIENTE') {
+    return { success: false, blocked: true, error_code: 'SUNAT_STATUS_PENDING', message: 'No se reemite: SUNAT todavía no confirmó el estado del comprobante.' };
+  }
+
+  // Una respuesta de CDR con código de rechazo es autoritativa: el número ya
+  // fue procesado por SUNAT y no se debe volver a enviar con el mismo número.
+  const burned = checked.state === 'RECHAZADO';
   if (!burned) return sendBoletaToSunat(id);
 
   const now = Math.floor(Date.now() / 1000);
