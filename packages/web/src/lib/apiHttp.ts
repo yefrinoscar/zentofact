@@ -513,6 +513,26 @@ const apiHttp = {
     method: 'PATCH',
     body: JSON.stringify(data),
   }),
+  updateManagedOrder: (id: number, data: {
+    customer?: {
+      name?: string;
+      phone?: string;
+      documentType?: string;
+      documentNumber?: string;
+      legalName?: string;
+    };
+    shipping?: {
+      type?: 'envio' | 'recojo';
+      carrier?: string;
+      address?: string;
+      reference?: string;
+    };
+    deliveryDate?: string;
+    items?: Array<{ id: number; quantity: number; unitPrice: number }>;
+  }) => req(`/order-management/orders/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
   createManagedOrder: (data: Record<string, unknown> & { idempotencyKey?: string }) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return req('/order-management/orders/manual', {
@@ -671,6 +691,8 @@ const apiHttp = {
   createBoleta: (input: any) => req('/boletas', { method: 'POST', body: JSON.stringify({ input }) }),
   sendBoletaToSunat: (id: number) => req(`/boletas/${id}/send`, { method: 'POST' }),
   reEmitBoleta: (id: number) => req(`/boletas/${id}/reemit`, { method: 'POST' }),
+  reEmitCreditNote: (id: number) => req(`/credit-notes/${id}/reemit`, { method: 'POST' }),
+  refreshCreditNoteStatus: (id: number) => req(`/credit-notes/${id}/refresh-status`, { method: 'POST' }),
 
   // Facturas (emitir individual)
   createFactura: (input: any) => req('/facturas', { method: 'POST', body: JSON.stringify({ input }) }),

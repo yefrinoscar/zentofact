@@ -10,6 +10,7 @@ import {
   listCanceledOrders,
   listOrders,
   resolveDocumentDecision,
+  updateManualOrder,
   updateOrderPayment,
 } from './order-management.js';
 import {
@@ -1366,4 +1367,169 @@ test('el home del vendedor rechaza un rango invertido', async () => {
     getSalespersonHome({ userId: 'seller-9', from: '2026-08-26', to: '2026-08-20' }, { async query() { return { rows: [] }; } }),
     /rango de fechas/,
   );
+});
+
+class ManualEditDb {
+  constructor({ channelCode = 'manual', orderStatus = 'confirmed', fulfillmentStatus = 'ready_to_ship', items = [] } = {}) {
+    this.events = [];
+    this.order = {
+      id: 91,
+      company_id: 7,
+      channel_account_id: 22,
+      channel_code: channelCode,
+      channel_name: 'Venta manual',
+      channel_account_name: 'Ventas manuales',
+      external_order_id: '2608240001',
+      external_order_number: '2608240001',
+      order_status: orderStatus,
+      payment_status: 'paid',
+      fulfillment_status: fulfillmentStatus,
+      document_status: 'not_requested',
+      provider_status: null,
+      items_status: 'complete',
+      items_error: null,
+      document_requirement: 'optional',
+      document_type_policy: 'automatic',
+      requested_document_type: null,
+      currency: 'PEN',
+      subtotal: 100,
+      shipping_amount: 0,
+      discount_amount: null,
+      total: 100,
+      customer: { name: 'Luisa', phone: '999111222', documentType: '1', documentNumber: '12345678' },
+      shipping: { type: 'recojo' },
+      metadata: { delivery: 'recojo', deliveryDate: '2026-09-01' },
+      ordered_at: '2026-09-01T17:00:00.000Z',
+      promised_shipping_at: '2026-09-01T17:00:00.000Z',
+      provider_updated_at: null,
+      cancelled_at: null,
+      returned_at: null,
+      first_seen_at: '2026-09-01T17:00:00.000Z',
+      last_seen_at: '2026-09-01T17:00:00.000Z',
+      created_at: '2026-09-01T17:00:00.000Z',
+      updated_at: '2026-09-01T17:00:00.000Z',
+      created_by: null,
+    };
+    this.items = items;
+  }
+
+  async query(sql, params = []) {
+    const compact = sql.replace(/\s+/g, ' ').trim();
+    if (compact.startsWith('select o.*, ch.code as channel_code')) return { rows: [this.order] };
+    if (compact.startsWith('select a.*, ch.code as channel_code')) {
+      return { rows: [{
+        id: 22,
+        company_id: 7,
+        channel_id: 3,
+        external_account_id: 'default',
+        display_name: 'Ventas manuales',
+        auto_create_orders: false,
+        document_requirement: 'optional',
+        document_type_policy: 'automatic',
+        credential_reference: null,
+        settings: {},
+        active: true,
+        channel_code: 'manual',
+        channel_name: 'Venta manual',
+      }] };
+    }
+    if (compact.startsWith('select id, quantity, unit_price from order_items')) return { rows: this.items };
+    if (compact.startsWith('update order_items set quantity=')) {
+      const item = this.items.find((row) => Number(row.id) === Number(params[0]));
+      if (item) {
+        item.quantity = params[1];
+        item.unit_price = params[2];
+        item.total = Number(params[1]) * Number(params[2]);
+      }
+      return { rows: [] };
+    }
+    if (compact.startsWith('select coalesce(sum(unit_price * quantity), 0) as subtotal')) {
+      const subtotal = this.items.reduce(
+        (sum, row) => sum + Number(row.unit_price || 0) * Number(row.quantity || 0),
+        0,
+      );
+      return { rows: [{ subtotal }] };
+    }
+    if (compact.startsWith('update orders set customer=')) {
+      this.order = {
+        ...this.order,
+        customer: JSON.parse(params[1]),
+        shipping: JSON.parse(params[2]),
+        metadata: JSON.parse(params[3]),
+        subtotal: params[4] ?? this.order.subtotal,
+        total: params[5] ?? this.order.total,
+        promised_shipping_at: params[6] ?? this.order.promised_shipping_at,
+      };
+      return { rows: [this.order] };
+    }
+    if (compact.startsWith('select id, external_item_id')) {
+      return { rows: this.items.map((row) => ({ ...row, stock_state: 'none', stock_applied_quantity: 0, stock_revision: 0 })) };
+    }
+    if (compact.startsWith('insert into order_events')) {
+      this.events.push({ eventType: params[1], source: params[2] });
+      return { rows: [] };
+    }
+    return { rows: [] };
+  }
+}
+
+test('corrige cliente, entrega y fecha de una venta manual', async () => {
+  const db = new ManualEditDb();
+  const result = await updateManualOrder(91, {
+    customer: { name: 'Ana', phone: '', documentNumber: '87654321', documentType: '1' },
+    shipping: { type: 'envio', carrier: 'shaloom', address: 'Av. Perú 100', reference: 'Portón azul' },
+    deliveryDate: '2026-10-02',
+  }, db);
+
+  assert.equal(result.customer.name, 'Ana');
+  assert.equal(result.customer.phone, undefined);
+  assert.equal(result.customer.documentNumber, '87654321');
+  assert.equal(result.shipping.type, 'envio');
+  assert.equal(result.shipping.carrier, 'shaloom');
+  assert.equal(result.shipping.address, 'Av. Perú 100');
+  assert.equal(result.metadata.deliveryDate, '2026-10-02');
+  assert.equal(result.promisedShippingAt, '2026-10-02T17:00:00.000Z');
+  assert.equal(db.events[0].eventType, 'order.updated');
+  assert.equal(db.events[0].source, 'manual');
+});
+
+test('no edita pedidos que no son venta manual', async () => {
+  await assert.rejects(
+    updateManualOrder(91, {}, new ManualEditDb({ channelCode: 'falabella' })),
+    /Solo se pueden editar ventas manuales/,
+  );
+});
+
+test('no edita una venta anulada o devuelta', async () => {
+  await assert.rejects(
+    updateManualOrder(91, {}, new ManualEditDb({ fulfillmentStatus: 'cancelled' })),
+    /No se puede editar un pedido anulado o devuelto/,
+  );
+  await assert.rejects(
+    updateManualOrder(91, {}, new ManualEditDb({ fulfillmentStatus: 'returned' })),
+    /No se puede editar un pedido anulado o devuelto/,
+  );
+});
+
+test('rechaza una línea que no pertenece a la venta', async () => {
+  const db = new ManualEditDb({ items: [{ id: 501, quantity: 1, unit_price: 100 }] });
+  await assert.rejects(
+    updateManualOrder(91, { items: [{ id: 999, quantity: 2, unitPrice: 50 }] }, db),
+    /no pertenece a esta venta/,
+  );
+});
+
+test('recalcula subtotal y total al corregir cantidades y precios', async () => {
+  const db = new ManualEditDb({
+    fulfillmentStatus: 'unmapped',
+    items: [{ id: 501, quantity: 1, unit_price: 100 }],
+  });
+  const result = await updateManualOrder(91, {
+    items: [{ id: 501, quantity: 3, unitPrice: 49.9 }],
+  }, db);
+
+  assert.equal(db.items[0].quantity, 3);
+  assert.equal(db.items[0].unit_price, 49.9);
+  assert.equal(result.subtotal, 149.7);
+  assert.equal(result.total, 149.7);
 });

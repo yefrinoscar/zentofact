@@ -46,7 +46,7 @@ function sunatReason(d: Doc): string {
   let msg = raw;
   try {
     const p = JSON.parse(raw);
-    msg = p.message || p.description || p.statusMessage || p.error?.message || p.error || raw;
+    msg = p.message || p.reason || p.description || p.statusMessage || p.error?.message || p.error || raw;
   } catch { /* texto plano */ }
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
@@ -66,8 +66,12 @@ function EstadoBadge({ d, kind }: { d: Doc; kind: DocumentKind }) {
     ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'SIN_CDR'
     ? { label: 'Sin CDR', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
-    : v === 'NO_ENVIADA'
+    : v === 'NO_ENVIADA' || v === 'NO_ENCONTRADO'
     ? { label: 'No enviada', cls: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' }
+    : v === 'NO_CONFIRMADO' || v === 'ENVIANDO'
+    ? { label: v === 'ENVIANDO' ? 'Enviando' : 'Sin confirmar', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' }
+    : v === 'REVISION_MANUAL'
+    ? { label: 'Revisión manual', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
   const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
@@ -245,7 +249,9 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
       if (res && res.success === false) {
         setRetryMsg(`${d.numeroCompleto}: ${res.message || res.error || 'SUNAT rechazó el comprobante.'}`);
       } else {
-        setRetryMsg(`${d.numeroCompleto}: reemitida y aceptada por SUNAT ✓ (puede haber tomado un nuevo número)`);
+        setRetryMsg(res?.replacedNumeroCompleto
+          ? `${res.replacedNumeroCompleto}: reemplazada por ${res.numeroCompleto}, aceptada por SUNAT ✓`
+          : `${d.numeroCompleto}: ${res?.message || 'aceptada por SUNAT ✓'}`);
       }
       await load();
     } catch (e: any) {
@@ -447,10 +453,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
               <TableBody>
                 {pageRows.map((d) => {
                   const est = effectiveDocumentStatus(d, kind);
-                  const canRetryDocument = canMutate && (
-                    est === 'RECHAZADO'
-                    || (kind === 'facturas' && (est === 'NO_ENCONTRADO' || est === 'SIN_CDR'))
-                  );
+                  // Reintentar siempre reconcilia con SUNAT antes de reenviar o usar otro número.
+                  const canRetryDocument = canMutate && ['RECHAZADO', 'NO_CONFIRMADO', 'NO_ENCONTRADO', 'SIN_CDR'].includes(est);
                   const canVerifyDocument = canMutate && est !== 'ACEPTADO';
                   const hasAcceptedActions = est === 'ACEPTADO';
                   const canDownloadPdf = hasAcceptedActions || (kind === 'boletas' && est === 'ANULADO' && Boolean(d.xmlPath || d.cdrPath));

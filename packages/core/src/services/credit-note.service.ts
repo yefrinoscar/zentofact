@@ -5,6 +5,11 @@ import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
 import type { CompanyConfig, CreditNoteSunatData } from './sunat.service';
 import { saveCreditNoteCdr, saveCreditNoteXml } from './file.service';
+import { sendDocumentOnce } from './document-sender';
+import { countRejectedNumbers } from './emission-ledger';
+import { CLOSED_STATES, MAX_NEW_NUMBERS_PER_ORDER } from './sunat-reconciliation';
+import { reconcileAndReemit, refreshStatusFromSunat } from './reemission.service';
+import type { ReemissionAdapter } from './reemission.service';
 import { numeroALetras } from '../utils/number-to-words';
 import { generateBoletaPreviewHtml } from './pdf.service';
 import type { PdfFormat } from './pdf.service';
@@ -33,7 +38,7 @@ export async function createCreditNoteFromBoleta(
   if (boleta.estadoSunat !== 'ACEPTADO') throw new Error('La boleta afectada debe estar ACEPTADO');
 
   const existing = (await db.select().from(creditNotes).where(eq(creditNotes.affectedBoletaId, boletaId)).limit(1))[0];
-  if (existing) throw new Error(`La boleta ${boleta.numeroCompleto} ya tiene nota de crédito ${existing.numeroCompleto}`);
+  if (existing) throw new Error(existingCreditNoteMessage(`La boleta ${boleta.numeroCompleto}`, existing));
 
   return createCreditNoteFromDocument(boleta, '03', options);
 }
@@ -55,7 +60,7 @@ export async function createCreditNoteFromFactura(
       eq(creditNotes.numDocAfectado, factura.numeroCompleto),
     ),
   )).limit(1))[0];
-  if (existing) throw new Error(`La factura ${factura.numeroCompleto} ya tiene nota de crédito ${existing.numeroCompleto}`);
+  if (existing) throw new Error(existingCreditNoteMessage(`La factura ${factura.numeroCompleto}`, existing));
 
   return createCreditNoteFromDocument(factura, '01', options);
 }
@@ -76,6 +81,12 @@ async function createCreditNoteFromDocument(
   if (!branch) throw new Error('Sucursal no encontrada');
   const client = (await db.select().from(clients).where(eq(clients.id, document.clientId)).limit(1))[0];
   if (!client) throw new Error('Cliente no encontrado');
+
+  // Cada nota rechazada por SUNAT consume un número. Con el tope agotado, decide una persona.
+  const rejectedNumbers = await countRejectedNumbers(company.ruc, '07', document.numeroCompleto);
+  if (rejectedNumbers > MAX_NEW_NUMBERS_PER_ORDER) {
+    throw new Error(`SUNAT ya rechazó ${rejectedNumbers} notas de crédito para ${document.numeroCompleto}. Requiere revisión manual antes de emitir otra.`);
+  }
 
   const serie = resolveCreditNoteSerie(branch.seriesNotaCredito, document.serie, affectedType === '01' ? 'F' : undefined);
   const correlativo = await getNextCorrelative(document.branchId, '07', serie);
@@ -136,13 +147,20 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, creditNoteId)).limit(1))[0];
   if (!note) throw new Error('Nota de crédito no encontrada');
   if (note.estadoSunat === 'ACEPTADO') throw new Error('La nota de crédito ya fue aceptada por SUNAT');
-  const affectedDocumentDate = await findAffectedDocumentDate(note);
-  if (!affectedDocumentDate) {
-    throw new Error('No se encontró el comprobante afectado para validar la fecha de la nota de crédito.');
+  const estadoActual = String(note.estadoSunat || '').toUpperCase();
+  if (CLOSED_STATES.includes(estadoActual)) {
+    return { success: false, blocked: true, id: creditNoteId, numeroCompleto: note.numeroCompleto, error: { code: 'DOCUMENT_CLOSED', message: `No se envía: la nota de crédito ${note.numeroCompleto} está ${estadoActual}.` } };
   }
-  validateCreditNoteIssueDateForSend(note.fechaEmision, {
-    affectedDocumentDates: [affectedDocumentDate],
-  });
+  // Un reenvío usa el XML ya firmado; su fecha quedó fijada en el primer envío.
+  if (!note.xmlPath) {
+    const affectedDocumentDate = await findAffectedDocumentDate(note);
+    if (!affectedDocumentDate) {
+      throw new Error('No se encontró el comprobante afectado para validar la fecha de la nota de crédito.');
+    }
+    validateCreditNoteIssueDateForSend(note.fechaEmision, {
+      affectedDocumentDates: [affectedDocumentDate],
+    });
+  }
 
   const company = (await db.select().from(companies).where(eq(companies.id, note.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -212,49 +230,87 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
   };
 
   const sunatService = new SunatService(config);
-  const xml = sunatService.buildCreditNoteXml(noteData);
-  const result = await sunatService.sendDocument(xml, `${company.ruc}-07-${note.serie}-${note.correlativo}`);
+  const sent = await sendDocumentOnce({
+    documentTable: 'credit_notes',
+    table: creditNotes,
+    tipoDocumento: '07',
+    ruc: company.ruc,
+    doc: note,
+    reference: note.numDocAfectado,
+    sunat: sunatService,
+    buildUnsignedXml: () => sunatService.buildCreditNoteXml(noteData),
+    saveXml: saveCreditNoteXml,
+    saveCdr: saveCreditNoteCdr,
+  });
 
-  if (result.success && result.xml) {
-    const xmlPath = await saveCreditNoteXml({ serie: note.serie, correlativo: note.correlativo, fechaEmision: note.fechaEmision }, result.xml);
-    const updates: Record<string, unknown> = {
-      estadoSunat: 'ACEPTADO',
-      xmlPath,
-      respuestaSunat: JSON.stringify(result.cdrResponse || { status: 'accepted' }),
-      codigoHash: sunatService.getHashFromXml(result.xml) || null,
-      updatedAt: Math.floor(Date.now() / 1000),
-    };
-    if (result.cdrZip) {
-      updates.cdrPath = await saveCreditNoteCdr({ serie: note.serie, correlativo: note.correlativo, fechaEmision: note.fechaEmision }, result.cdrZip);
-    }
-    await db.update(creditNotes).set(updates).where(eq(creditNotes.id, creditNoteId));
-    if (note.affectedBoletaId) {
-      await db.update(boletas).set({
-        // La boleta conserva el resultado de su propia emisión. La anulación
-        // se conoce por la nota de crédito aceptada que la referencia.
-        estadoSunat: 'ACEPTADO',
-        updatedAt: Math.floor(Date.now() / 1000),
-      }).where(eq(boletas.id, note.affectedBoletaId));
-    }
-    if (note.affectedFacturaId) {
-      await db.update(facturas).set({
-        // La factura conserva el resultado de su propia emisión. La anulación
-        // se representa mediante la nota de crédito aceptada asociada.
-        estadoSunat: 'ACEPTADO',
-        updatedAt: Math.floor(Date.now() / 1000),
-      }).where(eq(facturas.id, note.affectedFacturaId));
-    }
+  if (sent.success) {
+    await markAffectedDocumentAccepted(note);
     return { success: true, id: creditNoteId, numeroCompleto: note.numeroCompleto };
   }
 
-  // SUNAT la rechazó (o falló el envío): NO dejar nada registrado para que el
-  // documento afectado siga anulable. El correlativo NO se libera: si SUNAT llegó
-  // a recibir el documento, reutilizar el mismo número puede provocar el error
-  // "El comprobante fue informado anteriormente".
-  const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  await db.delete(creditNotes).where(eq(creditNotes.id, creditNoteId));
+  const error = { code: sent.error_code || 'UNKNOWN', message: sent.message };
+  // Solo se descarta la nota si SUNAT la rechazó con CDR (el número queda
+  // quemado y registrado en sunat_emission_attempts) o si nunca salió hacia
+  // SUNAT. Ante un error incierto la nota se conserva: SUNAT pudo aceptarla y
+  // emitir otra anularía dos veces el mismo comprobante.
+  const neverSent = sent.error_code === 'ARCHIVE_ERROR' && !note.xmlPath;
+  if (sent.estadoSunat === 'RECHAZADO' || neverSent) {
+    await db.delete(creditNotes).where(eq(creditNotes.id, creditNoteId));
+    return { success: false, id: creditNoteId, numeroCompleto: note.numeroCompleto, error, rejected: true };
+  }
+  return {
+    success: false,
+    id: creditNoteId,
+    numeroCompleto: note.numeroCompleto,
+    error,
+    pending: true,
+    estadoSunat: sent.estadoSunat,
+  };
+}
 
-  return { success: false, id: creditNoteId, numeroCompleto: note.numeroCompleto, error: errorData };
+async function markAffectedDocumentAccepted(note: typeof creditNotes.$inferSelect) {
+  const updatedAt = Math.floor(Date.now() / 1000);
+  // El comprobante afectado conserva el resultado de su propia emisión. La
+  // anulación se conoce por la nota de crédito aceptada que lo referencia.
+  if (note.affectedBoletaId) {
+    await db.update(boletas).set({ estadoSunat: 'ACEPTADO', updatedAt }).where(eq(boletas.id, note.affectedBoletaId));
+  }
+  if (note.affectedFacturaId) {
+    await db.update(facturas).set({ estadoSunat: 'ACEPTADO', updatedAt }).where(eq(facturas.id, note.affectedFacturaId));
+  }
+}
+
+function existingCreditNoteMessage(owner: string, existing: typeof creditNotes.$inferSelect): string {
+  const estado = String(existing.estadoSunat || 'PENDIENTE').toUpperCase();
+  if (estado === 'ACEPTADO') return `${owner} ya tiene nota de crédito ${existing.numeroCompleto}`;
+  return `${owner} ya tiene la nota de crédito ${existing.numeroCompleto} en estado ${estado}. Reconcíliala con SUNAT antes de emitir otra.`;
+}
+
+const CREDIT_NOTE_REEMISSION: ReemissionAdapter = {
+  documentTable: 'credit_notes',
+  table: creditNotes,
+  tipoDocumento: '07',
+  label: 'nota de crédito',
+  send: (id) => sendCreditNoteToSunat(id),
+  saveCdr: (doc, cdrZip) => saveCreditNoteCdr(doc, cdrZip),
+  replacementOverrides: {},
+  // Solo puede existir una nota por comprobante: ante un rechazo definitivo se
+  // descarta (la evidencia queda en el historial) para emitir otra después.
+  onDefinitiveRejection: async (doc) => {
+    await db.delete(creditNotes).where(eq(creditNotes.id, doc.id));
+  },
+  onAccepted: async (doc) => markAffectedDocumentAccepted(doc),
+};
+
+// Reconciliación de una nota de crédito no confirmada. Nunca crea otra nota
+// mientras la anterior pueda existir en SUNAT.
+export async function reEmitCreditNote(id: number) {
+  return reconcileAndReemit(CREDIT_NOTE_REEMISSION, id);
+}
+
+// Consulta getStatusCdr de una nota de crédito sin enviar ni reemitir.
+export async function refreshCreditNoteStatus(id: number) {
+  return refreshStatusFromSunat(CREDIT_NOTE_REEMISSION, id);
 }
 
 /**
@@ -286,6 +342,12 @@ export interface CreditNoteSendOutcome {
   success: boolean;
   numeroCompleto?: string;
   error?: { code: string; message: string };
+  /** SUNAT no confirmó la nota: se conserva y debe reconciliarse. */
+  pending?: boolean;
+  /** SUNAT la rechazó con CDR: se descartó y puede emitirse otra. */
+  rejected?: boolean;
+  blocked?: boolean;
+  estadoSunat?: string;
 }
 
 export interface FacturaCreditNoteSendOutcome extends Omit<CreditNoteSendOutcome, 'boletaId'> {

@@ -160,6 +160,7 @@ export async function processWorkflow(
         detalles,
         // Beta: no avanzar el contador de correlativo (solo prueba).
         persistCorrelative: isProduction,
+        expected_total: Number(venta.total) > 0 ? { total: Number(venta.total), source: 'total del pedido' } : undefined,
       });
 
       if (!isProduction) betaBoletaIds.push(boleta.id);

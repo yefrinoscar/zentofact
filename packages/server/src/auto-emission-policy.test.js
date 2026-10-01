@@ -4,10 +4,14 @@ import {
   JOB_KIND_CREDIT_NOTE,
   JOB_KIND_INVOICE,
   decideCreditNoteJob,
+  decideExistingDocumentJob,
+  creditNoteReconciliationOutcome,
+  sweepDocumentAction,
   isCreditNoteStatus,
   isPartialCreditNoteStatus,
   isReadyStatus,
   jobKindForStatus,
+  reconciliationJobOutcome,
 } from './auto-emission-policy.js';
 
 const MIN = new Date('2026-07-01T00:00:00+00:00');
@@ -115,4 +119,82 @@ test('órdenes anteriores a julio 2026 se omiten', () => {
   });
   assert.equal(decided.action, 'skip');
   assert.match(decided.result, /fecha mínima/);
+});
+
+test('documento existente aceptado: el job termina sin volver a emitir', () => {
+  const decided = decideExistingDocumentJob({ document: { numeroCompleto: 'B001-000580', estadoSunat: 'ACEPTADO' }, tipo: 'boleta' });
+  assert.equal(decided.action, 'done');
+  assert.equal(decided.boletaNumero, 'B001-000580');
+});
+
+test('documento existente sin aceptar se reconcilia con SUNAT; en simulación no se toca', () => {
+  for (const estadoSunat of ['NO_CONFIRMADO', 'RECHAZADO', 'PENDIENTE', 'NO_ENCONTRADO', '']) {
+    assert.equal(decideExistingDocumentJob({ document: { estadoSunat }, tipo: 'boleta' }).action, 'reconcile', estadoSunat);
+  }
+  assert.equal(decideExistingDocumentJob({ document: { estadoSunat: 'NO_CONFIRMADO' }, tipo: 'boleta', dryRun: true }).action, 'skip');
+});
+
+test('revisión manual, anulado o reemplazado nunca se reemiten automáticamente', () => {
+  for (const estadoSunat of ['REVISION_MANUAL', 'ANULADO', 'REEMPLAZADO']) {
+    const decided = decideExistingDocumentJob({ document: { numeroCompleto: 'B001-000580', estadoSunat }, tipo: 'boleta' });
+    assert.equal(decided.action, 'fail', estadoSunat);
+    assert.match(decided.result, /revisión manual/);
+  }
+});
+
+test('reconciliado con número nuevo: se sube a Falabella el número que quedó activo', () => {
+  const outcome = reconciliationJobOutcome(
+    { success: true, reemitted: true, documentId: 902, numeroCompleto: 'B001-000602', replacedNumeroCompleto: 'B001-000580' },
+    { tipo: 'boleta', document: boleta },
+  );
+  assert.equal(outcome.action, 'upload');
+  assert.equal(outcome.documentId, 902);
+  assert.equal(outcome.numeroCompleto, 'B001-000602');
+  assert.match(outcome.note, /reemplaza a B001-000580/);
+});
+
+test('recuperado como aceptado: se sube el mismo documento', () => {
+  const outcome = reconciliationJobOutcome(
+    { success: true, reemitted: false, documentId: 11, numeroCompleto: 'B001-000580' },
+    { tipo: 'boleta', document: boleta },
+  );
+  assert.equal(outcome.action, 'upload');
+  assert.equal(outcome.documentId, 11);
+});
+
+test('revisión manual detiene el job; lo incierto se reintenta más tarde', () => {
+  assert.equal(reconciliationJobOutcome({ success: false, blocked: true, manualReview: true, error_code: 'SUNAT_MANUAL_REVIEW' }, { tipo: 'boleta', document: boleta }).action, 'fail');
+  assert.equal(reconciliationJobOutcome({ success: false, blocked: true, error_code: 'DOCUMENT_CLOSED' }, { tipo: 'boleta', document: boleta }).action, 'fail');
+  for (const error_code of ['SUNAT_STATUS_CHECK_FAILED', 'SUNAT_STATUS_PENDING', 'REEMISSION_IN_PROGRESS', 'soap-env:Client.0130']) {
+    assert.equal(reconciliationJobOutcome({ success: false, error_code }, { tipo: 'boleta', document: boleta }).action, 'retry', error_code);
+  }
+});
+
+test('nota de crédito sin confirmar se reconcilia; nunca se emite otra a ciegas', () => {
+  const base = { status: 'canceled', orderDate: new Date('2026-08-01T00:00:00Z'), minOrderDate: MIN, boleta };
+  for (const estadoSunat of ['NO_CONFIRMADO', 'ENVIANDO', 'PENDIENTE', 'NO_ENCONTRADO']) {
+    const decided = decideCreditNoteJob({ ...base, creditNote: { id: 33, numeroCompleto: 'BC01-000012', estadoSunat } });
+    assert.equal(decided.action, 'reconcile', estadoSunat);
+    assert.equal(decided.creditNoteId, 33);
+  }
+  assert.equal(decideCreditNoteJob({ ...base, creditNote: { id: 33, estadoSunat: 'REVISION_MANUAL' } }).action, 'fail');
+  assert.equal(decideCreditNoteJob({ ...base, creditNote: { id: 33, estadoSunat: 'NO_CONFIRMADO' }, dryRun: true }).action, 'skip');
+});
+
+test('resultado de reconciliar una nota de crédito', () => {
+  assert.equal(creditNoteReconciliationOutcome({ success: true, numeroCompleto: 'BC01-000012' }).action, 'done');
+  // Rechazada: se descartó; el siguiente intento emite una nueva.
+  assert.equal(creditNoteReconciliationOutcome({ success: false, rejected: true, error_code: 'SUNAT_REJECTED' }).action, 'retry');
+  assert.equal(creditNoteReconciliationOutcome({ success: false, blocked: true, error_code: 'SUNAT_STATUS_CHECK_FAILED' }).action, 'retry');
+  assert.equal(creditNoteReconciliationOutcome({ success: false, manualReview: true }).action, 'fail');
+});
+
+test('barrido: espera al job activo, reencola el fallido y en otro caso solo consulta', () => {
+  const doc = { orderNumber: '3248821186' };
+  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'processing' }, companyEnabled: true }), 'wait');
+  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'pending' }, companyEnabled: true }), 'wait');
+  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'failed' }, companyEnabled: true }), 'refresh');
+  // Empresa pausada (por ejemplo por el centinela de serie): solo lectura.
+  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'failed' }, companyEnabled: false }), 'refresh');
+  assert.equal(sweepDocumentAction({ document: { orderNumber: null }, job: null, companyEnabled: true }), 'refresh');
 });
