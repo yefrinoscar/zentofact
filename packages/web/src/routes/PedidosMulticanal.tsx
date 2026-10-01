@@ -1490,6 +1490,12 @@ export default function PedidosMulticanal() {
                                   aria-label="Monto de comisión en soles"
                                   className="h-10 w-32 rounded-lg pl-9 pr-3 text-right text-base tabular-nums [appearance:textfield]"
                                   value={commissionDraft}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      event.preventDefault();
+                                      void saveCommission(item);
+                                    }
+                                  }}
                                   onChange={(event) => {
                                     const next = event.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
                                     const [whole, decimals = ''] = next.split('.');
