@@ -1992,3 +1992,210 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     channel_account_name: existing.channel_account_name,
   });
 }
+
+const MANUAL_EDIT_CUSTOMER_KEYS = ['name', 'phone', 'documentType', 'documentNumber', 'legalName'];
+const MANUAL_EDIT_SHIPPING_TEXT_KEYS = ['address', 'reference'];
+const MANUAL_EDIT_DELIVERY_TYPES = ['envio', 'recojo'];
+
+/** Copia los campos de texto editables sobre el objeto actual; vacío borra la clave. */
+function mergedTextObject(current, patch, keys, max = 300) {
+  const next = { ...jsonObject(current) };
+  for (const key of keys) {
+    if (!(key in patch)) continue;
+    const raw = patch[key];
+    const text = raw == null ? '' : String(raw).trim();
+    if (text) next[key] = text.slice(0, max);
+    else delete next[key];
+  }
+  return next;
+}
+
+function roundMoney(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round((parsed + Number.EPSILON) * 100) / 100 : 0;
+}
+
+function manualDeliveryDateIso(value) {
+  const dateKey = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) throw new Error('Fecha de entrega inválida.');
+  const parsed = new Date(`${dateKey}T12:00:00-05:00`);
+  if (Number.isNaN(parsed.getTime())) throw new Error('Fecha de entrega inválida.');
+  return parsed.toISOString();
+}
+
+/**
+ * Corrige una venta manual ya registrada: cliente, entrega, fecha y líneas.
+ * Solo aplica a pedidos del canal manual y no toca el comprobante emitido.
+ */
+export async function updateManualOrder(orderId, input = {}, db) {
+  if (db) return updateManualOrderWithDb(orderId, input, db);
+  const { pool } = await loadCore();
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const result = await updateManualOrderWithDb(orderId, input, client);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateManualOrderWithDb(orderId, input, db) {
+  const id = positiveInt(orderId, 'orderId');
+  const currentResult = await db.query(
+    `select o.*, ch.code as channel_code, ch.name as channel_name,
+       a.display_name as channel_account_name
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.id=$1
+     for update`,
+    [id],
+  );
+  const existing = currentResult.rows[0];
+  if (!existing) throw new Error('Pedido no encontrado.');
+  if (existing.channel_code !== 'manual') {
+    throw new Error('Solo se pueden editar ventas manuales.');
+  }
+  if (
+    existing.order_status === 'cancelled'
+    || existing.fulfillment_status === 'cancelled'
+    || existing.fulfillment_status === 'returned'
+  ) {
+    throw new Error('No se puede editar un pedido anulado o devuelto.');
+  }
+
+  const customerPatch = jsonObject(input.customer);
+  const shippingPatch = jsonObject(input.shipping);
+  const nextCustomer = mergedTextObject(existing.customer, customerPatch, MANUAL_EDIT_CUSTOMER_KEYS);
+  const nextShipping = mergedTextObject(existing.shipping, shippingPatch, MANUAL_EDIT_SHIPPING_TEXT_KEYS);
+  const nextMetadata = { ...jsonObject(existing.metadata) };
+
+  if ('type' in shippingPatch) {
+    nextShipping.type = enumValue(shippingPatch.type, MANUAL_EDIT_DELIVERY_TYPES, 'shipping.type');
+    if (nextShipping.type === 'recojo') delete nextShipping.carrier;
+  }
+  if ('carrier' in shippingPatch) {
+    const carrier = String(shippingPatch.carrier || '').trim().toLowerCase();
+    if (carrier) nextShipping.carrier = carrier;
+    else delete nextShipping.carrier;
+  }
+  assertManualEnvioCarrier(nextShipping, 'manual');
+
+  let promisedShippingAt = null;
+  if (input.deliveryDate !== undefined && input.deliveryDate !== null && input.deliveryDate !== '') {
+    const iso = manualDeliveryDateIso(input.deliveryDate);
+    promisedShippingAt = iso;
+    nextMetadata.deliveryDate = String(input.deliveryDate).trim();
+    nextMetadata.shippingCarrier = nextShipping.type === 'envio' ? (nextShipping.carrier || '') : '';
+  }
+
+  let subtotal = existing.subtotal == null ? null : Number(existing.subtotal);
+  let total = existing.total == null ? null : Number(existing.total);
+  const items = Array.isArray(input.items) ? input.items : null;
+  if (items) {
+    if (!items.length) throw new Error('La venta necesita al menos un producto.');
+    const rows = (await db.query(
+      `select id, quantity, unit_price from order_items where order_id=$1 for update`,
+      [id],
+    )).rows;
+    const byId = new Map(rows.map((row) => [Number(row.id), row]));
+    for (const raw of items) {
+      const itemId = positiveInt(raw?.id, 'item.id');
+      const row = byId.get(itemId);
+      if (!row) throw new Error('Una línea del pedido no pertenece a esta venta.');
+      const quantity = nullableNumber(raw?.quantity, 'quantity');
+      if (quantity == null || quantity <= 0) throw new Error('La cantidad debe ser mayor a cero.');
+      const currentPrice = row.unit_price == null ? null : Number(row.unit_price);
+      const unitPrice = raw?.unitPrice === undefined
+        ? currentPrice
+        : nullableNumber(raw.unitPrice, 'unitPrice');
+      if (unitPrice == null || unitPrice < 0) throw new Error('El precio no puede ser negativo.');
+      await db.query(
+        `update order_items
+           set quantity=$2, unit_price=$3, total=round(($2 * $3)::numeric, 2), updated_at=now()
+         where id=$1 and order_id=$4`,
+        [itemId, quantity, unitPrice, id],
+      );
+    }
+    const sum = (await db.query(
+      `select coalesce(sum(unit_price * quantity), 0) as subtotal from order_items where order_id=$1`,
+      [id],
+    )).rows[0];
+    subtotal = roundMoney(sum?.subtotal);
+    total = roundMoney(subtotal + (existing.shipping_amount == null ? 0 : Number(existing.shipping_amount)));
+  }
+
+  const updated = await db.query(
+    `update orders set
+       customer=$2::jsonb,
+       shipping=$3::jsonb,
+       metadata=$4::jsonb,
+       subtotal=coalesce($5, subtotal),
+       total=coalesce($6, total),
+       promised_shipping_at=coalesce($7::timestamptz, promised_shipping_at),
+       updated_at=now()
+     where id=$1
+     returning *`,
+    [
+      id,
+      JSON.stringify(nextCustomer),
+      JSON.stringify(nextShipping),
+      JSON.stringify(nextMetadata),
+      subtotal,
+      total,
+      promisedShippingAt,
+    ],
+  );
+  const persisted = updated.rows[0];
+
+  if (items) {
+    const account = await accountWithChannel(db, existing.channel_account_id);
+    const upsertedItems = (await db.query(
+      `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+         main_sku, stock_state, stock_applied_quantity, stock_revision, provider_status
+       from order_items
+       where order_id=$1 and stock_state <> 'reversed'
+       for update`,
+      [id],
+    )).rows;
+    await stockPhase({
+      db,
+      persisted,
+      existing,
+      account,
+      upsertedItems,
+      source: 'manual',
+      actorUserId: optionalText(input.actorUserId, 300),
+    });
+  }
+
+  const changes = changeSet(existing, persisted);
+  await db.query(
+    `insert into order_events (
+       order_id, event_type, source, actor_user_id, idempotency_key,
+       previous_values, new_values, payload
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      id,
+      'order.updated',
+      'manual',
+      optionalText(input.actorUserId, 300),
+      `order.manual_edit:${id}:${persisted.updated_at}`,
+      JSON.stringify(changes.before),
+      JSON.stringify(changes.after),
+      JSON.stringify({ reason: 'manual_edit' }),
+    ],
+  );
+
+  return normalizeOrderRow({
+    ...persisted,
+    channel_code: existing.channel_code,
+    channel_name: existing.channel_name,
+    channel_account_name: existing.channel_account_name,
+  });
+}
