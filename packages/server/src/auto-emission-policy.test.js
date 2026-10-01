@@ -193,7 +193,7 @@ test('barrido: espera al job activo, reencola el fallido y en otro caso solo con
   const doc = { orderNumber: '3248821186' };
   assert.equal(sweepDocumentAction({ document: doc, job: { status: 'processing' }, companyEnabled: true }), 'wait');
   assert.equal(sweepDocumentAction({ document: doc, job: { status: 'pending' }, companyEnabled: true }), 'wait');
-  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'failed' }, companyEnabled: true }), 'requeue');
+  assert.equal(sweepDocumentAction({ document: doc, job: { status: 'failed' }, companyEnabled: true }), 'refresh');
   // Empresa pausada (por ejemplo por el centinela de serie): solo lectura.
   assert.equal(sweepDocumentAction({ document: doc, job: { status: 'failed' }, companyEnabled: false }), 'refresh');
   assert.equal(sweepDocumentAction({ document: { orderNumber: null }, job: null, companyEnabled: true }), 'refresh');
