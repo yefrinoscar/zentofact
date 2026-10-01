@@ -257,6 +257,59 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
   );
 }
 
+/**
+ * Campo numérico con borrador local: deja vaciar el campo mientras se escribe y
+ * confirma el valor recién al salir. Sin esto, borrar la cantidad la dejaba
+ * pegada en 1 y el precio no se podía reemplazar de corrido.
+ */
+function EditableNumberInput({
+  id,
+  value,
+  inputMode,
+  normalize,
+  onChange,
+  className,
+}: {
+  id: string;
+  value: number;
+  inputMode: 'numeric' | 'decimal';
+  normalize: (raw: string) => number;
+  onChange: (value: number) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const decimal = inputMode === 'decimal';
+  const shown = draft ?? String(value);
+
+  const commit = (raw: string) => {
+    const next = normalize(raw);
+    if (Number.isFinite(next) && next !== value) onChange(next);
+  };
+
+  return (
+    <Input
+      id={id}
+      type="text"
+      inputMode={inputMode}
+      autoComplete="off"
+      value={shown}
+      onChange={(event) => {
+        const raw = event.target.value;
+        if (decimal ? !/^\d*(?:[.,]\d*)?$/.test(raw) : !/^\d*$/.test(raw)) return;
+        setDraft(raw);
+        if (raw.trim() !== '') commit(raw);
+      }}
+      onBlur={() => {
+        const raw = draft;
+        setDraft(null);
+        // Vacío al salir: se restaura el último valor válido en vez de forzar 1 o 0.
+        if (raw !== null && raw.trim() !== '') commit(raw);
+      }}
+      className={className}
+    />
+  );
+}
+
 export function ProductosStep({ view }: { view: SaleFormView }) {
   if (!view.lines.length) {
     return (
@@ -318,29 +371,23 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                 <div className="mt-3 grid grid-cols-[4.75rem_7.5rem_minmax(0,1fr)] items-end gap-2">
                   <div className="space-y-1">
                     <Label htmlFor={`qty-${line.id}`} className="text-[11px] text-muted-foreground">Cant.</Label>
-                    <Input
+                    <EditableNumberInput
                       id={`qty-${line.id}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      max={line.available ?? undefined}
                       value={line.quantity}
-                      onChange={(event) => view.updateLine(line.id, {
-                        quantity: clampSaleQuantity(event.target.value, line.available),
-                      })}
+                      inputMode="numeric"
+                      normalize={(raw) => clampSaleQuantity(raw, line.available)}
+                      onChange={(quantity) => view.updateLine(line.id, { quantity })}
                       className={cn('h-10 bg-background sm:h-9', NUMBER_INPUT)}
                     />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor={`price-${line.id}`} className="text-[11px] text-muted-foreground">Precio</Label>
-                    <Input
+                    <EditableNumberInput
                       id={`price-${line.id}`}
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step="0.01"
                       value={line.unitPrice}
-                      onChange={(event) => view.updateLine(line.id, { unitPrice: Math.max(0, Number(event.target.value || 0)) })}
+                      inputMode="decimal"
+                      normalize={(raw) => Math.max(0, Number(raw.replace(',', '.')) || 0)}
+                      onChange={(unitPrice) => view.updateLine(line.id, { unitPrice })}
                       className={cn('h-10 bg-background tabular-nums sm:h-9', NUMBER_INPUT)}
                     />
                   </div>
