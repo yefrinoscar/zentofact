@@ -129,11 +129,19 @@ export function decideCreditNoteJob({
         boletaNumero: numero || null,
       };
     }
-    return {
-      action: 'fail',
-      result: `nota de crédito ${numero} existe pero está ${String(creditNote.estadoSunat || creditNote.estado || 'SIN ACEPTAR').toUpperCase()} en SUNAT — revisar (no se re-emite para evitar duplicados)`,
-      boletaNumero: numero || null,
-    };
+    const estado = String(creditNote.estadoSunat || creditNote.estado || '').toUpperCase();
+    if (HUMAN_ONLY_STATES.includes(estado)) {
+      return {
+        action: 'fail',
+        result: `nota de crédito ${numero} está ${estado}: requiere revisión manual antes de emitir otra`,
+        boletaNumero: numero || null,
+      };
+    }
+    // Sin confirmar: SUNAT pudo aceptarla. Se reconcilia; nunca se emite otra a ciegas.
+    if (dryRun) {
+      return { action: 'skip', result: `Simulación: reconciliaría la nota de crédito ${numero} (${estado || 'SIN ESTADO'}) con SUNAT`, boletaNumero: numero || null };
+    }
+    return { action: 'reconcile', creditNoteId: creditNote.id, boletaNumero: numero || null };
   }
 
   const sales = acceptedSalesDocument(boleta, factura);
@@ -166,4 +174,86 @@ export function decideCreditNoteJob({
     documentId: sales.id,
     boletaNumero: sales.document.numeroCompleto || sales.document.numero_completo || null,
   };
+}
+
+// Estados de un comprobante existente que ningún job automático debe tocar.
+const HUMAN_ONLY_STATES = ['REVISION_MANUAL', 'ANULADO', 'REEMPLAZADO'];
+
+/**
+ * Decide qué hace un job de comprobante cuando la orden ya tiene un documento.
+ * Un documento no aceptado nunca se reemite a ciegas: se reconcilia con SUNAT
+ * (reEmitBoleta/reEmitFactura), salvo en simulación o si espera a una persona.
+ */
+export function decideExistingDocumentJob({ document, tipo, dryRun = false }) {
+  const numero = document?.numeroCompleto || '';
+  const estado = String(document?.estadoSunat || document?.estado || '').toUpperCase();
+  if (estado === 'ACEPTADO') {
+    return { action: 'done', result: `ya tenía ${tipo} ${numero}`, boletaNumero: numero };
+  }
+  if (HUMAN_ONLY_STATES.includes(estado)) {
+    return {
+      action: 'fail',
+      result: `${tipo} ${numero} está ${estado}: requiere revisión manual antes de emitir otro comprobante`,
+      boletaNumero: numero,
+    };
+  }
+  if (dryRun) {
+    return { action: 'skip', result: `Simulación: reconciliaría ${tipo} ${numero} (${estado || 'SIN ESTADO'}) con SUNAT`, boletaNumero: numero };
+  }
+  return { action: 'reconcile' };
+}
+
+/**
+ * Traduce el resultado de reEmitBoleta/reEmitFactura en el siguiente paso del
+ * job. Si quedó aceptado (recuperado o reemitido) hay que subirlo a Falabella
+ * con el número que realmente quedó activo, que puede ser uno nuevo.
+ */
+export function reconciliationJobOutcome(reconciled, { tipo, document }) {
+  const numero = reconciled?.numeroCompleto || document?.numeroCompleto || '';
+  if (reconciled?.success) {
+    return {
+      action: 'upload',
+      documentId: reconciled.documentId ?? document?.id,
+      numeroCompleto: numero,
+      note: reconciled.replacedNumeroCompleto
+        ? `${tipo} ${numero} ACEPTADA (reemplaza a ${reconciled.replacedNumeroCompleto})`
+        : `${tipo} ${numero} ACEPTADA tras reconciliar con SUNAT`,
+    };
+  }
+  const message = reconciled?.message || `${tipo} ${numero} requiere revisión antes de reemitir`;
+  if (reconciled?.manualReview || reconciled?.error_code === 'DOCUMENT_CLOSED') {
+    return { action: 'fail', result: message, boletaNumero: numero };
+  }
+  // Consulta fallida, estado incierto, otro proceso reconciliando o envío no
+  // aceptado: se reconcilia otra vez en el siguiente intento. Los topes de
+  // reenvíos y números nuevos terminan llevándolo a revisión manual.
+  return { action: 'retry', error: message };
+}
+
+/**
+ * Traduce la reconciliación de una nota de crédito en el resultado del job.
+ * Si SUNAT la rechazó, la nota se descartó: el siguiente intento emite otra.
+ */
+export function creditNoteReconciliationOutcome(reconciled, { numero = '' } = {}) {
+  const message = reconciled?.message || `nota de crédito ${numero} requiere revisión`;
+  if (reconciled?.success) {
+    return { action: 'done', result: `nota de crédito ${reconciled.numeroCompleto || numero} ACEPTADA tras reconciliar con SUNAT`, boletaNumero: reconciled.numeroCompleto || numero || null };
+  }
+  if (reconciled?.manualReview || reconciled?.error_code === 'DOCUMENT_CLOSED') {
+    return { action: 'fail', result: message, boletaNumero: numero || null };
+  }
+  return { action: 'retry', error: message };
+}
+
+/**
+ * Qué hace el barrido con un comprobante sin confirmar:
+ * - si su job está activo, nada (el job lo reconcilia);
+ * - si el job falló y la empresa emite automáticamente, se reencola para que
+ *   reconcilie y suba a Falabella el número que quede activo;
+ * - en otro caso, solo se consulta SUNAT en modo lectura.
+ */
+export function sweepDocumentAction({ document, job, companyEnabled }) {
+  if (job && ['pending', 'processing'].includes(job.status)) return 'wait';
+  if (document?.orderNumber && job?.status === 'failed' && companyEnabled) return 'requeue';
+  return 'refresh';
 }

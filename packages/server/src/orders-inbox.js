@@ -132,7 +132,7 @@ const BASE_CTE = `
       doc.document_date,
       case
         when lower(coalesce(fo.status, '')) ~ '(canceled|cancelled|cancelada|returned|devuelta|failed)'
-          or upper(coalesce(doc.document_status, '')) = 'RECHAZADO' then 'atencion'
+          or upper(coalesce(doc.document_status, '')) in ('RECHAZADO', 'NO_CONFIRMADO', 'REVISION_MANUAL') then 'atencion'
         when doc.document_id is null and lower(coalesce(fo.status, '')) ~ '(ready_to_ship|shipped|delivered)' then 'por_emitir'
         when doc.document_id is null then 'nuevo'
         when upper(coalesce(doc.document_status, '')) in ('ACEPTADO', 'ANULADO') then 'completado'

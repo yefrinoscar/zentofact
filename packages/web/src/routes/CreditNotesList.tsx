@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Loader2, FileMinus2, Eye, AlertCircle } from 'lucide-react';
+import { Search, Loader2, FileMinus2, Eye, AlertCircle, RefreshCw } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
@@ -48,7 +48,7 @@ function sunatReason(d: Nc): string {
   const raw = d.respuestaSunat;
   if (!raw) return '';
   let msg = raw;
-  try { const p = JSON.parse(raw); msg = p.message || p.error || raw; } catch { /* texto plano */ }
+  try { const p = JSON.parse(raw); msg = p.message || p.reason || p.description || p.error || raw; } catch { /* texto plano */ }
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
 
@@ -56,8 +56,10 @@ function EstadoBadge({ d }: { d: Nc }) {
   const v = String(d.estadoSunat || '').toUpperCase();
   const view = v === 'ACEPTADO'
     ? { label: 'Aceptado', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300' }
-    : v === 'RECHAZADO'
-    ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
+    : v === 'RECHAZADO' || v === 'REVISION_MANUAL'
+    ? { label: v === 'RECHAZADO' ? 'Rechazado' : 'Revisión manual', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
+    : v === 'NO_CONFIRMADO' || v === 'ENVIANDO' || v === 'NO_ENCONTRADO'
+    ? { label: v === 'ENVIANDO' ? 'Enviando' : v === 'NO_ENCONTRADO' ? 'No enviada' : 'Sin confirmar', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' }
     : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
   const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
@@ -81,6 +83,8 @@ export default function CreditNotesList() {
   const [stats, setStats] = useState<DocumentStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
+  const [reconcilingId, setReconcilingId] = useState<number | null>(null);
+  const [reconcileMsg, setReconcileMsg] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -154,6 +158,21 @@ export default function CreditNotesList() {
     });
   }, [rows, search, selectedRange.from]);
 
+  // Consulta SUNAT antes de cualquier reenvío; nunca emite otra nota a ciegas.
+  const reconcile = async (d: Nc) => {
+    setReconcilingId(d.id);
+    setReconcileMsg('');
+    try {
+      const res: any = await api.reEmitCreditNote(d.id);
+      setReconcileMsg(`${d.numeroCompleto}: ${res?.message || (res?.success ? 'aceptada por SUNAT ✓' : 'sin cambios')}`);
+      await load();
+    } catch (e: any) {
+      setReconcileMsg(`${d.numeroCompleto}: ${e?.message || 'No se pudo reconciliar con SUNAT.'}`);
+    } finally {
+      setReconcilingId(null);
+    }
+  };
+
   const openPreview = async (d: Nc) => {
     const requestId = ++previewRequestRef.current;
     setPreviewingId(d.id);
@@ -204,6 +223,10 @@ export default function CreditNotesList() {
           loading={loading}
           />
         </Suspense>
+
+        {reconcileMsg && (
+          <p className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">{reconcileMsg}</p>
+        )}
 
         {(loadError || previewError) && (
           <div className="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
@@ -277,7 +300,12 @@ export default function CreditNotesList() {
                         <TableCell className="text-right font-medium text-foreground">{money(d.mtoImpVenta)}</TableCell>
                         <TableCell><EstadoBadge d={d} /></TableCell>
                         <TableCell>
-                          <div className="flex justify-end">
+                          <div className="flex justify-end gap-2">
+                            {['NO_CONFIRMADO', 'NO_ENCONTRADO', 'ENVIANDO', 'PENDIENTE'].includes(String(d.estadoSunat || '').toUpperCase()) && (
+                              <Button variant="outline" size="sm" onClick={() => reconcile(d)} disabled={reconcilingId !== null}>
+                                {reconcilingId === d.id ? <Loader2 className="animate-spin" /> : <RefreshCw />} Reconciliar
+                              </Button>
+                            )}
                             <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId !== null}>
                               {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
                             </Button>
