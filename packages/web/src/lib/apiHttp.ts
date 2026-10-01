@@ -671,6 +671,8 @@ const apiHttp = {
   createBoleta: (input: any) => req('/boletas', { method: 'POST', body: JSON.stringify({ input }) }),
   sendBoletaToSunat: (id: number) => req(`/boletas/${id}/send`, { method: 'POST' }),
   reEmitBoleta: (id: number) => req(`/boletas/${id}/reemit`, { method: 'POST' }),
+  reEmitCreditNote: (id: number) => req(`/credit-notes/${id}/reemit`, { method: 'POST' }),
+  refreshCreditNoteStatus: (id: number) => req(`/credit-notes/${id}/refresh-status`, { method: 'POST' }),
 
   // Facturas (emitir individual)
   createFactura: (input: any) => req('/facturas', { method: 'POST', body: JSON.stringify({ input }) }),

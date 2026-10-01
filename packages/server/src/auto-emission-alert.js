@@ -152,3 +152,38 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+const DOCUMENT_LABELS = { boletas: 'Boleta', facturas: 'Factura', credit_notes: 'Nota de crédito' };
+
+/**
+ * Aviso del barrido SUNAT: comprobantes que siguen sin aceptación cerca del
+ * plazo de envío y series que otro sistema está usando.
+ */
+export function buildSunatAttentionEmail({ overdue = [], collisions = [], deadlineDays } = {}) {
+  const docLines = overdue.map((doc) => (
+    `${DOCUMENT_LABELS[doc.table] || doc.table} ${doc.numeroCompleto} · ${doc.estadoSunat || 'PENDIENTE'} · emitido ${doc.fechaEmision}${doc.orderNumber ? ` · orden ${doc.orderNumber}` : ''}${doc.companyName ? ` · ${doc.companyName}` : ''}`
+  ));
+  const seriesLines = collisions.map((probe) => (
+    `${probe.companyName || `Empresa ${probe.companyId}`}: la serie ${probe.serie} ya tiene números en SUNAT que ZentoFact no emitió (${probe.checked.filter((item) => item.kind !== 'NOT_FOUND').map((item) => item.numero).join(', ')}). Otro sistema está emitiendo con esta serie: los comprobantes que choquen quedarán en revisión manual.`
+  ));
+  const parts = [];
+  if (seriesLines.length) parts.push(`Series usadas por otro sistema`);
+  if (docLines.length) parts.push(`${docLines.length} comprobante(s) sin aceptación`);
+  const subject = `ZentoFact: ${parts.join(' y ') || 'revisión SUNAT'}`;
+  const deadline = deadlineDays ? ` El plazo de envío a SUNAT es de ${deadlineDays} días desde la emisión.` : '';
+  const text = [
+    ...(seriesLines.length ? ['Series en conflicto:', ...seriesLines, ''] : []),
+    ...(docLines.length ? [`Comprobantes sin aceptación de SUNAT.${deadline}`, ...docLines, ''] : []),
+    'Revísalos en ZentoFact > Documentos. Ninguno se reemitirá a ciegas.',
+  ].join('\n');
+  const list = (items) => `<ul style="font-size:14px;line-height:1.5;color:#444;padding-left:18px">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#111">
+      <h2 style="font-size:18px;margin:0 0 16px">${escapeHtml(subject)}</h2>
+      ${seriesLines.length ? `<p style="font-size:14px;margin:0 0 4px">Series en conflicto:</p>${list(seriesLines)}` : ''}
+      ${docLines.length ? `<p style="font-size:14px;margin:0 0 4px">Comprobantes sin aceptación de SUNAT.${escapeHtml(deadline)}</p>${list(docLines)}` : ''}
+      <p style="font-size:14px;line-height:1.5;margin:0;color:#444">Revísalos en ZentoFact &gt; Documentos. Ninguno se reemitirá a ciegas.</p>
+    </div>
+  `.trim();
+  return { subject, text, html };
+}

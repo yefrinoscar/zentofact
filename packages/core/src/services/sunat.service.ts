@@ -5,6 +5,7 @@ import { signXml, extractHashFromXml } from '../utils/xml-signer';
 import { parsePem, parsePfxToPem } from '../utils/certificate';
 import type { CertificateKeys } from '../utils/certificate';
 import { isSunatProduction } from '../utils/sunat-env';
+import { cdrVerdict } from './sunat-reconciliation';
 
 dotenv.config();
 
@@ -34,6 +35,20 @@ export interface SendResult {
   cdrResponse?: any;
   ticket?: string;
   error?: { code: string; message: string };
+}
+
+/**
+ * A transport response is not enough to decide the tax status. Only an
+ * explicit accepted CDR (0 or 4000+ with observations) closes the attempt; an
+ * explicit rejected CDR (2000-3999) burns the number. Everything else,
+ * including SOAP faults such as 1033 or 0130, must remain eligible for status
+ * verification.
+ */
+export function classifySunatSendResult(result: Pick<SendResult, 'success' | 'cdrResponse'>): 'ACEPTADO' | 'RECHAZADO' | 'NO_CONFIRMADO' {
+  const verdict = cdrVerdict(result.cdrResponse?.code);
+  if (verdict === 'ACCEPTED') return 'ACEPTADO';
+  if (verdict === 'REJECTED') return 'RECHAZADO';
+  return 'NO_CONFIRMADO';
 }
 
 export interface SummarySendResult {
@@ -437,13 +452,24 @@ export class SunatService {
   }
 
   async sendDocument(xmlContent: string, fileName: string): Promise<SendResult> {
-    let signedXml: string;
     try {
-      signedXml = signXml(xmlContent, this.keys.privateKey, this.keys.certificate);
+      const signedXml = this.signDocument(xmlContent);
+      return this.sendSignedDocument(signedXml, fileName);
     } catch (e: any) {
       return { success: false, error: { code: 'SIGN_ERROR', message: `[Paso 1/3 - Firmar XML] ${e.message}` } };
     }
+  }
 
+  signDocument(xmlContent: string): string {
+    return signXml(xmlContent, this.keys.privateKey, this.keys.certificate);
+  }
+
+  /**
+   * Sends an already signed XML without signing it again. The signed bytes are
+   * part of the evidence for a SUNAT attempt and must remain identical across
+   * retries for the same document number.
+   */
+  async sendSignedDocument(signedXml: string, fileName: string): Promise<SendResult> {
     const zip = new AdmZip();
     zip.addFile(`${fileName}.xml`, Buffer.from(signedXml, 'utf-8'));
     const zipContent = zip.toBuffer();
@@ -468,7 +494,15 @@ export class SunatService {
         : undefined;
 
       const cdrResponse = cdrZip ? this.parseCdrResponse(cdrZip) : null;
-      if (cdrResponse?.code && cdrResponse.code !== '0') {
+      if (!cdrResponse?.code) {
+        return {
+          success: false,
+          xml: signedXml,
+          cdrZip,
+          error: { code: 'NO_CDR', message: '[Paso 3/3 - Enviar a SUNAT] SUNAT respondió sin un CDR legible.' },
+        };
+      }
+      if (cdrVerdict(cdrResponse.code) !== 'ACCEPTED') {
         return {
           success: false,
           xml: signedXml,
