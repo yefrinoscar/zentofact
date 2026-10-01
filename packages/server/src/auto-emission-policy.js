@@ -248,12 +248,12 @@ export function creditNoteReconciliationOutcome(reconciled, { numero = '' } = {}
 /**
  * Qué hace el barrido con un comprobante sin confirmar:
  * - si su job está activo, nada (el job lo reconcilia);
- * - si el job falló y la empresa emite automáticamente, se reencola para que
- *   reconcilie y suba a Falabella el número que quede activo;
- * - en otro caso, solo se consulta SUNAT en modo lectura.
+ * - un job fallido se consulta en modo lectura; no se resetea el contador ni se
+ *   reintenta indefinidamente;
+ * - solo una respuesta explícita (aceptado, rechazado o no encontrado) puede
+ *   devolverlo a la cola para continuar el flujo.
  */
 export function sweepDocumentAction({ document, job, companyEnabled }) {
   if (job && ['pending', 'processing'].includes(job.status)) return 'wait';
-  if (document?.orderNumber && job?.status === 'failed' && companyEnabled) return 'requeue';
   return 'refresh';
 }
