@@ -789,7 +789,7 @@ export default function PedidosMulticanal() {
 
   const saveCommission = async (item: OrderItem) => {
     if (!detail) return;
-    const amount = Number(commissionDraft);
+    const amount = Number(commissionDraft.replace(',', '.'));
     if (!Number.isFinite(amount) || amount < 0) return;
     setCommissionSaving(true);
     try {
@@ -1295,15 +1295,15 @@ export default function PedidosMulticanal() {
                    </div>
                  </div>
                </SheetHeader>
-               <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
-                 <TabsList variant="line" aria-label="Secciones del pedido" className="h-12 w-full shrink-0 justify-start gap-0 border-b border-border px-5 py-0">
-                   <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3 text-sm">
+                 <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
+                 <TabsList aria-label="Secciones del pedido" className="mx-5 mt-4 h-11 w-auto shrink-0 justify-start gap-1 rounded-xl bg-muted/60 p-1">
+                   <TabsTrigger value="summary" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
                      <PanelTop /> Resumen
                    </TabsTrigger>
-                   <TabsTrigger value="products" className="h-full flex-none rounded-none px-3 text-sm">
+                   <TabsTrigger value="products" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
                      <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
                    </TabsTrigger>
-                   <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3 text-sm">
+                   <TabsTrigger value="activity" className="h-full flex-none rounded-lg px-3 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
                     <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
                   </TabsTrigger>
                 </TabsList>
@@ -1317,7 +1317,7 @@ export default function PedidosMulticanal() {
                        </div>
                        <span className="text-xs text-muted-foreground">{detail.items.length} {detail.items.length === 1 ? 'producto' : 'productos'}</span>
                      </div>
-                     <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                      <div className="space-y-0.5">
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
@@ -1480,20 +1480,28 @@ export default function PedidosMulticanal() {
                            {commissionEditing === item.id ? (
                              <div className="mt-1 flex items-center justify-end gap-1">
                                <Label htmlFor={`commission-${item.id}`} className="sr-only">Comisión fija</Label>
-                               <Input
-                                 id={`commission-${item.id}`}
-                                 type="number"
-                                 min="0"
-                                 step="0.01"
-                                 className="h-8 w-24 text-right tabular-nums"
-                                 value={commissionDraft}
-                                 onChange={(event) => setCommissionDraft(event.target.value)}
-                                 autoFocus
-                               />
-                               <Button size="sm" className="h-8 px-2" disabled={commissionSaving} onClick={() => void saveCommission(item)}>
-                                 {commissionSaving ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-                               </Button>
-                               <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => setCommissionEditing(null)}><X className="size-3" /></Button>
+                                  <div className="relative">
+                                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-medium text-muted-foreground">S/</span>
+                                    <Input
+                                  id={`commission-${item.id}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  aria-label="Monto de comisión en soles"
+                                  className="h-10 w-32 rounded-lg pl-9 pr-3 text-right text-base tabular-nums [appearance:textfield]"
+                                  value={commissionDraft}
+                                  onChange={(event) => {
+                                    const next = event.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
+                                    const [whole, decimals = ''] = next.split('.');
+                                    setCommissionDraft(decimals.length > 2 ? `${whole}.${decimals.slice(0, 2)}` : next);
+                                  }}
+                                  autoFocus
+                                    />
+                                  </div>
+                                <Button size="sm" className="h-10 rounded-lg px-3" disabled={commissionSaving} onClick={() => void saveCommission(item)}>
+                                  {commissionSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}<span className="sr-only">Guardar comisión</span>
+                                </Button>
+                                <Button size="sm" variant="ghost" className="h-10 rounded-lg px-3" onClick={() => setCommissionEditing(null)}><X className="size-4" /><span className="sr-only">Cancelar</span></Button>
                              </div>
                            ) : isAdmin ? (
                              <button
@@ -1628,12 +1636,12 @@ function OrderProductCell({ items }: { items?: ManagedOrderListItem[] }) {
 
 function DetailField({ icon, label, content }: { icon: React.ReactNode; label: string; content: React.ReactNode }) {
   return (
-    <div className="grid min-h-10 grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-4 py-2">
+    <div className="grid min-h-10 grid-cols-[minmax(0,9.5rem)_minmax(0,1fr)] items-center gap-4 py-2">
       <p className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0">
         {icon}
         <span>{label}</span>
       </p>
-      <div className="min-w-0 text-sm text-foreground">{content}</div>
+      <div className="min-w-0 overflow-hidden text-sm text-foreground [&>*]:max-w-full">{content}</div>
     </div>
   );
 }
