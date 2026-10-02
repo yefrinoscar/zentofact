@@ -37,6 +37,7 @@ import { FalabellaApiClient } from '@zentofact/falabella-api';
 // Mantener esta constante en el worker evita depender de un named export
 // dinámico del paquete CommonJS de core durante el arranque ESM.
 const SUNAT_SEND_DEADLINE_DAYS = 3;
+const MAX_AUTO_EMISSION_ATTEMPTS = 6;
 import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { fetchFalabellaWebhookOrder, upsertFalabellaWebhookOrder } from './falabella-sync.js';
 import {
@@ -481,11 +482,12 @@ export async function setPaused(paused) {
   return { paused: !!paused };
 }
 
-// Reintentar un job (fallido/omitido) → vuelve a pending, reinicia intentos.
+// No resetear intentos: hacerlo permitía ciclos infinitos (intento 560).
 export async function retryJob(id) {
   const r = await pool.query(
-    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, next_attempt_at=null, alerted_at=null, updated_at=now()
-     where id=$1 returning id, company_id, order_number, status`, [id]);
+    `update emission_jobs set status='pending', current_step=null, next_attempt_at=null, alerted_at=null, updated_at=now()
+     where id=$1 and status in ('failed', 'skipped') and attempts < $2
+     returning id, company_id, order_number, status, attempts`, [id, MAX_AUTO_EMISSION_ATTEMPTS]);
   return r.rows[0] || null;
 }
 
@@ -596,18 +598,29 @@ async function falabellaDocumentPolicy(companyId) {
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
     `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
-            j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.alerted_at, j.created_at, j.updated_at
+             j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.alerted_at, j.created_at, j.updated_at,
+             cn.numero_completo as credit_note_number, cn.num_doc_afectado as affected_document_number,
+             case when cn.id is not null then 'Nota de crédito ' || cn.numero_completo || ' afecta ' || cn.num_doc_afectado
+                  when b.numero_completo is not null then 'Boleta ' || b.numero_completo
+                  when f.numero_completo is not null then 'Factura ' || f.numero_completo
+                  else null end as document_context
      from emission_jobs j left join companies c on c.id=j.company_id
-     left join lateral (
-       select order_number from boletas
+      left join lateral (
+        select order_number, numero_completo from boletas
        where company_id=j.company_id and numero_completo=j.boleta_numero
        order by id desc limit 1
      ) b on true
-     left join lateral (
-       select order_number from facturas
+      left join lateral (
+        select order_number, numero_completo from facturas
        where company_id=j.company_id and numero_completo=j.boleta_numero
        order by id desc limit 1
-     ) f on true
+      ) f on true
+      left join lateral (
+        select id, numero_completo, num_doc_afectado
+        from credit_notes
+        where company_id=j.company_id and numero_completo=j.boleta_numero
+        order by id desc limit 1
+      ) cn on true
      order by j.updated_at desc limit $1`, [Math.min(limit, 200)]);
   return r.rows;
 }
@@ -736,14 +749,14 @@ export async function enqueue(companyId, orderNumber, source = 'webhook', orderI
      values ($1, $2, $3, $5, 'pending', $4, now(), now())
      on conflict (company_id, order_number, kind) do update
        set status = case
-             when emission_jobs.status in ('failed') then 'pending'
+              when emission_jobs.status in ('failed') and emission_jobs.attempts < $6 then 'pending'
              when emission_jobs.status = 'skipped' and emission_jobs.result like 'orden de % anterior a la fecha%' then 'skipped'
              when emission_jobs.status = 'skipped' then 'pending'
              else emission_jobs.status
            end,
            order_id = coalesce(excluded.order_id, emission_jobs.order_id),
            updated_at = now()`,
-    [companyId, orderNumber, orderId || null, source, jobKind],
+     [companyId, orderNumber, orderId || null, source, jobKind, MAX_AUTO_EMISSION_ATTEMPTS],
   );
 }
 
@@ -1137,10 +1150,10 @@ export async function processQueue(limit = 3) {
       `update emission_jobs set status='processing', attempts=attempts+1, current_step='iniciando', updated_at=now()
        where id in (
          select id from emission_jobs
-         where status='pending' and (next_attempt_at is null or next_attempt_at <= now())
+          where status='pending' and attempts < $2 and (next_attempt_at is null or next_attempt_at <= now())
          order by created_at asc limit $1 for update skip locked
        ) returning *`,
-      [limit],
+       [limit, MAX_AUTO_EMISSION_ATTEMPTS],
     );
     jobs = res.rows;
   } finally {
@@ -1160,7 +1173,7 @@ export async function processQueue(limit = 3) {
     try {
       const r = await withJobTimeout(processJob(job, setStep), () => currentStep);
       if (r.retry) {
-        const failed = job.attempts >= 6;
+        const failed = job.attempts >= MAX_AUTO_EMISSION_ATTEMPTS;
         const nextStatus = failed ? 'failed' : 'pending';
         await pool.query(`update emission_jobs
           set status=$2,
@@ -1177,7 +1190,7 @@ export async function processQueue(limit = 3) {
       }
     } catch (e) {
       const isTimeout = e instanceof JobTimeoutError;
-      const failed = isTimeout || job.attempts >= 6;
+      const failed = isTimeout || job.attempts >= MAX_AUTO_EMISSION_ATTEMPTS;
       log(`ERROR orden ${job.order_number}:`, e.message);
       const nextStatus = failed ? 'failed' : 'pending';
       await pool.query(`update emission_jobs
