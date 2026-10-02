@@ -34,6 +34,7 @@ type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; kind?: string | null; attempts: number; result: string | null;
   last_error: string | null; boleta_numero: string | null; current_step?: string | null;
+  document_context?: string | null; affected_document_number?: string | null;
   alerted_at?: string | null; updated_at: string;
 };
 type OrderPreview = {
@@ -828,17 +829,19 @@ export default function AutoEmision() {
                         <td className="px-5 py-2.5"><KindBadge kind={j.kind} /></td>
                         <td className="px-5 py-2.5"><SourceBadge source={j.source} /></td>
                         <td className="px-5 py-2.5 text-xs">
-                          {j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
+                           {j.document_context && <span className="block font-medium text-foreground">{j.document_context}</span>}
+                           {!j.document_context && j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
                           <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={j.last_error || undefined}>
                             {j.last_error || j.result || (j.current_step ? `Etapa: ${j.current_step}` : <span className="opacity-50">—</span>)}
                           </span>
-                          {j.attempts > 1 && <span className="ml-1 text-muted-foreground opacity-60">(intento {j.attempts})</span>}
+                           {j.attempts > 0 && <span className="ml-1 text-muted-foreground opacity-60">({j.attempts} ejecuciones; máximo automático 6)</span>}
                           {j.alerted_at && <span className="ml-1 text-amber-700">Aviso enviado</span>}
-                          {(failed || j.status === 'skipped') && (
+                           {(failed || j.status === 'skipped') && j.attempts < 6 && (
                             <button onClick={() => retryJob(j.id)} title="Volver a intentar" className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground">
                               <RotateCcw className="h-3 w-3" /> Reintentar
                             </button>
-                          )}
+                           )}
+                           {failed && j.attempts >= 6 && <span className="ml-2 text-amber-700">No se reintentará automáticamente: requiere revisión.</span>}
                         </td>
                         <td className="px-5 py-2.5 whitespace-nowrap text-xs text-muted-foreground" title={timeAgo(j.updated_at)}>
                           <span className="block text-foreground">{fullDateTime(j.updated_at)}</span>
