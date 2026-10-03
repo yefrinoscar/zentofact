@@ -334,3 +334,18 @@
     -webkit-text-fill-color: var(--muted-foreground);
   }
 }
+
+.order-document-panel {
+  --color-base-100: var(--background);
+  --color-base-200: var(--muted);
+  --color-base-300: var(--border);
+  --color-base-content: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-content: var(--primary-foreground);
+  --color-error: var(--destructive);
+  --color-error-content: var(--destructive-foreground);
+  --radius-field: var(--radius);
+  --radius-selector: var(--radius);
+  --size-field: 0.25rem;
+  --border: 1px;
+}

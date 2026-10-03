@@ -554,6 +554,7 @@ const apiHttp = {
   detachRipleyManifestLabels: (companyId: number, manifestId: string, data: { labelIds: string[]; sandbox?: boolean }) =>
     req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  actOnManagedOrderDocument: (id: number, action: string, input: { kind?: 'factura' | 'boleta'; documentId?: number; branchId?: number; serie?: string; client?: { documentType: string; documentNumber: string; name: string; address: string } }) => req(`/order-management/orders/${id}/document/${action}`, { method: 'POST', body: JSON.stringify(input) }),
   updateManagedOrderItemCommission: (orderId: number, itemId: number, commissionAmount: number) =>
     req(`/order-management/orders/${orderId}/items/${itemId}/commission`, {
       method: 'PATCH', body: JSON.stringify({ commissionAmount }),

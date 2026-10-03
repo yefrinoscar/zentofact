@@ -1,3 +1,4 @@
+import { listOrderDocuments } from './order-documents.js';
 import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
@@ -1080,6 +1081,8 @@ export async function listOrders(filters = {}, db) {
       or coalesce(o.customer->>'name', '') ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
       or coalesce(creator.name, '') ilike '%' || $${values.length} || '%'
+      or exists (select 1 from facturas f where f.company_id=o.company_id and f.order_number=o.external_order_number and f.numero_completo ilike '%' || $${values.length} || '%')
+      or exists (select 1 from boletas b where b.company_id=o.company_id and b.order_number=o.external_order_number and b.numero_completo ilike '%' || $${values.length} || '%')
     )`);
   }
   if (filters.createdBy) {
@@ -1811,7 +1814,7 @@ export async function getSalespersonHome(filters = {}, db) {
 export async function getOrder(orderId, db) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(orderId, 'orderId');
-  const [orderResult, itemsResult, eventsResult, documentsResult, snapshotsResult] = await Promise.all([
+  const [orderResult, itemsResult, eventsResult, snapshotsResult] = await Promise.all([
     target.query(
       `select o.*, ch.code as channel_code, ch.name as channel_name,
          a.display_name as channel_account_name,
@@ -1841,18 +1844,6 @@ export async function getOrder(orderId, db) {
       [id],
     ),
     target.query(
-      `select od.id, od.document_kind, od.boleta_id, od.factura_id, od.credit_note_id,
-         coalesce(b.numero_completo, f.numero_completo, cn.numero_completo) as document_number,
-         coalesce(b.estado_sunat, f.estado_sunat, cn.estado_sunat) as document_status,
-         od.created_at
-       from order_documents od
-       left join boletas b on b.id=od.boleta_id
-       left join facturas f on f.id=od.factura_id
-       left join credit_notes cn on cn.id=od.credit_note_id
-       where od.order_id=$1 order by od.created_at, od.id`,
-      [id],
-    ),
-    target.query(
       `select id, payload_hash, raw_payload, provider_updated_at, correlation_id, observed_at
        from order_snapshots where order_id=$1 order by observed_at desc, id desc`,
       [id],
@@ -1860,8 +1851,13 @@ export async function getOrder(orderId, db) {
   ]);
   const order = normalizeOrderRow(orderResult.rows[0]);
   if (!order) return null;
+  const documents = await listOrderDocuments(order, target);
+  const active = documents.find(d => d.kind !== 'credit_note' && !['REEMPLAZADO', 'ANULADO'].includes(d.status));
+  const documentStatus = active?.status === 'ACEPTADO' ? 'accepted' : active?.status === 'RECHAZADO' ? 'rejected' : active ? 'issued' : order.documentStatus;
   return {
     ...order,
+    documentStatus,
+    requestedDocumentType: active?.kind === 'factura' || active?.kind === 'boleta' ? active.kind : order.requestedDocumentType,
     items: itemsResult.rows.map((row) => ({
       id: Number(row.id),
       externalItemId: row.external_item_id,
@@ -1900,16 +1896,7 @@ export async function getOrder(orderId, db) {
       receivedAt: row.received_at,
       createdAt: row.created_at,
     })),
-    documents: documentsResult.rows.map((row) => ({
-      id: Number(row.id),
-      kind: row.document_kind,
-      boletaId: row.boleta_id,
-      facturaId: row.factura_id,
-      creditNoteId: row.credit_note_id,
-      number: row.document_number,
-      status: row.document_status,
-      createdAt: row.created_at,
-    })),
+    documents,
     snapshots: snapshotsResult.rows.map((row) => ({
       id: Number(row.id),
       payloadHash: row.payload_hash,
