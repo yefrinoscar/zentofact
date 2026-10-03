@@ -1,3 +1,4 @@
+import { orderDateTimestamp } from './order-date.js';
 import { listOrderDocuments } from './order-documents.js';
 import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
@@ -720,7 +721,8 @@ async function ingestOrderInTransaction(input, db) {
              )
            else '{}'::jsonb
          end,
-         ordered_at=coalesce(excluded.ordered_at, orders.ordered_at),
+         ordered_at=case when orders.metadata->>'orderDateOverride' is not null
+           then orders.ordered_at else coalesce(excluded.ordered_at, orders.ordered_at) end,
          promised_shipping_at=coalesce(excluded.promised_shipping_at, orders.promised_shipping_at),
          provider_updated_at=coalesce(excluded.provider_updated_at, orders.provider_updated_at),
          created_by=coalesce(orders.created_by, excluded.created_by),
@@ -1838,9 +1840,11 @@ export async function getOrder(orderId, db) {
       [id],
     ),
     target.query(
-      `select id, event_type, source, actor_user_id, idempotency_key, correlation_id,
-         previous_values, new_values, payload, provider_occurred_at, received_at, created_at
-       from order_events where order_id=$1 order by created_at, id`,
+      `select e.id, event_type, source, actor_user_id, e.idempotency_key, correlation_id,
+         actor.name as actor_name,
+         previous_values, new_values, payload, provider_occurred_at, received_at, e.created_at
+       from order_events e left join "user" actor on actor.id=e.actor_user_id
+       where order_id=$1 order by e.created_at, e.id`,
       [id],
     ),
     target.query(
@@ -1887,6 +1891,7 @@ export async function getOrder(orderId, db) {
       eventType: row.event_type,
       source: row.source,
       actorUserId: row.actor_user_id,
+      actorName: row.actor_name,
       idempotencyKey: row.idempotency_key,
       correlationId: row.correlation_id,
       previousValues: row.previous_values || {},
@@ -2213,4 +2218,30 @@ async function updateManualOrderWithDb(orderId, input, db) {
     channel_name: existing.channel_name,
     channel_account_name: existing.channel_account_name,
   });
+}
+
+export async function updateOrderDate(orderId, input = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const id = positiveInt(orderId, 'orderId');
+  const orderedAt = orderDateTimestamp(input.orderDate);
+  const result = await target.query(
+    `with previous as (
+       select id, coalesce(ordered_at, created_at) as ordered_at from orders where id=$1 for update
+     ), updated as (
+       update orders o set ordered_at=$2::timestamptz,
+         metadata=coalesce(o.metadata, '{}'::jsonb) || jsonb_build_object('orderDateOverride', $2::text),
+         updated_at=now()
+       from previous p where o.id=p.id
+       returning o.id, p.ordered_at as previous_date, o.ordered_at as next_date, o.updated_at
+     )
+     insert into order_events (order_id, event_type, source, actor_user_id, idempotency_key,
+       previous_values, new_values, payload)
+     select id, 'order.date_changed', 'user', $3,
+       'order.date_changed:' || id || ':' || updated_at,
+       jsonb_build_object('orderedAt', previous_date), jsonb_build_object('orderedAt', next_date),
+       jsonb_build_object('dateConfirmed', true, 'dateFinalConfirmed', true)
+     from updated returning order_id`,
+    [id, orderedAt, optionalText(input.actorUserId, 300)],
+  );
+  return result.rows.length ? getOrder(id, target) : null;
 }
