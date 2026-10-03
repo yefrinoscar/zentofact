@@ -72,13 +72,14 @@ test('lee del CDR el cliente del comprobante, no el RUC del emisor', () => {
 
 test('un error de consulta o un código ambiguo nunca cuenta como "no existe"', () => {
   assert.equal(classifyStatusCdr({ success: false, error: { code: 'HTTP_ERROR', message: 'timeout' } }).kind, 'QUERY_FAILED');
-  // 0127 es "ticket no existe" del servicio de resúmenes: no prueba nada sobre el número.
-  assert.equal(classifyStatusCdr({ success: true, statusCode: '0127', statusMessage: 'El ticket no existe' }).kind, 'UNKNOWN');
+  // Un SOAP fallido sigue sin probar que el número esté libre.
+  assert.equal(classifyStatusCdr({success:false,error:{code:'0127',message:'El ticket no existe'}}).kind,'QUERY_FAILED');
   assert.equal(classifyStatusCdr({ success: true, statusCode: '0125', statusMessage: 'No se pudo obtener la constancia' }).kind, 'UNKNOWN');
   assert.equal(classifyStatusCdr({ success: true }).kind, 'UNKNOWN');
 });
 
 test('clasifica las respuestas explícitas de getStatusCdr', () => {
+  assert.equal(classifyStatusCdr({success:true,statusCode:'0127',statusMessage:'El ticket no existe'}).kind,'NOT_FOUND');
   assert.equal(classifyStatusCdr({ success: true, statusCode: '0011', statusMessage: 'El comprobante de pago electrónico no existe.' }).kind, 'NOT_FOUND');
   assert.equal(classifyStatusCdr({ success: true, statusCode: '0003', statusMessage: 'El comprobante existe pero está de baja' }).kind, 'VOIDED');
   assert.equal(classifyStatusCdr({ success: true, statusCode: '0012', statusMessage: 'No le pertenece' }).kind, 'NOT_OWNED');

@@ -2,11 +2,16 @@ import { eq, and } from 'drizzle-orm';
 import { db, pool } from '../db';
 import { correlatives } from '../db/schema';
 
+export class CorrelativeChangedError extends Error {
+  constructor() { super('Otro proceso reservó el correlativo consultado.'); }
+}
+
 export async function getNextCorrelative(
   branchId: number,
   tipoDocumento: string,
   serie: string,
   persist: boolean = true,
+  options: { includeUnaccepted?: boolean; expectedNext?: string } = {},
 ): Promise<string> {
   const client = await pool.connect();
   try {
@@ -93,7 +98,7 @@ export async function getNextCorrelative(
               and f.serie = $3
               and ($4::boolean or f.estado_sunat = 'ACEPTADO')
               and f.correlativo ~ '^[0-9]+$'`,
-          [ruc, tipoDocumento, serie, persist],
+          [ruc, tipoDocumento, serie, options.includeUnaccepted ?? persist],
         )
       : { rows: [{ max: '0' }] };
 
@@ -116,6 +121,8 @@ export async function getNextCorrelative(
       Number(facturaMaxResult.rows[0]?.max || 0),
       Number(creditNoteMaxResult.rows[0]?.max || 0),
     ) + 1;
+    const number = String(next).padStart(6, '0');
+    if (options.expectedNext && options.expectedNext !== number) throw new CorrelativeChangedError();
     const now = Math.floor(Date.now() / 1000);
 
     // En beta (persist=false) no se avanza al crear. Solo se marca después si SUNAT

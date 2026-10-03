@@ -213,12 +213,29 @@ describe('reconciliación con SUNAT antes de reemitir', { skip }, () => {
     await pool.query("update facturas set estado_sunat='REVISION_MANUAL', respuesta_sunat=$2, updated_at=0 where id=$1",[factura.id,JSON.stringify({reason:'Colisión de correlativo: El número está ocupado por otro cliente.'})]);
     const pending = await sweep.listDocumentsNeedingReconciliation({limit:1000});
     assert.ok(pending.some(d=>d.table==='facturas' && d.id===factura.id), 'el barrido recupera colisiones bloqueadas para la automatización');
-    sunat.statusQueue.push(status.accepted('20602177786'), status.accepted('20602177786'), status.notFound());
+    await pool.query("update correlatives set correlativo_actual=25 where branch_id=$1 and tipo_documento='01' and serie='F001'",[company.branchId]);
+    sunat.statusQueue.push(status.accepted('20602177786'), () => ({statusCode:'0127',statusMessage:'El ticket no existe'}));
     sunat.sendQueue.push(send.accepted());
     const result = await facturaService.reEmitFactura(factura.id);
     assert.equal(result.success, true);
-    assert.equal(result.numeroCompleto, 'F001-000003');
+    assert.equal(result.numeroCompleto, 'F001-000026');
+    assert.deepEqual(sunat.queried,['F001-000001','F001-000026']);
     assert.equal((await pool.query('select estado_sunat from facturas where id=$1',[factura.id])).rows[0].estado_sunat,'REEMPLAZADO');
+  });
+
+  it('si otro proceso reserva el candidato consultado, verifica otro antes de emitir', async () => {
+    const boleta = await createBoleta();
+    const {getNextCorrelative}=require('../dist/services/correlative.service.js');
+    sunat.statusQueue.push(status.accepted(OTHER_CLIENT_DOC), async()=>{
+      await getNextCorrelative(boleta.branchId,'03','B001',true);
+      return {statusCode:'0127',statusMessage:'El ticket no existe'};
+    }, status.notFound());
+    sunat.sendQueue.push(send.accepted());
+    const result = await boletaService.reEmitBoleta(boleta.id);
+    assert.equal(result.success,true);
+    assert.equal(result.numeroCompleto,'B001-000003');
+    assert.deepEqual(sunat.queried,['B001-000001','B001-000002','B001-000003']);
+    assert.equal(sunat.sent[0].number,'B001-000003');
   });
 
   it('no emite reemplazo si SUNAT no confirma que el candidato esté libre', async () => {
@@ -228,6 +245,8 @@ describe('reconciliación con SUNAT antes de reemitir', { skip }, () => {
     assert.equal(sunat.sent.length,0);
     assert.equal((await companyBoletas(boleta.companyId)).length,1);
     assert.equal((await boletaRow(boleta.id)).order_number,boleta.orderNumber);
+    const counter = (await pool.query("select correlativo_actual from correlatives where branch_id=$1 and tipo_documento='03' and serie='B001'",[boleta.branchId])).rows[0];
+    assert.equal(counter.correlativo_actual,1, 'la consulta fallida no consume el candidato');
   });
 
   it('no existe en SUNAT → se reenvía exactamente el mismo XML firmado y el mismo número', async () => {

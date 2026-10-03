@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { boletas, clients, companies, creditNotes, facturas } from '../db/schema';
-import { getNextCorrelative } from './correlative.service';
+import { CorrelativeChangedError, getNextCorrelative } from './correlative.service';
 import { withDocumentLock, reemissionLockKey } from './document-lock';
 import { recordAttempt } from './emission-ledger';
 import type { DocumentTable } from './emission-ledger';
@@ -168,12 +168,18 @@ async function nextAvailableCorrelative(adapter: ReemissionAdapter, doc: any): P
   if (!company) throw new Error('Empresa no encontrada');
   const sunat = new SunatService(companyConfig(company));
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const next = await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, true);
+    const next = await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, false, { includeUnaccepted: true });
     const outcome = classifyStatusCdr(await sunat.getStatusCdr(company.ruc, adapter.tipoDocumento, doc.serie, next));
-    if (outcome.kind === 'NOT_FOUND') return next;
-    if (!['ACCEPTED', 'REJECTED', 'VOIDED'].includes(outcome.kind)) {
+    if (!['NOT_FOUND', 'ACCEPTED', 'REJECTED', 'VOIDED'].includes(outcome.kind)) {
       throw new Error(`No se pudo confirmar si ${doc.serie}-${next} está libre en SUNAT: ${outcome.message}`);
     }
+    try {
+      await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, true, { expectedNext: next });
+    } catch (error) {
+      if (error instanceof CorrelativeChangedError) continue;
+      throw error;
+    }
+    if (outcome.kind === 'NOT_FOUND') return next;
   }
   throw new Error('SUNAT tiene ocupados los siguientes 100 correlativos. Vuelve a intentar para continuar la búsqueda.');
 }
