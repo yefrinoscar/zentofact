@@ -128,14 +128,14 @@ test('documento existente aceptado: el job termina sin volver a emitir', () => {
 });
 
 test('documento existente sin aceptar se reconcilia con SUNAT; en simulación no se toca', () => {
-  for (const estadoSunat of ['NO_CONFIRMADO', 'RECHAZADO', 'PENDIENTE', 'NO_ENCONTRADO', '']) {
+  for (const estadoSunat of ['NO_CONFIRMADO', 'RECHAZADO', 'PENDIENTE', 'NO_ENCONTRADO', 'REVISION_MANUAL', '']) {
     assert.equal(decideExistingDocumentJob({ document: { estadoSunat }, tipo: 'boleta' }).action, 'reconcile', estadoSunat);
   }
   assert.equal(decideExistingDocumentJob({ document: { estadoSunat: 'NO_CONFIRMADO' }, tipo: 'boleta', dryRun: true }).action, 'skip');
 });
 
-test('revisión manual, anulado o reemplazado nunca se reemiten automáticamente', () => {
-  for (const estadoSunat of ['REVISION_MANUAL', 'ANULADO', 'REEMPLAZADO']) {
+test('anulado o reemplazado nunca se reemiten automáticamente', () => {
+  for (const estadoSunat of ['ANULADO', 'REEMPLAZADO']) {
     const decided = decideExistingDocumentJob({ document: { numeroCompleto: 'B001-000580', estadoSunat }, tipo: 'boleta' });
     assert.equal(decided.action, 'fail', estadoSunat);
     assert.match(decided.result, /revisión manual/);

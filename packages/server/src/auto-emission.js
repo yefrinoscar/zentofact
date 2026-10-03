@@ -1463,7 +1463,7 @@ let lastSeriesSentinelAt = 0;
  *    cerca del plazo de SUNAT.
  * 4. Cada 6 h, centinela de serie para todas las empresas que emiten: si otro
  *    sistema ya usó los próximos números de B001/F001, se avisa. Cada emisión
- *    que choque queda protegida por la reconciliación (revisión manual).
+ *    que choque busca un correlativo libre tras confirmar la colisión con SUNAT.
  */
 export async function sweepSunatDocuments({ now = Date.now() } = {}) {
   const summary = { recovered: 0, requeued: 0, refreshed: 0, alerted: 0, collisions: 0 };

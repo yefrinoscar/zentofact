@@ -92,7 +92,10 @@ export async function listDocumentsNeedingReconciliation(options: { notCheckedFo
   for (const { table, orderColumn } of DOCUMENT_TABLES) {
     const rows = (await pool.query(
       `select ${selectColumns(orderColumn)} from ${table}
-        where upper(coalesce(estado_sunat, '')) in ('NO_CONFIRMADO', 'NO_ENCONTRADO')
+        where (upper(coalesce(estado_sunat, '')) in ('NO_CONFIRMADO', 'NO_ENCONTRADO')
+          or (${table !== 'credit_notes' ? 'true' : 'false'}
+            and upper(coalesce(estado_sunat, '')) in ('REVISION_MANUAL', 'RECHAZADO')
+            and coalesce(respuesta_sunat, '') like '%Colisión de correlativo%'))
           and coalesce(updated_at, 0) < $1
         order by updated_at asc nulls first
         limit $2`,
