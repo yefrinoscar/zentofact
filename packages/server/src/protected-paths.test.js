@@ -47,6 +47,13 @@ test('Mercado Libre exige sesión para conectar una empresa', () => {
   assert.equal(isProtectedPath('/integrations/mercado-libre/4/connect'), true);
 });
 
+test('el chat posventa de Mercado Libre exige sesión como la bandeja', () => {
+  assert.equal(isProtectedPath('/mercado-libre'), true);
+  assert.equal(isProtectedPath('/mercado-libre/unread'), true);
+  assert.equal(isProtectedPath('/mercado-libre/conversations/44'), true);
+  assert.equal(isProtectedPath('/mercado-libre/conversations/44/attachments'), true);
+});
+
 test('no protege rutas públicas con prefijos parecidos', () => {
   assert.equal(isProtectedPath('/orders-inbox-public'), false);
   assert.equal(isProtectedPath('/health'), false);

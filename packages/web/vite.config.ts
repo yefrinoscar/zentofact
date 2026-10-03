@@ -12,6 +12,7 @@ const apiPrefixes = [
   '/pagos',
   '/orders-inbox',
   '/logistics-inbox',
+  '/mercado-libre',
   '/order-management',
   '/products',
   '/product-listings',
