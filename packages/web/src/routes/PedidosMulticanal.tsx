@@ -1,3 +1,4 @@
+import { OrderDateDialog, orderDateKey, formatRegistrationDate } from '../components/OrderDateDialog';
 import OrderDocumentPanel from '../components/OrderDocumentPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -148,6 +149,11 @@ type OrderEvent = {
   id: number;
   eventType: string;
   source: string;
+  actorName?: string | null;
+  actorUserId?: string | null;
+  payload?: { orderDate?: string };
+  previousValues?: { orderedAt?: string };
+  newValues?: { orderedAt?: string };
   providerOccurredAt?: string | null;
   createdAt: string;
 };
@@ -228,6 +234,7 @@ type ManagedOrder = {
   };
   items?: ManagedOrderListItem[];
   orderedAt?: string | null;
+  createdAt?: string | null;
   promisedShippingAt?: string | null;
   providerUpdatedAt?: string | null;
 };
@@ -314,6 +321,7 @@ const DOCUMENT_LABELS: Record<string, string> = {
 };
 
 const EVENT_LABELS: Record<string, string> = {
+  'order.date_changed': 'Fecha de registro cambiada',
   'order.created': 'Pedido creado',
   'order.updated': 'Pedido actualizado',
   'order.stale_observed': 'Actualización recibida',
@@ -591,11 +599,13 @@ export default function PedidosMulticanal() {
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
   const [today, setToday] = useState(todayInLima);
-  const [date, setDate] = useState(todayInLima);
+  const registeredDate: unknown = location.state?.registered?.orderDate;
+  const [date, setDate] = useState(() => typeof registeredDate === 'string' ? registeredDate : todayInLima());
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [syncNote, setSyncNote] = useState('');
+  const [dateOrder, setDateOrder] = useState<OrderDetail | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailTab, setDetailTab] = useState('products');
   const [detailOpen, setDetailOpen] = useState(false);
@@ -953,6 +963,20 @@ export default function PedidosMulticanal() {
     },
   });
 
+  const dateMutation = useMutation({
+    mutationFn: (input: { id: number; date: string }) => api.updateManagedOrderDate(input.id, input.date),
+    onSuccess: (updated) => {
+      setDetail(updated);
+      setDateOrder(null);
+      setSuccessMessage('Fecha de registro actualizada.');
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+      void queryClient.invalidateQueries({ queryKey: ['salesperson-home'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['product-sales-report'] });
+    },
+  });
+
   const editMutation = useMutation({
     mutationFn: (input: { orderId: number; payload: ReturnType<typeof buildManualOrderEditPayload> }) =>
       api.updateManagedOrder(input.orderId, input.payload),
@@ -1149,6 +1173,17 @@ export default function PedidosMulticanal() {
 
   return (
     <div className="space-y-4">
+      {isAdmin && dateOrder && (
+        <OrderDateDialog
+          currentDate={orderDateKey(dateOrder.orderedAt || dateOrder.createdAt)}
+          initialDate={orderDateKey(dateOrder.orderedAt || dateOrder.createdAt)}
+          chooseDate
+          pending={dateMutation.isPending}
+          error={dateMutation.error instanceof Error ? dateMutation.error.message : undefined}
+          onClose={() => setDateOrder(null)}
+          onConfirm={(date) => dateMutation.mutate({ id: dateOrder.id, date })}
+        />
+      )}
       <DayStrip value={date} onChange={setDate} max={today} />
 
       <div className="space-y-2">
@@ -1272,6 +1307,7 @@ export default function PedidosMulticanal() {
             </div>
           ) : detail ? (
             <>
+
                <SheetHeader className="border-b border-border bg-muted/20 px-6 py-5 pr-16">
                  <div className="flex min-w-0 items-start gap-3">
                    <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
@@ -1316,6 +1352,12 @@ export default function PedidosMulticanal() {
                        <span className="text-xs text-muted-foreground">{detail.items.length} {detail.items.length === 1 ? 'producto' : 'productos'}</span>
                      </div>
                       <div className="space-y-0.5">
+                      <DetailField icon={<Clock3 />} label="Fecha de registro" content={(
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{formatRegistrationDate(detail.orderedAt || detail.createdAt)}</span>
+                          {isAdmin && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { dateMutation.reset(); setDateOrder(detail); }}>Cambiar fecha</button>}
+                        </div>
+                      )} />
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
@@ -1504,7 +1546,9 @@ export default function PedidosMulticanal() {
                         {event.eventType.includes('created') ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
                         <div className="min-w-0">
                           <p className="font-medium">{EVENT_LABELS[event.eventType] || event.eventType}</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
+                          {event.eventType === 'order.created' && event.payload?.orderDate && <p className="mt-1 text-xs">Fecha de registro elegida: {event.payload.orderDate}</p>}
+                          {event.eventType === 'order.date_changed' && <p className="mt-1 text-xs">{formatRegistrationDate(event.previousValues?.orderedAt)} → {formatRegistrationDate(event.newValues?.orderedAt)}</p>}
+                          <p className="mt-0.5 text-xs text-muted-foreground">{event.actorName || event.actorUserId || SOURCE_LABELS[event.source] || event.source} · {formatRegistrationDate(event.providerOccurredAt || event.createdAt)}</p>
                         </div>
                       </div>
                     ))}

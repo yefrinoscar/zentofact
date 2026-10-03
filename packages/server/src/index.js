@@ -1,3 +1,4 @@
+import { manualOrderTimestamp, requireOrderDateConfirmations } from './order-date.js';
 // ZentoFact API — capa HTTP delgada que expone @zentofact/core.
 // El core no sabe que lo llama HTTP; aquí solo mapeamos rutas -> funciones del core.
 // Omitido en web: paths/FS, diálogos nativos y scraper Falabella local.
@@ -736,6 +737,8 @@ app.post('/order-management/orders/ingest', requirePermission('order_management'
 app.post('/order-management/orders/manual', async (c) => {
   try {
     const body = await c.req.json();
+    const orderedAt = manualOrderTimestamp(body, c.get('user')?.role);
+    const { orderDateOverride: _ignoredOverride, ...metadata } = body.metadata || {};
     const actorUserId = c.get('user')?.id;
     const selfSalespersonId = salespersonOnlyUserId(c);
     let createdByUserId = selfSalespersonId;
@@ -758,6 +761,9 @@ app.post('/order-management/orders/manual', async (c) => {
     const result = await orderManagement.ingestOrder({
       ...body,
       source: 'manual',
+      orderedAt,
+      metadata: body.orderDate ? { ...metadata, orderDateOverride: orderedAt } : metadata,
+      eventPayload: body.orderDate ? { orderDate: body.orderDate, dateConfirmed: true, dateFinalConfirmed: true } : {},
       automatic: false,
       actorUserId,
       createdByUserId,
@@ -785,6 +791,16 @@ app.post('/order-management/orders/manual', async (c) => {
       }
     }
     return ok(c, result, 201);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/order-management/orders/:id/date', requireAdmin(), async (c) => {
+  try {
+    const body = await c.req.json();
+    requireOrderDateConfirmations(body);
+    const result = await orderManagement.updateOrderDate(c.req.param('id'), {
+      ...body, actorUserId: c.get('user')?.id,
+    });
+    return result ? ok(c, result) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/orders/:id', async (c) => {

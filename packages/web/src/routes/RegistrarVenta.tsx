@@ -1,3 +1,4 @@
+import { OrderDateDialog } from '../components/OrderDateDialog';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -95,6 +96,8 @@ export default function RegistrarVenta() {
   const [paidTo, setPaidTo] = useState<PaymentRecipient | ''>('');
   const [paymentProof, setPaymentProof] = useState<PaymentProof | null>(null);
   const [creating, setCreating] = useState(false);
+  const [orderDate, setOrderDate] = useState(limaTodayKey);
+  const [dateConfirmationOpen, setDateConfirmationOpen] = useState(false);
 
   const [stepId, setStepId] = useState<SaleStepId>('cliente');
   const [reachedIndex, setReachedIndex] = useState(0);
@@ -263,9 +266,15 @@ export default function RegistrarVenta() {
       });
   };
 
-  const registerSale = async () => {
+  const registerSale = async (dateConfirmed = false) => {
     if (blockingStep) {
       goToStep(blockingStep, blockingMessage || '');
+      return;
+    }
+
+    const customDate = isAdmin && orderDate !== limaTodayKey();
+    if (customDate && !dateConfirmed) {
+      setDateConfirmationOpen(true);
       return;
     }
 
@@ -277,7 +286,13 @@ export default function RegistrarVenta() {
       return;
     }
 
+    const { orderedAt: _defaultTimestamp, ...salePayload } = payload;
+    const requestPayload = {
+      ...salePayload,
+      ...(customDate ? { orderDate, dateConfirmed: true, dateFinalConfirmed: true } : {}),
+    };
     const registered = {
+      orderDate: customDate ? orderDate : undefined,
       number: payload.externalOrderNumber,
       customer: String(payload.customer?.name || customerName).trim(),
       total: Number(payload.total) || 0,
@@ -296,7 +311,7 @@ export default function RegistrarVenta() {
         quantity: line.quantity,
         imageUrl: line.imageUrl,
       })),
-      orderedAt: payload.orderedAt,
+      orderedAt: customDate ? new Date(`${orderDate}T12:00:00-05:00`).toISOString() : payload.orderedAt,
     });
     // Every cached Mis ventas page gets the new numbers; only pages that list newest-first get the row.
     const previousHomes = queryClient.getQueriesData<OptimisticHome>({ queryKey: [MIS_VENTAS_QUERY_KEY] });
@@ -307,7 +322,7 @@ export default function RegistrarVenta() {
     if (!cachedKeys.has(JSON.stringify(firstPageKey))) {
       previousHomes.push([firstPageKey, undefined]);
     }
-    for (const [key, data] of previousHomes) {
+    for (const [key, data] of customDate ? [] : previousHomes) {
       const pageQuery = key[1] as Partial<MisVentasQuery> | undefined;
       queryClient.setQueryData<OptimisticHome>(key, applyOptimisticSale(
         data ?? { ...knownHome, orders: [], ordersTotal: 0, limit: pageQuery?.limit },
@@ -322,14 +337,14 @@ export default function RegistrarVenta() {
     navigate(afterSavePath, { replace: true, state: { registered } });
 
     try {
-      await api.createManagedOrder(payload);
+      await api.createManagedOrder(requestPayload);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: [MIS_VENTAS_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
       ]);
     } catch (error: any) {
-      for (const [key, data] of previousHomes) {
+      for (const [key, data] of customDate ? [] : previousHomes) {
         if (data) queryClient.setQueryData(key, data);
         else queryClient.removeQueries({ queryKey: key, exact: true });
       }
@@ -359,6 +374,8 @@ export default function RegistrarVenta() {
 
   const view: SaleFormView = {
     isAdmin,
+    orderDate,
+    setOrderDate,
     showSalespersonSelector: !salespersonOnly,
     salespeople,
     salespeopleLoading: salespeopleQuery.isPending,
@@ -449,6 +466,18 @@ export default function RegistrarVenta() {
 
   return (
     <>
+      {dateConfirmationOpen && (
+        <OrderDateDialog
+          currentDate={limaTodayKey()}
+          initialDate={orderDate}
+          pending={creating}
+          onClose={() => setDateConfirmationOpen(false)}
+          onConfirm={() => {
+            setDateConfirmationOpen(false);
+            void registerSale(true);
+          }}
+        />
+      )}
       <form
       onSubmit={(event) => {
         event.preventDefault();
