@@ -638,6 +638,7 @@ export async function recentJobs(limit = 50) {
              case when j.kind='credit_note' then 'credit_note' when f.id is not null then 'factura' else 'boleta' end as document_type,
              case when j.kind='credit_note' then cn.estado_sunat else coalesce(b.estado_sunat, f.estado_sunat) end as document_status,
              case when j.kind='credit_note' then cn.mto_imp_venta else coalesce(b.mto_imp_venta, f.mto_imp_venta) end as document_total,
+             client.numero_documento as client_document_number, client.tipo_documento as client_document_type,
              coalesce(item_summary.items, document_items.items, '[]'::jsonb) as items,
              case when cn.id is not null then 'Nota de crédito ' || cn.numero_completo || ' afecta ' || cn.num_doc_afectado
                   when b.numero_completo is not null then 'Boleta ' || b.numero_completo
@@ -645,24 +646,25 @@ export async function recentJobs(limit = 50) {
                   else null end as document_context
      from recent_jobs j left join companies c on c.id=j.company_id
       left join lateral (
-        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles from boletas
+        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles, client_id from boletas
        where company_id=j.company_id and numero_completo=j.boleta_numero
          and coalesce(j.kind, 'document')<>'credit_note'
        order by id desc limit 1
      ) b on true
       left join lateral (
-        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles from facturas
+        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles, client_id from facturas
        where company_id=j.company_id and numero_completo=j.boleta_numero
          and coalesce(j.kind, 'document')<>'credit_note'
        order by id desc limit 1
       ) f on true
       left join lateral (
-        select id, numero_completo, num_doc_afectado, fecha_emision, estado_sunat, mto_imp_venta, detalles
+        select id, numero_completo, num_doc_afectado, fecha_emision, estado_sunat, mto_imp_venta, detalles, client_id
         from credit_notes
         where company_id=j.company_id and numero_completo=j.boleta_numero
           and j.kind='credit_note'
         order by id desc limit 1
       ) cn on true
+      left join clients client on client.id=coalesce(cn.client_id, b.client_id, f.client_id)
       left join lateral (
         select o.id from orders o
         join order_channel_accounts account on account.id=o.channel_account_id

@@ -39,6 +39,7 @@ export interface CdrIdentity {
   documentId?: string;
   issueDate?: string;
   recipientId?: string;
+  recipientDocumentType?: string;
   documentHash?: string;
 }
 
@@ -57,6 +58,7 @@ export function parseCdrIdentityXml(xml: string): CdrIdentity {
       || firstMatch(documentResponse, /<cbc:ReferenceID\b[^>]*>([^<]+)<\/cbc:ReferenceID>/),
     issueDate: firstMatch(documentReference, /<cbc:IssueDate\b[^>]*>([^<]+)<\/cbc:IssueDate>/),
     recipientId: firstMatch(recipient, /<cbc:ID\b[^>]*>([^<]+)<\/cbc:ID>/),
+    recipientDocumentType: firstMatch(recipient, /<cbc:ID\b[^>]*\bschemeID=["']([^"']+)["']/),
     documentHash: firstMatch(documentReference, /<cbc:DocumentHash\b[^>]*>([^<]+)<\/cbc:DocumentHash>/),
   };
 }
@@ -117,6 +119,7 @@ export interface LocalDocument {
   numeroCompleto: string;
   fechaEmision?: string | null;
   clientDocumento?: string | null;
+  clientTipoDocumento?: string | null;
   codigoHash?: string | null;
 }
 
@@ -137,6 +140,20 @@ function normalizePartyId(value: string | null | undefined): string | null {
   // Clientes varios / anónimos no identifican a nadie.
   if (!normalized || /^0+$/.test(normalized)) return null;
   return normalized;
+}
+
+function cdrPartyIdentity(identity: CdrIdentity): { number: string | null; type: string | null; valid: boolean } {
+  const raw = String(identity.recipientId || '').trim().toUpperCase();
+  const scheme = identity.recipientDocumentType?.trim().toUpperCase() || null;
+  // SUNAT también devuelve tipo-número en RecipientParty (1 = DNI, 6 = RUC).
+  // Solo separar el prefijo explícito; nunca quitar un dígito de un DNI plano.
+  const typed = raw.match(/^([01467AB])-([A-Z0-9]+)$/);
+  const type = typed?.[1] || scheme;
+  const number = normalizePartyId(typed?.[2] || raw);
+  const valid = !(typed && scheme && typed[1] !== scheme)
+    && !(type === '1' && number && !/^\d{8}$/.test(number))
+    && !(type === '6' && number && !/^\d{11}$/.test(number));
+  return { number, type, valid };
 }
 
 function normalizeDate(value: string | null | undefined): string | null {
@@ -162,13 +179,21 @@ export function compareCdrIdentity(identity: CdrIdentity | null, local: LocalDoc
     return { result: 'MATCH', reason: 'El hash del CDR coincide con el XML firmado guardado.' };
   }
 
-  const cdrRecipient = normalizePartyId(identity.recipientId);
+  const cdrParty = cdrPartyIdentity(identity);
+  const cdrRecipient = cdrParty.number;
   const localRecipient = normalizePartyId(local.clientDocumento);
+  if (!cdrParty.valid) {
+    return { result: 'UNVERIFIABLE', reason: 'El CDR contiene un tipo o número de documento del cliente inconsistente.' };
+  }
   if (!cdrRecipient || !localRecipient) {
     return { result: 'UNVERIFIABLE', reason: 'No se puede comparar el documento del cliente con el CDR.' };
   }
   if (cdrRecipient !== localRecipient) {
-    return { result: 'MISMATCH', reason: `El número está ocupado por un comprobante del cliente ${identity.recipientId}, no de ${local.clientDocumento}.` };
+    return { result: 'MISMATCH', reason: `El número está ocupado por un comprobante del cliente ${cdrRecipient}, no de ${localRecipient}.` };
+  }
+  const localType = local.clientTipoDocumento?.trim().toUpperCase();
+  if (cdrParty.type && localType && cdrParty.type !== localType) {
+    return { result: 'MISMATCH', reason: 'El tipo de documento del cliente en el CDR no coincide con el comprobante local.' };
   }
 
   const cdrDate = normalizeDate(identity.issueDate);

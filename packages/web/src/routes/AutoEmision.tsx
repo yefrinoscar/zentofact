@@ -5,13 +5,15 @@ import {
   Radio, ChevronDown, Settings as SettingsIcon, Search, Building2, Pause, Play, RotateCcw,
   Plus, Trash2, Package,
 } from 'lucide-react';
-import { emissionNeedsReview, emissionSummary, discountDateParts } from '../lib/autoEmissionPresentation';
+import { emissionNeedsReview, emissionSummary, discountDateParts, documentStateLabel, emissionReviewNotice, type EmissionReviewResult } from '../lib/autoEmissionPresentation';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
+import { Button } from '../components/ui/button';
+import { Alert, AlertTitle, AlertDescription } from '../components/ui/alert';
 
 type CompanyCfg = {
   id: number;
@@ -42,7 +44,7 @@ type Job = {
   document_context?: string | null; affected_document_number?: string | null;
   credit_note_number?: string | null; document_date?: string | null;
   document_id?: number | null; document_type?: 'credit_note' | 'boleta' | 'factura';
-  document_status?: string | null; document_total?: string | null; items?: JobItem[];
+  document_status?: string | null; document_total?: string | null; client_document_number?: string | null; client_document_type?: string | null; items?: JobItem[];
   alerted_at?: string | null; updated_at: string;
 };
 type OrderPreview = {
@@ -434,9 +436,11 @@ export default function AutoEmision() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
   const [reviewBusy, setReviewBusy] = useState(false);
-  const [reviewResult, setReviewResult] = useState<{ jobId: number; state: string; message: string; error: boolean } | null>(null);
+  const [reviewResult, setReviewResult] = useState<EmissionReviewResult | null>(null);
   const [documentPreview, setDocumentPreview] = useState<{ jobId: number; html: string } | null>(null);
   const activeReview = reviewResult?.jobId === selectedJobId ? reviewResult : null;
+  const reviewNotice = selectedJob ? emissionReviewNotice(selectedJob, activeReview) : null;
+  const canCloseReview = selectedJob?.status === 'failed' && (activeReview?.state || selectedJob.document_status) === 'ACEPTADO' && (!activeReview?.error || activeReview.operation === 'resolve' || activeReview.operation === 'preview');
   const [webhookCompanyId, setWebhookCompanyId] = useState<number | null>(null);
   const [webhooks, setWebhooks] = useState<FalabellaWebhook[]>([]);
   const [webhooksLoading, setWebhooksLoading] = useState(false);
@@ -494,10 +498,10 @@ export default function AutoEmision() {
         : job.document_type === 'factura'
           ? await api.refreshFacturaStatus(documentId)
           : await api.refreshBoletaStatus(documentId);
-      setReviewResult({ jobId: job.id, state: result.estadoSunat || job.document_status || '', message: result.message || 'Consulta terminada.', error: result.success === false });
+      setReviewResult({ jobId: job.id, operation: 'verify', state: result.estadoSunat || job.document_status || '', message: result.message || 'Consulta terminada.', error: result.success === false });
       await loadLogs();
     } catch (error) {
-      setReviewResult({ jobId: job.id, state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo consultar SUNAT. Vuelve a intentar.', error: true });
+      setReviewResult({ jobId: job.id, operation: 'verify', state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo consultar SUNAT. Vuelve a intentar.', error: true });
     } finally {
       setReviewBusy(false);
     }
@@ -516,7 +520,7 @@ export default function AutoEmision() {
           : await api.previewAcceptedBoletaHtml(documentId);
       setDocumentPreview({ jobId: job.id, html: typeof result === 'string' ? result : result.html || '' });
     } catch (error) {
-      setReviewResult({ jobId: job.id, state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo abrir el comprobante.', error: true });
+      setReviewResult({ jobId: job.id, operation: 'preview', state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo abrir el comprobante.', error: true });
     } finally {
       setReviewBusy(false);
     }
@@ -706,7 +710,7 @@ export default function AutoEmision() {
       await Promise.all([loadLogs(), loadConfig()]);
     } catch (error) {
       setSelectedJobId(id);
-      setReviewResult({ jobId: id, state: jobs.find((job) => job.id === id)?.document_status || '', message: error instanceof Error ? error.message : 'No se pudo continuar el proceso.', error: true });
+      setReviewResult({ jobId: id, operation: 'retry', state: jobs.find((job) => job.id === id)?.document_status || '', message: error instanceof Error ? error.message : 'No se pudo continuar el proceso.', error: true });
     }
   };
 
@@ -958,13 +962,13 @@ export default function AutoEmision() {
                         <td className="block px-3 py-3.5 md:table-cell">
                           <StatusBadge status={j.status} review={review} />
                           <div className="mt-2 flex flex-col items-start gap-1.5">
-                            <button type="button" onClick={() => { setSelectedJobId(j.id); setReviewResult(null); setDocumentPreview(null); }} className="daisy-btn daisy-btn-xs daisy-btn-outline h-auto min-h-7 whitespace-normal border-border bg-transparent px-2 py-1 text-xs text-foreground">
+                            <Button type="button" size="xs" variant="outline" onClick={() => { setSelectedJobId(j.id); setReviewResult(null); setDocumentPreview(null); }} className="h-auto min-h-7 whitespace-normal px-2 py-1">
                               {review ? 'Revisar caso' : 'Ver detalle'}
-                            </button>
+                            </Button>
                             {(failed || j.status === 'skipped') && !review && j.attempts < 6 && (
-                              <button type="button" onClick={() => retryJob(j.id)} className="daisy-btn daisy-btn-xs daisy-btn-ghost h-auto min-h-7 px-2 py-1 text-xs text-muted-foreground">
+                              <Button type="button" size="xs" variant="ghost" onClick={() => retryJob(j.id)} className="h-auto min-h-7 px-2 py-1 text-muted-foreground">
                                 <RotateCcw className="h-3 w-3 shrink-0" /> Reintentar
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </td>
@@ -994,54 +998,52 @@ export default function AutoEmision() {
                 <p className="text-base font-semibold">{selectedJob.document_context || selectedJob.boleta_numero || `Orden ${selectedJob.order_number}`}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{shortName(selectedJob.company)} · Orden {selectedJob.order_number}</p>
               </div>
-              {emissionNeedsReview(selectedJob) && (
-                <div className="space-y-2 border-l-2 border-amber-400 pl-4">
-                  <p className="font-medium">La emisión automática está detenida.</p>
-                  <p>Verifica en SUNAT el documento existente. Si confirma que corresponde a esta emisión, se recuperará su estado y CDR.</p>
-                  <p className="text-muted-foreground">La consulta no crea ni reenvía comprobantes.</p>
-                </div>
-              )}
-              {selectedJob.document_id ? (
-                <div className="space-y-4">
-                  <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    <div><dt className="text-xs text-muted-foreground">Estado del documento</dt><dd className="mt-1 font-medium">{(activeReview?.state || selectedJob.document_status || 'Sin confirmar').replace('REVISION_MANUAL', 'Revisión manual').replace(/_/g, ' ')}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Fecha de emisión</dt><dd className="mt-1 font-medium">{selectedJob.document_date || 'Sin fecha'}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Importe</dt><dd className="mt-1 font-medium">{money(selectedJob.document_total)}</dd></div>
-                  </dl>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" disabled={reviewBusy} onClick={verifySelectedDocument} className="daisy-btn daisy-btn-sm daisy-btn-outline border-border bg-transparent text-foreground">
-                      {reviewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Verificar en SUNAT
-                    </button>
-                    {selectedJob.status === 'failed' && (activeReview?.state || selectedJob.document_status) === 'ACEPTADO' && !activeReview?.error && (
-                      <button type="button" disabled={reviewBusy} onClick={async () => {
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-border pb-5 sm:grid-cols-4">
+                <div><dt className="text-xs text-muted-foreground">Estado del comprobante</dt><dd className="mt-1 text-sm font-medium">{documentStateLabel(activeReview?.state || selectedJob.document_status)}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Fecha de emisión</dt><dd className="mt-1 text-sm font-medium">{selectedJob.document_date || 'Sin fecha'}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Importe</dt><dd className="mt-1 text-sm font-medium tabular-nums">{money(selectedJob.document_total)}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Documento del cliente</dt><dd className="mt-1 break-words text-sm font-medium">{selectedJob.client_document_number ? `${selectedJob.client_document_type === '1' ? 'DNI ' : selectedJob.client_document_type === '6' ? 'RUC ' : ''}${selectedJob.client_document_number}` : 'Sin documento'}</dd></div>
+              </dl>
+              <div className="space-y-4">
+                {reviewNotice && (
+                  <Alert role="status" aria-live="polite" variant={reviewNotice.tone === 'error' ? 'destructive' : 'default'} className={cn(reviewNotice.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200' : reviewNotice.tone === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200' : 'border-destructive/30')}>
+                    {reviewNotice.tone === 'success' ? <CheckCircle2 /> : <AlertTriangle />}
+                    <AlertTitle className="text-base font-semibold">{reviewNotice.title}</AlertTitle>
+                    <AlertDescription className="col-start-2 mt-1 text-current/90">{reviewNotice.body}</AlertDescription>
+                  </Alert>
+                )}
+                {selectedJob.document_id && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {canCloseReview && (
+                      <Button type="button" disabled={reviewBusy} onClick={async () => {
                         const job = selectedJob;
                         setReviewBusy(true);
                         try {
                           await api.autoEmitResolveReviewedJob(job.id);
-                          setReviewResult({ jobId: job.id, state: 'ACEPTADO', message: 'Revisión cerrada. El documento ya está aceptado por SUNAT.', error: false });
+                          setReviewResult({ jobId: job.id, operation: 'resolve', state: 'ACEPTADO', message: 'Revisión cerrada. El documento ya está aceptado por SUNAT.', error: false });
                           await Promise.all([loadLogs(), loadConfig()]);
                         } catch (error) {
-                          setReviewResult({ jobId: job.id, state: 'ACEPTADO', message: error instanceof Error ? error.message : 'No se pudo cerrar la revisión.', error: true });
+                          setReviewResult({ jobId: job.id, operation: 'resolve', state: 'ACEPTADO', message: error instanceof Error ? error.message : 'No se pudo cerrar la revisión.', error: true });
                         } finally { setReviewBusy(false); }
-                      }} className="daisy-btn daisy-btn-sm daisy-btn-outline border-border bg-transparent text-foreground">Cerrar revisión</button>
+                      }} size="sm">Cerrar revisión</Button>
                     )}
-                    <button type="button" disabled={reviewBusy} onClick={previewSelectedDocument} className="daisy-btn daisy-btn-sm daisy-btn-ghost text-foreground">Ver comprobante</button>
+                    <Button type="button" disabled={reviewBusy} onClick={verifySelectedDocument} size="sm" variant={canCloseReview || reviewNotice?.tone === 'success' ? 'outline' : 'default'}>
+                      {reviewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {activeReview ? 'Volver a verificar' : 'Verificar en SUNAT'}
+                    </Button>
+                    <Button type="button" disabled={reviewBusy} onClick={previewSelectedDocument} size="sm" variant="ghost">Ver comprobante</Button>
                   </div>
-                  {activeReview && (
-                    <div role="status" className={cn('border-l-2 pl-4', activeReview.error ? 'border-destructive' : 'border-border')}>
-                      <p className="font-medium">{activeReview.error ? 'No se pudo completar la consulta' : activeReview.state === 'ACEPTADO' ? 'Documento confirmado en SUNAT' : 'Resultado de la revisión'}</p>
-                      <p className="mt-1 break-words text-sm text-muted-foreground">{activeReview.message}</p>
-                      {activeReview.state === 'REVISION_MANUAL' && <p className="mt-2 text-sm">SUNAT aún no confirma que el CDR corresponde a este documento. No se puede dar por resuelto ni emitir otro.</p>}
-                      {activeReview.state === 'ACEPTADO' && selectedJob.status === 'failed' && <p className="mt-2 text-sm">El documento está aceptado. Pulsa Cerrar revisión para completar el caso sin volver a emitir.</p>}
-                    </div>
-                  )}
-                  {documentPreview?.jobId === selectedJob.id && <iframe title="Comprobante de la emisión" sandbox="" srcDoc={documentPreview.html} className="h-[480px] w-full rounded-md border border-border bg-white" />}
-                </div>
-              ) : <p className="text-sm text-muted-foreground">No hay un documento vinculado para consultar. Revisa la orden {selectedJob.order_number} y su registro técnico.</p>}
+                )}
+              </div>
+              {documentPreview?.jobId === selectedJob.id && <iframe title="Comprobante de la emisión" sandbox="" srcDoc={documentPreview.html} className="h-[480px] w-full rounded-md border border-border bg-white" />}
               <details className="border-t border-border pt-4">
-                <summary className="cursor-pointer text-sm font-medium">Registro técnico</summary>
-                <p className="mt-3 whitespace-pre-wrap break-words text-sm text-muted-foreground">{selectedJob.last_error || selectedJob.result || selectedJob.current_step || 'Sin registro adicional'}</p>
-                <p className="mt-2 text-xs text-muted-foreground">{selectedJob.attempts} ejecuciones registradas · {fullDateTime(selectedJob.updated_at)}</p>
+                <summary className="cursor-pointer text-sm font-medium">Diagnóstico de la emisión</summary>
+                <p className="mt-3 text-xs text-muted-foreground">Último mensaje guardado y contadores de ejecución. No contiene el historial completo de consultas a SUNAT.</p>
+                <dl className="mt-3 space-y-3 text-sm">
+                  {activeReview && <div><dt className="font-medium">Última acción en este modal</dt><dd className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{activeReview.message}</dd></div>}
+                  {(!activeReview || activeReview.message !== (selectedJob.last_error || selectedJob.result)) && <div><dt className="font-medium">Último mensaje del proceso automático</dt><dd className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{selectedJob.last_error || selectedJob.result || 'Sin mensaje adicional'}</dd></div>}
+                  {selectedJob.current_step && <div><dt className="font-medium">Último paso</dt><dd className="mt-1 break-words text-muted-foreground">{selectedJob.current_step}</dd></div>}
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground">{selectedJob.attempts} ejecuciones registradas · Última actualización: {fullDateTime(selectedJob.updated_at)}</p>
               </details>
             </div>
           )}
