@@ -16,6 +16,7 @@ import {
   Hash,
   ImagePlus,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
   Package,
   PanelTop,
@@ -30,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import { ChannelMark } from '../components/channel-mark';
+import { BuyerConversation } from '../components/buyer-messages/BuyerConversation';
 import { QuantityTag } from '../components/QuantityTag';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
@@ -1306,6 +1308,11 @@ export default function PedidosMulticanal() {
                    <TabsTrigger value="activity" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
                     <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
                   </TabsTrigger>
+                  {detail.channelCode === 'mercado_libre' && (
+                    <TabsTrigger value="messages" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
+                      <MessageCircle /> Mensajes
+                    </TabsTrigger>
+                  )}
                 </TabsList>
 
                 <TabsContent value="summary" className="min-h-0 overflow-y-auto">
@@ -1539,6 +1546,22 @@ export default function PedidosMulticanal() {
                     {!detail.events.length && <p className="text-sm text-muted-foreground">Todavía no hay eventos registrados.</p>}
                   </div>
                 </TabsContent>
+
+                {detail.channelCode === 'mercado_libre' && (
+                  <TabsContent value="messages" className="min-h-0 overflow-y-auto">
+                    <BuyerConversation
+                      order={{
+                        id: detail.id,
+                        externalOrderNumber: detail.externalOrderNumber,
+                        companyName: companyById.get(detail.companyId || -1) || null,
+                        channelCode: detail.channelCode,
+                        stage: detail.fulfillmentStatus,
+                        customer: detail.customer,
+                      }}
+                      variant="embedded"
+                    />
+                  </TabsContent>
+                )}
               </Tabs>
             </>
           ) : null}

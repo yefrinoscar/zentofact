@@ -60,6 +60,7 @@ await listenReset.resetInventoryListenHistory();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
+const mercadoLibreChat = await import('./mercado-libre-chat.js');
 const orderManagement = await import('./order-management.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
@@ -506,6 +507,75 @@ app.post('/logistics-inbox/:orderId/delivered', async (c) => {
     }));
   } catch (e) {
     return fail(c, e, 400, { operation: 'logistics.manual-delivered' });
+  }
+});
+
+// ── Conversaciones posventa de Mercado Libre (chat desde la bandeja) ──
+app.get('/mercado-libre/conversations/:orderId', requirePermission('orders_inbox'), async (c) => {
+  try {
+    return ok(c, await mercadoLibreChat.getOrderConversation({
+      orderId: c.req.param('orderId'),
+      markAsRead: c.req.query('mark_as_read') !== 'false',
+    }));
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.conversation' });
+  }
+});
+app.get('/mercado-libre/unread', requirePermission('orders_inbox'), async (c) => {
+  try {
+    return ok(c, await mercadoLibreChat.listUnreadMessages({ orderIds: c.req.query('orderIds') }));
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.unread' });
+  }
+});
+app.post('/mercado-libre/conversations/:orderId/messages', requirePermission('orders_inbox'), async (c) => {
+  let body = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+  try {
+    return ok(c, await mercadoLibreChat.sendOrderMessage({
+      orderId: c.req.param('orderId'),
+      text: body?.text,
+      attachmentId: body?.attachmentId,
+    }), 201);
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.message-send' });
+  }
+});
+app.post('/mercado-libre/conversations/:orderId/attachments', requirePermission('orders_inbox'), async (c) => {
+  try {
+    const body = await c.req.parseBody();
+    const file = body?.file;
+    if (typeof file === 'string' || !file || typeof file.arrayBuffer !== 'function') {
+      throw new Error('Adjunta un archivo JPG, PNG, PDF o TXT.');
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return ok(c, await mercadoLibreChat.uploadOrderAttachment({
+      orderId: c.req.param('orderId'),
+      file: bytes,
+      filename: String(body?.filename || file.name || '').trim(),
+      contentType: String(file.type || '').trim() || undefined,
+    }), 201);
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.attachment-upload' });
+  }
+});
+app.get('/mercado-libre/attachments/:orderId/:attachmentId', requirePermission('orders_inbox'), async (c) => {
+  try {
+    const file = await mercadoLibreChat.downloadOrderAttachment({
+      orderId: c.req.param('orderId'),
+      attachmentId: c.req.param('attachmentId'),
+    });
+    const safeName = String(c.req.param('attachmentId')).replace(/["\\\r\n]/g, '_');
+    c.header('Content-Type', file.contentType || 'application/octet-stream');
+    c.header('Content-Disposition', `inline; filename="${safeName}"`);
+    c.header('Cache-Control', 'private, max-age=300');
+    return c.body(file.bytes);
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.attachment-download' });
   }
 });
 

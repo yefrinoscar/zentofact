@@ -7,6 +7,11 @@ import {
   parseOperatorNotificationsResponse,
   type OperatorNotificationsResponse,
 } from './notifications-presentation';
+import type {
+  BuyerConversationPayload,
+  BuyerMessage,
+  BuyerUnreadCounts,
+} from './buyer-messages';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -194,6 +199,52 @@ async function req<T = any>(path: string, init?: RequestInit, attempt = 0): Prom
   }
   if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
+}
+
+// XHR para reportar el progreso real de subida de un adjunto del chat.
+function uploadBuyerAttachment(
+  orderId: number,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<{ attachmentId: string; name: string; size: number }> {
+  return new Promise((resolve, reject) => {
+    void (async () => {
+      try {
+        const token = await ensureCsrfToken();
+        const form = new FormData();
+        form.append('file', file);
+        form.append('filename', file.name);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE}/mercado-libre/conversations/${orderId}/attachments`);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader('x-csrf-token', token);
+        xhr.upload.addEventListener('progress', (event) => {
+          if (!event.lengthComputable || !event.total) return;
+          onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+        });
+        xhr.addEventListener('load', () => {
+          let payload: unknown = null;
+          try {
+            payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          } catch {
+            payload = null;
+          }
+          if (xhr.status >= 200 && xhr.status < 300 && isRecord(payload)
+            && typeof payload.attachmentId === 'string') {
+            onProgress?.(100);
+            resolve(payload as { attachmentId: string; name: string; size: number });
+            return;
+          }
+          if (xhr.status === 401) handleUnauthorized(`/mercado-libre/conversations/${orderId}/attachments`);
+          reject(apiErrorFromResponse(isRecord(payload) ? payload : null, xhr.status, `HTTP ${xhr.status}`));
+        });
+        xhr.addEventListener('error', () => reject(new Error('No se pudo subir el adjunto. Revisa tu conexión.')));
+        xhr.send(form);
+      } catch (error) {
+        reject(error);
+      }
+    })();
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -827,6 +878,24 @@ const apiHttp = {
   stockJobsAssignUnmatched: (orderItemId: number, productId: number) => req(
     `/catalog/stock-jobs/unmatched/${orderItemId}/assign`,
     { method: 'POST', body: JSON.stringify({ productId }) },
+  ),
+
+  // Conversaciones posventa de Mercado Libre (chat desde la bandeja)
+  buyerMessagesUnread: (orderIds: number[]) => req<{ counts: BuyerUnreadCounts }>(
+    `/mercado-libre/unread${qs({ orderIds: orderIds.join(',') })}`,
+  ),
+  buyerMessagesConversation: (orderId: number) => req<BuyerConversationPayload>(
+    `/mercado-libre/conversations/${orderId}`,
+  ),
+  buyerMessagesSend: (orderId: number, body: { text: string; attachmentId?: string }) => req<{ sent: boolean; message: BuyerMessage | null }>(
+    `/mercado-libre/conversations/${orderId}/messages`,
+    { method: 'POST', body: JSON.stringify(body) },
+  ),
+  buyerMessagesUploadAttachment: (orderId: number, file: File, onProgress?: (percent: number) => void) => (
+    uploadBuyerAttachment(orderId, file, onProgress)
+  ),
+  buyerMessageAttachmentUrl: (orderId: number, attachmentId: string) => (
+    `/mercado-libre/attachments/${orderId}/${encodeURIComponent(attachmentId)}`
   ),
 
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },
