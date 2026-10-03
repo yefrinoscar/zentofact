@@ -253,6 +253,9 @@ class RestockDb {
       return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
+    if (compact.startsWith('select id, metadata from orders')) {
+      return { rows: [...this.orders.values()].filter((order) => Number(order.id) === Number(params[0])) };
+    }
     if (compact.includes('from product_listings l') && compact.includes('l.seller_sku=$3')) {
       const matches = this.listings.filter((row) => (
         row.channel_code === params[0] && row.company_id === params[1]

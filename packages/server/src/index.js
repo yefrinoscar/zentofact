@@ -1042,6 +1042,13 @@ app.get('/catalog/stock-jobs/jobs/:id/order-preview', async (c) => {
 app.post('/catalog/stock-jobs/jobs/:id/retry', async (c) => {
   try { return ok(c, await stockJobs.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); }
 });
+app.post('/catalog/stock-jobs/jobs/:id/incident', async (c) => {
+  try {
+    return ok(c, await stockJobs.reportStockIncident(
+      Number(c.req.param('id')), await c.req.json(), c.get('user')?.id,
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/catalog/stock-jobs/run', async (c) => {
   try {
     const stats = await stockJobs.processStockQueue({ limit: Number(c.req.query('limit') || 8) });

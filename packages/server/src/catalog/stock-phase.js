@@ -471,7 +471,9 @@ export async function stockPhase(input) {
     becameEligible,
   };
 
-  await db.query('select id from orders where id=$1 for update', [orderId]);
+  const lockedOrder = (await db.query(
+    'select id, metadata from orders where id=$1 for update', [orderId],
+  )).rows[0];
   if (persisted.items_status === 'pending' || persisted.items_status === 'error') return stats;
 
   for (const row of doomedItems) {
@@ -544,6 +546,9 @@ export async function stockPhase(input) {
       if (reversed.applied) stats.reversed += 1;
       continue;
     }
+    // Still allow real cancellations/returns above to restore existing stock.
+    // A reported shortage only suspends new reservations and discounts.
+    if (lockedOrder?.metadata?.stockIncident?.status === 'reported') continue;
     if (action === 'none' || !saleEnabled) continue;
     if (item.stock_state === 'skipped_policy' && !afterCutoff) continue;
     if (item.stock_state === 'skipped_policy' && !input.includeSkippedPolicy && !becameEligible) continue;
