@@ -121,14 +121,14 @@ function SourceBadge({ source }: { source: string }) {
           ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
           : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
-      title={fromWebhook ? 'Encolado por callback de Falabella' : 'Encontrado por revisión automática'}
+      title={fromWebhook ? 'Encolado por webhook de Falabella' : source === 'cron' ? 'Encolado por cron' : `Origen: ${source}`}
     >
-      {fromWebhook ? 'Webhook' : 'Programado'}
+      {fromWebhook ? 'Webhook' : source === 'cron' ? 'Cron' : source || 'Sin origen'}
     </span>
   );
 }
 
-function KindBadge({ kind }: { kind?: string | null }) {
+function KindBadge({ kind, documentType }: { kind?: string | null; documentType?: Job['document_type'] }) {
   const creditNote = kind === 'credit_note';
   return (
     <span
@@ -139,7 +139,7 @@ function KindBadge({ kind }: { kind?: string | null }) {
           : 'border-sky-200 bg-sky-50 text-sky-700',
       )}
     >
-      {creditNote ? 'Nota de crédito' : 'Comprobante'}
+      {creditNote ? 'Nota de crédito' : documentType === 'factura' ? 'Factura' : documentType === 'boleta' ? 'Boleta' : 'Comprobante'}
     </span>
   );
 }
@@ -951,7 +951,7 @@ export default function AutoEmision() {
                               </div>
                             )) : <p className="text-xs text-muted-foreground">Productos no sincronizados</p>}
                           </div>
-                          <div className="mb-2 flex flex-wrap gap-1.5"><KindBadge kind={j.kind} /><SourceBadge source={j.source} /></div>
+                          <div className="mb-2 flex flex-wrap gap-1.5"><KindBadge kind={j.kind} documentType={j.document_id ? j.document_type : undefined} /><SourceBadge source={j.source} /></div>
                           {(j.document_context || j.boleta_numero) && <p className="break-words font-medium text-foreground">{j.document_context || j.boleta_numero}</p>}
                           <p className={cn('break-words', failed ? 'text-destructive' : 'text-muted-foreground')}>
                             {summary || (j.current_step ? `Etapa: ${j.current_step}` : 'Sin detalle')}
