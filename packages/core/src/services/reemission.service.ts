@@ -88,6 +88,7 @@ async function checkWithSunat(adapter: ReemissionAdapter, doc: any): Promise<Sta
       numeroCompleto: doc.numeroCompleto,
       fechaEmision: doc.fechaEmision,
       clientDocumento: client?.numeroDocumento || null,
+      clientTipoDocumento: client?.tipoDocumento || null,
       codigoHash: doc.codigoHash || null,
     },
     trace: readReconciliationTrace(doc.datosAdicionales),
