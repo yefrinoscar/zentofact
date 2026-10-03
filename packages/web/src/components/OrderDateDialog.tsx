@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { ArrowRight, Loader2 } from 'lucide-react';
+import { Button } from './ui/button';
+import { Label } from './ui/label';
+import { OrderRegistrationDatePicker } from './OrderRegistrationDatePicker';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 
 export function orderDateKey(value?: string | null) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(value ? new Date(value) : new Date());
@@ -27,36 +31,57 @@ export function OrderDateDialog({ currentDate, initialDate, chooseDate = false, 
   const [stage, setStage] = useState<'choose' | 'review' | 'final'>(chooseDate ? 'choose' : 'review');
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
-      <DialogContent showCloseButton={!pending}>
-        <DialogHeader>
-          <DialogTitle>{stage === 'choose' ? 'Cambiar fecha de registro' : stage === 'review' ? 'Confirmación 1 de 2' : 'Confirmación 2 de 2'}</DialogTitle>
+      <DialogContent showCloseButton={!pending} className="gap-5 rounded-xl sm:max-w-md">
+        <DialogHeader className="gap-2 pr-8">
+          <DialogTitle>{stage === 'choose' ? 'Cambiar fecha de registro' : stage === 'review' ? 'Confirmar cambio de fecha' : 'Guardar nueva fecha'}</DialogTitle>
           <DialogDescription>
-            Este cambio mueve el pedido y sus productos al día elegido en los reportes de ventas. No cambia la fecha de entrega, los comprobantes emitidos ni la fecha en el marketplace.
+            El pedido y sus productos aparecerán en el día elegido en los reportes de ventas.
           </DialogDescription>
         </DialogHeader>
-        <p className="text-sm">Fecha actual: <strong>{displayOrderDate(currentDate)}</strong></p>
         {stage === 'choose' ? (
-          <label className="space-y-2 text-sm">
-            <span className="block font-medium">Nueva fecha de registro</span>
-            <input className="input w-full" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-          </label>
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Fecha actual</p>
+              <p className="text-sm font-medium">{displayOrderDate(currentDate)}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-order-date">Nueva fecha de registro</Label>
+              <OrderRegistrationDatePicker id="new-order-date" value={date} onChange={setDate} disabled={pending} />
+            </div>
+          </div>
         ) : (
-          <p className="text-sm">Nueva fecha: <strong>{displayOrderDate(date)}</strong></p>
+          <>
+            <p className="text-xs font-medium text-muted-foreground">Confirmación {stage === 'review' ? '1' : '2'} de 2</p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-y border-border py-4">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Fecha actual</p>
+                <p className="text-sm">{displayOrderDate(currentDate)}</p>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Nueva fecha</p>
+                <p className="text-sm font-semibold">{displayOrderDate(date)}</p>
+              </div>
+            </div>
+          </>
         )}
-        <p className="text-sm text-muted-foreground">
-          {stage === 'final' ? 'Confirma nuevamente para guardar. El cambio quedará registrado en la actividad del pedido.' : 'Solo los administradores pueden hacer este cambio. Se necesitan dos confirmaciones para guardarlo.'}
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {stage === 'final'
+            ? 'Al guardar, la actividad conservará ambas fechas, tu usuario y la hora del cambio.'
+            : 'La entrega, los comprobantes y la fecha del marketplace se mantienen. El cambio quedará en Actividad.'}
         </p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <div className="flex flex-wrap justify-end gap-2">
-          <button className="btn btn-ghost" type="button" disabled={pending} onClick={onClose}>Cancelar</button>
-          <button className="btn" type="button" disabled={pending || !date || date === currentDate} onClick={() => {
+        <DialogFooter className="gap-2 border-t border-border pt-4">
+          <Button variant="outline" type="button" disabled={pending} onClick={onClose}>Cancelar</Button>
+          <Button type="button" disabled={pending || date === currentDate} onClick={() => {
             if (stage === 'choose') setStage('review');
             else if (stage === 'review') setStage('final');
             else onConfirm(date);
           }}>
-            {pending ? 'Guardando…' : stage === 'choose' ? 'Revisar cambio' : stage === 'review' ? 'Confirmar cambio de fecha' : 'Confirmar y guardar'}
-          </button>
-        </div>
+            {pending && <Loader2 className="size-4 animate-spin" />}
+            {pending ? 'Guardando…' : stage === 'choose' ? 'Revisar cambio' : stage === 'review' ? 'Confirmar cambio' : 'Confirmar y guardar'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
