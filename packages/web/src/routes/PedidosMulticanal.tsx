@@ -1,7 +1,7 @@
 import OrderDocumentPanel from '../components/OrderDocumentPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertCircle,
@@ -290,7 +290,7 @@ const FALLBACK_CHANNELS: Channel[] = [
   { id: -1, code: 'falabella', name: 'Falabella', active: true, defaultAutoCreateOrders: true },
   { id: -2, code: 'mercado_libre', name: 'Mercado Libre', active: true, defaultAutoCreateOrders: true },
   { id: -3, code: 'ripley', name: 'Ripley', active: true, defaultAutoCreateOrders: true },
-  { id: -4, code: 'manual', name: 'Venta manual', active: true, defaultAutoCreateOrders: false },
+  { id: -4, code: 'manual', name: 'Tienda', active: true, defaultAutoCreateOrders: false },
 ];
 
 const FULFILLMENT_LABELS: Record<string, string> = {
@@ -670,7 +670,6 @@ export default function PedidosMulticanal() {
   const ordersQuery = useQuery({
     queryKey: ['managed-orders', orderFilters],
     queryFn: () => api.listManagedOrders(orderFilters),
-    placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
 
@@ -685,7 +684,7 @@ export default function PedidosMulticanal() {
     || '';
 
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
-    channels.find((channel) => channel.code === fallback.code) || fallback
+    { ...(channels.find((channel) => channel.code === fallback.code) || fallback), name: fallback.name }
   )), [channels]);
 
   const companyById = useMemo(
