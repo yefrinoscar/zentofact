@@ -146,6 +146,7 @@ const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: st
   processing: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Loader2, label: 'Procesando' },
   skipped: { cls: 'bg-slate-100 text-slate-600 border-slate-200', icon: XCircle, label: 'Omitido' },
   failed: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Requiere atención' },
+  warning: { cls: 'daisy-badge-warning daisy-badge-soft', icon: AlertTriangle, label: 'Incidencia reportada' },
 };
 
 const FILTERS = [
@@ -155,6 +156,7 @@ const FILTERS = [
   ['pending', 'En cola'],
   ['processing', 'Procesando'],
   ['failed', 'Requieren atención'],
+  ['warning', 'Incidencias'],
   ['skipped', 'Omitidos'],
 ] as const;
 
@@ -163,7 +165,10 @@ function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | 
   const style = STATUS_STYLES[status] || STATUS_STYLES.skipped;
   const Icon = style.icon;
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', style.cls)}>
+    <span className={cn(
+      status === 'warning' ? 'daisy-badge daisy-badge-sm h-auto whitespace-normal py-1' : 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
+      style.cls,
+    )}>
       <Icon className={cn('h-3 w-3', status === 'processing' && 'animate-spin')} />
       {style.label}
     </span>
@@ -508,6 +513,7 @@ export default function DescuentosCola() {
   const [productSearch, setProductSearch] = useState('');
   const [submittedProductSearch, setSubmittedProductSearch] = useState('');
   const [assigningProductId, setAssigningProductId] = useState<number | null>(null);
+  const [reportingJobId, setReportingJobId] = useState<number | null>(null);
 
   const configQuery = useQuery<Config>({
     queryKey: ['stock-jobs', 'config'],
@@ -616,6 +622,23 @@ export default function DescuentosCola() {
         tone: 'error',
         duration: 7000,
       });
+    }
+  };
+
+  const reportIncident = async (job: Job) => {
+    if (reportingJobId != null || !window.confirm(
+      `¿Ya enviaste el ticket de la orden ${job.order_number}? Se detendrán los reintentos de stock; los descuentos aplicados no cambian.`,
+    )) return;
+    setReportingJobId(job.id);
+    try {
+      await api.stockJobsReportIncident(job.id, 'Ticket enviado');
+      showSnackbar({ message: 'Incidencia reportada. Reintentos detenidos.' });
+      await queryClient.invalidateQueries({ queryKey: ['stock-jobs'] });
+      await queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    } catch (error: any) {
+      showSnackbar({ message: error?.message || 'No se pudo registrar la incidencia.', tone: 'error' });
+    } finally {
+      setReportingJobId(null);
     }
   };
 
@@ -876,7 +899,7 @@ export default function DescuentosCola() {
                       <td className="px-5 py-2.5"><StatusBadge job={job} listenFromAt={config.listenFromAt} /></td>
                       <td className="px-5 py-2.5"><SourceBadge source={job.source} channelCode={job.channel_code} /></td>
                       <td className="px-5 py-2.5 text-xs">
-                        <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>
+                        <span className={failed ? 'text-red-600' : job.status === 'warning' ? 'text-foreground' : 'text-muted-foreground'} title={job.last_error || undefined}>
                           {stockJobDetail(job, config.listenFromAt)}
                         </span>
                         {shouldShowStockJobAttempts(job) && (
@@ -891,6 +914,17 @@ export default function DescuentosCola() {
                             className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
                           >
                             <RotateCcw className="h-3 w-3" /> Reintentar
+                          </button>
+                        )}
+                        {failed && Number(job.insufficient_items) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => reportIncident(job)}
+                            disabled={reportingJobId != null}
+                            className="daisy-btn daisy-btn-sm daisy-btn-ghost ml-2"
+                          >
+                            {reportingJobId === job.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <AlertTriangle className="h-3 w-3" />}
+                            Marcar ticket enviado
                           </button>
                         )}
                         {unmatchedItem && (

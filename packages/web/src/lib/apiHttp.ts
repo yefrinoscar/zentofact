@@ -817,6 +817,9 @@ const apiHttp = {
   stockJobsList: (params: { status?: string; page?: number; pageSize?: number } = {}) => req(`/catalog/stock-jobs/jobs${qs(params)}`),
   stockJobsSetPaused: (paused: boolean) => req('/catalog/stock-jobs/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
   stockJobsRetry: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/retry`, { method: 'POST' }),
+  stockJobsReportIncident: (id: number, note: string) => req(`/catalog/stock-jobs/jobs/${id}/incident`, {
+    method: 'POST', body: JSON.stringify({ note }),
+  }),
   stockJobsOrderPreview: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/order-preview`),
   stockJobsRun: (limit = 8) => req(`/catalog/stock-jobs/run${qs({ limit })}`, { method: 'POST' }),
   stockJobsUnmatched: () => req('/catalog/stock-jobs/unmatched'),
