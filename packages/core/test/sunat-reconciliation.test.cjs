@@ -65,6 +65,7 @@ test('lee del CDR el cliente del comprobante, no el RUC del emisor', () => {
     documentId: 'B001-000123',
     issueDate: '2026-09-20',
     recipientId: '45678912',
+    recipientDocumentType: '1',
     documentHash: 'xyz=',
   });
 });
@@ -174,4 +175,39 @@ test('los contadores se guardan sin perder el resto de datos_adicionales', () =>
 
   assert.deepEqual(readReconciliationTrace(withReconciliationTrace(null, trace)), { resendCount: 2, newNumberCount: 1 });
   assert.deepEqual(readReconciliationTrace(null), { resendCount: 0, newNumberCount: 0 });
+});
+
+
+test('CDR: el prefijo 1- del tipo DNI no cambia la identidad del cliente', () => {
+  const outcome = classifyStatusCdr({ success: true, statusCode: '0001', cdrZip: cdrZip({ recipient: '1-76805729' }), cdrResponse: { code: '0' } });
+  const document = { ...local, clientDocumento: '76805729', clientTipoDocumento: '1' };
+  assert.equal(compareCdrIdentity(outcome.identity, document).result, 'MATCH');
+  assert.equal(decideReemission({ outcome, local: document, trace: freshTrace }).action, 'MARK_ACCEPTED');
+});
+
+
+test('CDR: tipo, número y fecha distintos siguen bloqueados', () => {
+  const document = { ...local, clientDocumento: '76805729', clientTipoDocumento: '1' };
+  for (const options of [{ recipient: '1-76805728' }, { recipient: '1-76805729', issueDate: '2026-09-19' }]) {
+    assert.equal(compareCdrIdentity(parseCdrIdentityXml(cdrXml(options)), document).result, 'MISMATCH');
+  }
+  const wrongType = parseCdrIdentityXml(cdrXml({ recipient: '4-76805729' }).replace('schemeID="1"', 'schemeID="4"'));
+  assert.equal(compareCdrIdentity(wrongType, document).result, 'MISMATCH');
+  assert.equal(compareCdrIdentity(parseCdrIdentityXml(cdrXml({ recipient: '4-76805729' })), document).result, 'UNVERIFIABLE');
+  assert.equal(compareCdrIdentity(parseCdrIdentityXml(cdrXml({ recipient: '1-7680572' })), document).result, 'UNVERIFIABLE');
+});
+
+test('CDR: RUC prefijado, DNI con cero inicial y documento plano', () => {
+  const ruc = parseCdrIdentityXml(cdrXml({ recipient: '6-20600000001' }).replace('schemeID="1"', 'schemeID="6"'));
+  assert.equal(compareCdrIdentity(ruc, { ...local, clientDocumento: '20600000001', clientTipoDocumento: '6' }).result, 'MATCH');
+  for (const recipient of ['1-06805729', '06805729']) {
+    assert.equal(compareCdrIdentity(parseCdrIdentityXml(cdrXml({ recipient })), { ...local, clientDocumento: '06805729', clientTipoDocumento: '1' }).result, 'MATCH');
+  }
+  assert.equal(compareCdrIdentity(parseCdrIdentityXml(cdrXml({ recipient: '1-00000000' })), local).result, 'UNVERIFIABLE');
+});
+
+
+test('CDR: SUNAT puede incluir tipo-número sin atributo schemeID', () => {
+  const identity = parseCdrIdentityXml(cdrXml({ recipient: '1-76805729' }).replace(' schemeID="1"', ''));
+  assert.equal(compareCdrIdentity(identity, { ...local, clientDocumento: '76805729', clientTipoDocumento: '1' }).result, 'MATCH');
 });
