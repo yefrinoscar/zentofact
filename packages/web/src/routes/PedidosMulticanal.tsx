@@ -47,6 +47,7 @@ import {
 } from '../lib/manual-order-edit';
 import {
   buildManagedOrderListFilters,
+  managedOrderListRows,
   deliveryLabel,
   deliveryShowsAsTag,
   managedOrderSearchIgnoresDate,
@@ -675,7 +676,7 @@ export default function PedidosMulticanal() {
 
   const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
   const channels = (Array.isArray(channelsQuery.data) ? channelsQuery.data : []) as Channel[];
-  const orders = (Array.isArray(ordersQuery.data?.orders) ? ordersQuery.data.orders : []) as ManagedOrder[];
+  const orders = managedOrderListRows<ManagedOrder>(ordersQuery.data?.orders);
   const totalCount = Number(ordersQuery.data?.totalCount || 0);
   const loading = ordersQuery.isPending && !ordersQuery.data;
   const fetching = ordersQuery.isFetching;

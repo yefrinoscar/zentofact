@@ -55,6 +55,12 @@ export function deliveryShowsAsTag(label: string) {
 
 export const MANAGED_ORDER_LIST_LIMIT = 500;
 
+const EMPTY_ORDER_ROWS: never[] = [];
+
+export function managedOrderListRows<T>(orders: T[] | null | undefined): T[] {
+  return Array.isArray(orders) ? orders : EMPTY_ORDER_ROWS;
+}
+
 export type ManagedOrderListFilterInput = {
   companyId: string;
   channelCode: string;
