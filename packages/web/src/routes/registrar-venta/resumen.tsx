@@ -1,3 +1,4 @@
+import { displayOrderDate } from '../../components/OrderDateDialog';
 import { ClipboardCheck, Package, Pencil, Truck, User, Wallet, type LucideIcon } from 'lucide-react';
 import { saleLineProfit, saleProfit, type SaleStepId } from '../../lib/registrar-venta';
 import { formatSaleMoney, saleSummaryGroups, saleTotalRows } from '../../lib/sale-summary';
@@ -113,7 +114,7 @@ export function ResumenStep({
         ) : null}
 
         <Section title={cliente.title} icon={User} step="cliente" view={view}>
-          <Rows rows={customerRows} />
+          <Rows rows={view.isAdmin ? [{ label: 'Fecha de registro', value: displayOrderDate(view.orderDate) }, ...customerRows] : customerRows} />
         </Section>
 
         <Section

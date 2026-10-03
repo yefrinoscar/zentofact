@@ -18,6 +18,8 @@ export type SalespersonOption = { id: string; name: string };
 /** Contrato entre la página y los cuerpos de cada paso. Toda la escritura pasa por aquí. */
 export type SaleFormView = {
   isAdmin: boolean;
+  orderDate: string;
+  setOrderDate: (value: string) => void;
   showSalespersonSelector: boolean;
   salespeople: SalespersonOption[];
   salespeopleLoading: boolean;
