@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import {
   RefreshCw, Copy, Check, AlertTriangle, CheckCircle2, XCircle, Clock, Loader2,
   Radio, ChevronDown, Settings as SettingsIcon, Search, Building2, Pause, Play, RotateCcw,
-  Plus, Trash2,
+  Plus, Trash2, Package,
 } from 'lucide-react';
+import { emissionNeedsReview, emissionSummary, discountDateParts } from '../lib/autoEmissionPresentation';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -30,11 +31,18 @@ type Config = {
   mailer?: { configured: boolean };
   companies: CompanyCfg[]; webhookBase: string;
 };
+type JobItem = {
+  id: number; title: string; sku: string | null; quantity: number; imageUrl?: string | null;
+  stockState: string; discountedAt: string | null;
+};
 type Job = {
-  id: number; company: string; order_number: string; order_id: string | null;
+  id: number; company_id?: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; kind?: string | null; attempts: number; result: string | null;
   last_error: string | null; boleta_numero: string | null; current_step?: string | null;
   document_context?: string | null; affected_document_number?: string | null;
+  credit_note_number?: string | null; document_date?: string | null;
+  document_id?: number | null; document_type?: 'credit_note' | 'boleta' | 'factura';
+  document_status?: string | null; document_total?: string | null; items?: JobItem[];
   alerted_at?: string | null; updated_at: string;
 };
 type OrderPreview = {
@@ -90,11 +98,11 @@ const STATUS_STYLES: Record<string, { cls: string; icon: any; label: string }> =
   failed: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Falló' },
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_STYLES[status] || STATUS_STYLES.skipped;
+function StatusBadge({ status, review = false }: { status: string; review?: boolean }) {
+  const s = review ? { cls: 'border-amber-200 bg-amber-50 text-amber-800', icon: AlertTriangle, label: 'Por revisar' } : STATUS_STYLES[status] || STATUS_STYLES.skipped;
   const Icon = s.icon;
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', s.cls)}>
+    <span className={cn('daisy-badge daisy-badge-sm inline-flex h-auto shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium', s.cls)}>
       <Icon className={cn('h-3 w-3', status === 'processing' && 'animate-spin')} />
       {s.label}
     </span>
@@ -106,14 +114,14 @@ function SourceBadge({ source }: { source: string }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        'daisy-badge daisy-badge-sm inline-flex h-auto shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium',
         fromWebhook
           ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
           : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
       title={fromWebhook ? 'Encolado por callback de Falabella' : 'Encontrado por revisión automática'}
     >
-      {fromWebhook ? 'Webhook' : 'Cron'}
+      {fromWebhook ? 'Webhook' : 'Programado'}
     </span>
   );
 }
@@ -123,7 +131,7 @@ function KindBadge({ kind }: { kind?: string | null }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        'daisy-badge daisy-badge-sm inline-flex h-auto shrink-0 items-center whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium',
         creditNote
           ? 'border-violet-200 bg-violet-50 text-violet-700'
           : 'border-sky-200 bg-sky-50 text-sky-700',
@@ -132,6 +140,41 @@ function KindBadge({ kind }: { kind?: string | null }) {
       {creditNote ? 'Nota de crédito' : 'Comprobante'}
     </span>
   );
+}
+
+function ProductThumbnail({ url }: { url?: string | null }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  return (
+    <div className="daisy-avatar shrink-0">
+      <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-md border border-border bg-muted/30">
+        {url && failedUrl !== url
+          ? <img src={url} alt="" loading="lazy" className="h-full w-full object-contain" onError={() => setFailedUrl(url)} />
+          : <Package className="h-5 w-5 text-muted-foreground" aria-label="Sin imagen" />}
+      </div>
+    </div>
+  );
+}
+
+function ProductLine({ item }: { item: JobItem }) {
+  return (
+    <div className="flex min-h-11 items-start gap-2.5">
+      <ProductThumbnail url={item.imageUrl} />
+      <div className="min-w-0 flex-1">
+        <p className="line-clamp-2 break-words text-sm font-medium text-foreground" title={item.title}>{item.title}</p>
+        <p className="mt-0.5 break-all text-xs text-muted-foreground">{item.sku || 'Sin SKU'} · {item.quantity} u.</p>
+      </div>
+    </div>
+  );
+}
+
+function DiscountDate({ value }: { value: string | null }) {
+  const parts = discountDateParts(value);
+  return parts ? (
+    <time dateTime={value || undefined} className="block min-h-11 text-sm leading-5">
+      <span className="block whitespace-nowrap font-medium text-foreground">{parts.date}</span>
+      <span className="block text-xs text-muted-foreground">{parts.time}</span>
+    </time>
+  ) : <span className="block min-h-11 text-muted-foreground">—</span>;
 }
 
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
@@ -348,6 +391,7 @@ function fullDateTime(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.replace('T', ' ').slice(0, 19);
   return date.toLocaleString('es-PE', {
+    timeZone: 'America/Lima',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -387,6 +431,12 @@ export default function AutoEmision() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<string>('all');
   const [configOpen, setConfigOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const selectedJob = jobs.find((job) => job.id === selectedJobId);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewResult, setReviewResult] = useState<{ jobId: number; state: string; message: string; error: boolean } | null>(null);
+  const [documentPreview, setDocumentPreview] = useState<{ jobId: number; html: string } | null>(null);
+  const activeReview = reviewResult?.jobId === selectedJobId ? reviewResult : null;
   const [webhookCompanyId, setWebhookCompanyId] = useState<number | null>(null);
   const [webhooks, setWebhooks] = useState<FalabellaWebhook[]>([]);
   const [webhooksLoading, setWebhooksLoading] = useState(false);
@@ -431,6 +481,46 @@ export default function AutoEmision() {
     timer.current = window.setInterval(loadLogs, 3000);
     return () => { if (timer.current) window.clearInterval(timer.current); };
   }, [loadLogs]);
+
+  const verifySelectedDocument = async () => {
+    if (!selectedJob?.document_id || reviewBusy) return;
+    const job = selectedJob;
+    const documentId = selectedJob.document_id;
+    setReviewBusy(true);
+    setReviewResult(null);
+    try {
+      const result = job.document_type === 'credit_note'
+        ? await api.refreshCreditNoteStatus(documentId)
+        : job.document_type === 'factura'
+          ? await api.refreshFacturaStatus(documentId)
+          : await api.refreshBoletaStatus(documentId);
+      setReviewResult({ jobId: job.id, state: result.estadoSunat || job.document_status || '', message: result.message || 'Consulta terminada.', error: result.success === false });
+      await loadLogs();
+    } catch (error) {
+      setReviewResult({ jobId: job.id, state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo consultar SUNAT. Vuelve a intentar.', error: true });
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const previewSelectedDocument = async () => {
+    if (!selectedJob?.document_id || reviewBusy) return;
+    const job = selectedJob;
+    const documentId = selectedJob.document_id;
+    setReviewBusy(true);
+    try {
+      const result = job.document_type === 'credit_note'
+        ? await api.previewCreditNoteHtml(documentId)
+        : job.document_type === 'factura'
+          ? await api.previewAcceptedFacturaHtml(documentId)
+          : await api.previewAcceptedBoletaHtml(documentId);
+      setDocumentPreview({ jobId: job.id, html: typeof result === 'string' ? result : result.html || '' });
+    } catch (error) {
+      setReviewResult({ jobId: job.id, state: job.document_status || '', message: error instanceof Error ? error.message : 'No se pudo abrir el comprobante.', error: true });
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   const setEnabled = async (id: number, enabled: boolean) => {
     const flip = (val: boolean) => setConfig((prev) => prev
@@ -610,9 +700,14 @@ export default function AutoEmision() {
   };
 
   const retryJob = async (id: number) => {
-    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, status: 'pending', last_error: null, alerted_at: null, attempts: 0 } : j)));
-    try { await api.autoEmitRetryJob(id); } catch { /* noop */ }
-    await Promise.all([loadLogs(), loadConfig()]);
+    try {
+      const result = await api.autoEmitRetryJob(id);
+      if (!result) throw new Error('El proceso no admite otro intento. Verifica el documento en SUNAT.');
+      await Promise.all([loadLogs(), loadConfig()]);
+    } catch (error) {
+      setSelectedJobId(id);
+      setReviewResult({ jobId: id, state: jobs.find((job) => job.id === id)?.document_status || '', message: error instanceof Error ? error.message : 'No se pudo continuar el proceso.', error: true });
+    }
   };
 
   const copyWebhook = async () => {
@@ -806,45 +901,77 @@ export default function AutoEmision() {
             if (jobs.length === 0) return <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay emisiones automáticas.</p>;
             if (shownJobs.length === 0) return <p className="p-10 text-center text-sm text-muted-foreground">Nada en este filtro.</p>;
             return (
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <table className="daisy-table block w-full table-fixed text-sm md:table">
+                <colgroup className="hidden md:table-column-group">
+                  <col className="w-[26%] md:w-[18%]" />
+                  <col className="hidden w-[24%] md:table-column" />
+                  <col className="w-auto" />
+                  <col className="w-[26%] md:w-[16%]" />
+                  <col className="hidden w-[16%] md:table-column" />
+                </colgroup>
+                <thead className="sticky top-0 z-10 hidden bg-card text-left text-xs text-muted-foreground md:table-header-group">
                   <tr className="border-b border-border">
-                    <th className="px-5 py-2.5 font-medium">Empresa</th>
-                    <th className="px-5 py-2.5 font-medium">Orden</th>
-                    <th className="px-5 py-2.5 font-medium">Estado</th>
-                    <th className="px-5 py-2.5 font-medium">Tipo</th>
-                    <th className="px-5 py-2.5 font-medium">Origen</th>
-                    <th className="px-5 py-2.5 font-medium">Detalle</th>
-                    <th className="px-5 py-2.5 font-medium">Cuándo</th>
+                    <th className="px-3 py-3 font-medium">Empresa / Orden</th>
+                    <th className="hidden px-3 py-3 font-medium md:table-cell">Productos</th>
+                    <th className="px-3 py-3 font-medium">Detalle</th>
+                    <th className="px-3 py-3 font-medium">Estado / Acción</th>
+                    <th className="hidden px-3 py-3 font-medium md:table-cell">Fecha</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="block md:table-row-group">
                   {shownJobs.map((j) => {
                     const failed = j.status === 'failed';
+                    const review = emissionNeedsReview(j);
+                    const summary = emissionSummary(j);
                     return (
-                      <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
-                        <td className="px-5 py-2.5 text-foreground">{j.company}</td>
-                        <td className="px-5 py-2.5"><SearchableOrderNumber job={j} /></td>
-                        <td className="px-5 py-2.5"><StatusBadge status={j.status} /></td>
-                        <td className="px-5 py-2.5"><KindBadge kind={j.kind} /></td>
-                        <td className="px-5 py-2.5"><SourceBadge source={j.source} /></td>
-                        <td className="px-5 py-2.5 text-xs">
-                           {j.document_context && <span className="block font-medium text-foreground">{j.document_context}</span>}
-                           {!j.document_context && j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
-                          <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={j.last_error || undefined}>
-                            {j.last_error || j.result || (j.current_step ? `Etapa: ${j.current_step}` : <span className="opacity-50">—</span>)}
-                          </span>
-                           {j.attempts > 0 && <span className="ml-1 text-muted-foreground opacity-60">({j.attempts} ejecuciones; máximo automático 6)</span>}
-                          {j.alerted_at && <span className="ml-1 text-amber-700">Aviso enviado</span>}
-                           {(failed || j.status === 'skipped') && j.attempts < 6 && (
-                            <button onClick={() => retryJob(j.id)} title="Volver a intentar" className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground">
-                              <RotateCcw className="h-3 w-3" /> Reintentar
-                            </button>
-                           )}
-                           {failed && j.attempts >= 6 && <span className="ml-2 text-amber-700">No se reintentará automáticamente: requiere revisión.</span>}
+                      <tr key={j.id} className="grid grid-cols-[minmax(0,1fr)_auto] border-b border-border/50 align-top last:border-0 hover:bg-accent/30 md:table-row">
+                        <td className="col-span-2 block px-3 py-3.5 md:table-cell">
+                          <p className="line-clamp-2 font-medium text-foreground" title={j.company}>{shortName(j.company)}</p>
+                          <div className="mt-1 min-w-0 break-all"><SearchableOrderNumber job={j} /></div>
                         </td>
-                        <td className="px-5 py-2.5 whitespace-nowrap text-xs text-muted-foreground" title={timeAgo(j.updated_at)}>
-                          <span className="block text-foreground">{fullDateTime(j.updated_at)}</span>
+                        <td className="hidden px-3 py-3.5 md:table-cell">
+                          {j.items?.length ? (
+                            <div className="space-y-2">
+                              {j.items.map((item) => (
+<ProductLine key={item.id} item={item} />
+                              ))}
+                            </div>
+                          ) : <span className="text-xs text-muted-foreground">Productos no sincronizados</span>}
+                        </td>
+                        <td className="block min-w-0 px-3 py-3.5 text-sm leading-relaxed md:table-cell">
+                          <div className="mb-3 space-y-2 md:hidden">
+                            {j.items?.length ? j.items.map((item) => (
+                              <div key={item.id}>
+                                <ProductLine item={item} />
+                                <div className="mt-1"><DiscountDate value={item.discountedAt} /></div>
+                              </div>
+                            )) : <p className="text-xs text-muted-foreground">Productos no sincronizados</p>}
+                          </div>
+                          <div className="mb-2 flex flex-wrap gap-1.5"><KindBadge kind={j.kind} /><SourceBadge source={j.source} /></div>
+                          {(j.document_context || j.boleta_numero) && <p className="break-words font-medium text-foreground">{j.document_context || j.boleta_numero}</p>}
+                          <p className={cn('break-words', failed ? 'text-destructive' : 'text-muted-foreground')}>
+                            {summary || (j.current_step ? `Etapa: ${j.current_step}` : 'Sin detalle')}
+                          </p>
+                          {review && <p className="mt-1 text-xs text-muted-foreground">Emisión detenida. Abre la revisión para verificar.</p>}
+                          {j.alerted_at && <p className="mt-1 text-xs text-muted-foreground">Aviso enviado</p>}
+                        </td>
+                        <td className="block px-3 py-3.5 md:table-cell">
+                          <StatusBadge status={j.status} review={review} />
+                          <div className="mt-2 flex flex-col items-start gap-1.5">
+                            <button type="button" onClick={() => { setSelectedJobId(j.id); setReviewResult(null); setDocumentPreview(null); }} className="daisy-btn daisy-btn-xs daisy-btn-outline h-auto min-h-7 whitespace-normal border-border bg-transparent px-2 py-1 text-xs text-foreground">
+                              {review ? 'Revisar caso' : 'Ver detalle'}
+                            </button>
+                            {(failed || j.status === 'skipped') && !review && j.attempts < 6 && (
+                              <button type="button" onClick={() => retryJob(j.id)} className="daisy-btn daisy-btn-xs daisy-btn-ghost h-auto min-h-7 px-2 py-1 text-xs text-muted-foreground">
+                                <RotateCcw className="h-3 w-3 shrink-0" /> Reintentar
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="hidden px-3 py-3.5 text-xs text-muted-foreground md:table-cell">
+                          {j.items?.length ? <div className="space-y-2">{j.items.map((item) => (
+                            <DiscountDate key={item.id} value={item.discountedAt} />
+                          ))}</div> : '—'}
                         </td>
                       </tr>
                     );
@@ -855,6 +982,71 @@ export default function AutoEmision() {
           })()}
         </div>
       </div>
+
+      <Dialog open={!!selectedJob} onOpenChange={(open) => { if (!open) setSelectedJobId(null); }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{selectedJob && emissionNeedsReview(selectedJob) ? 'Revisar emisión' : 'Detalle de emisión'}</DialogTitle>
+          </DialogHeader>
+          {selectedJob && (
+            <div className="space-y-5">
+              <div>
+                <p className="text-base font-semibold">{selectedJob.document_context || selectedJob.boleta_numero || `Orden ${selectedJob.order_number}`}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{shortName(selectedJob.company)} · Orden {selectedJob.order_number}</p>
+              </div>
+              {emissionNeedsReview(selectedJob) && (
+                <div className="space-y-2 border-l-2 border-amber-400 pl-4">
+                  <p className="font-medium">La emisión automática está detenida.</p>
+                  <p>Verifica en SUNAT el documento existente. Si confirma que corresponde a esta emisión, se recuperará su estado y CDR.</p>
+                  <p className="text-muted-foreground">La consulta no crea ni reenvía comprobantes.</p>
+                </div>
+              )}
+              {selectedJob.document_id ? (
+                <div className="space-y-4">
+                  <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <div><dt className="text-xs text-muted-foreground">Estado del documento</dt><dd className="mt-1 font-medium">{(activeReview?.state || selectedJob.document_status || 'Sin confirmar').replace('REVISION_MANUAL', 'Revisión manual').replace(/_/g, ' ')}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Fecha de emisión</dt><dd className="mt-1 font-medium">{selectedJob.document_date || 'Sin fecha'}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Importe</dt><dd className="mt-1 font-medium">{money(selectedJob.document_total)}</dd></div>
+                  </dl>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" disabled={reviewBusy} onClick={verifySelectedDocument} className="daisy-btn daisy-btn-sm daisy-btn-outline border-border bg-transparent text-foreground">
+                      {reviewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Verificar en SUNAT
+                    </button>
+                    {selectedJob.status === 'failed' && (activeReview?.state || selectedJob.document_status) === 'ACEPTADO' && !activeReview?.error && (
+                      <button type="button" disabled={reviewBusy} onClick={async () => {
+                        const job = selectedJob;
+                        setReviewBusy(true);
+                        try {
+                          await api.autoEmitResolveReviewedJob(job.id);
+                          setReviewResult({ jobId: job.id, state: 'ACEPTADO', message: 'Revisión cerrada. El documento ya está aceptado por SUNAT.', error: false });
+                          await Promise.all([loadLogs(), loadConfig()]);
+                        } catch (error) {
+                          setReviewResult({ jobId: job.id, state: 'ACEPTADO', message: error instanceof Error ? error.message : 'No se pudo cerrar la revisión.', error: true });
+                        } finally { setReviewBusy(false); }
+                      }} className="daisy-btn daisy-btn-sm daisy-btn-outline border-border bg-transparent text-foreground">Cerrar revisión</button>
+                    )}
+                    <button type="button" disabled={reviewBusy} onClick={previewSelectedDocument} className="daisy-btn daisy-btn-sm daisy-btn-ghost text-foreground">Ver comprobante</button>
+                  </div>
+                  {activeReview && (
+                    <div role="status" className={cn('border-l-2 pl-4', activeReview.error ? 'border-destructive' : 'border-border')}>
+                      <p className="font-medium">{activeReview.error ? 'No se pudo completar la consulta' : activeReview.state === 'ACEPTADO' ? 'Documento confirmado en SUNAT' : 'Resultado de la revisión'}</p>
+                      <p className="mt-1 break-words text-sm text-muted-foreground">{activeReview.message}</p>
+                      {activeReview.state === 'REVISION_MANUAL' && <p className="mt-2 text-sm">SUNAT aún no confirma que el CDR corresponde a este documento. No se puede dar por resuelto ni emitir otro.</p>}
+                      {activeReview.state === 'ACEPTADO' && selectedJob.status === 'failed' && <p className="mt-2 text-sm">El documento está aceptado. Pulsa Cerrar revisión para completar el caso sin volver a emitir.</p>}
+                    </div>
+                  )}
+                  {documentPreview?.jobId === selectedJob.id && <iframe title="Comprobante de la emisión" sandbox="" srcDoc={documentPreview.html} className="h-[480px] w-full rounded-md border border-border bg-white" />}
+                </div>
+              ) : <p className="text-sm text-muted-foreground">No hay un documento vinculado para consultar. Revisa la orden {selectedJob.order_number} y su registro técnico.</p>}
+              <details className="border-t border-border pt-4">
+                <summary className="cursor-pointer text-sm font-medium">Registro técnico</summary>
+                <p className="mt-3 whitespace-pre-wrap break-words text-sm text-muted-foreground">{selectedJob.last_error || selectedJob.result || selectedJob.current_step || 'Sin registro adicional'}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{selectedJob.attempts} ejecuciones registradas · {fullDateTime(selectedJob.updated_at)}</p>
+              </details>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Configuración (modal con tabs) */}
       {/* sm:max-w-* pisa el max-w-md del Dialog base; hace falta el prefijo sm: */}
