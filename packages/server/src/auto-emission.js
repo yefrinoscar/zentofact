@@ -5,6 +5,7 @@
 // Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
+import { MARKETPLACE_RAW_IMAGE_SQL } from './catalog/item-image.js';
 import core from '@zentofact/core';
 const {
   getCompany,
@@ -491,6 +492,34 @@ export async function retryJob(id) {
   return r.rows[0] || null;
 }
 
+export async function resolveReviewedJob(id) {
+  const jobId = Number(id);
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('Emisión inválida.');
+  const result = await pool.query(
+    `update emission_jobs j
+       set status='done', last_error=null, current_step=null, next_attempt_at=null,
+           result='Revisión cerrada: documento ' || j.boleta_numero || ' aceptado por SUNAT',
+           updated_at=now()
+     where j.id=$1 and j.status='failed'
+       and (case when j.kind='credit_note' then exists (
+         select 1 from credit_notes d where d.company_id=j.company_id
+           and d.numero_completo=j.boleta_numero and d.estado_sunat='ACEPTADO'
+       ) else exists (
+         select 1 from boletas d where d.company_id=j.company_id
+           and d.numero_completo=j.boleta_numero and d.estado_sunat='ACEPTADO'
+       ) or exists (
+         select 1 from facturas d where d.company_id=j.company_id
+           and d.numero_completo=j.boleta_numero and d.estado_sunat='ACEPTADO'
+       ) end)
+     returning j.id, j.status, j.result`,
+    [jobId],
+  );
+  if (result.rows[0]) return result.rows[0];
+  const existing = (await pool.query('select id, status, result from emission_jobs where id=$1', [jobId])).rows[0];
+  if (existing?.status === 'done') return existing;
+  throw new Error('No se puede cerrar la revisión: el documento debe estar aceptado por SUNAT y la emisión detenida.');
+}
+
 // ── Config por empresa (qué empresas emiten automáticamente) ──
 export async function getConfig() {
   const companies = await listCompanies();
@@ -597,31 +626,101 @@ async function falabellaDocumentPolicy(companyId) {
 // Últimos jobs y eventos (para el panel).
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
-    `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
+    `with recent_jobs as (
+       select * from emission_jobs order by updated_at desc limit $1
+     )
+     select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
              j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.alerted_at, j.created_at, j.updated_at,
              cn.numero_completo as credit_note_number, cn.num_doc_afectado as affected_document_number,
+             case when j.kind='credit_note' then cn.fecha_emision
+                  else coalesce(b.fecha_emision, f.fecha_emision) end as document_date,
+             case when j.kind='credit_note' then cn.id else coalesce(b.id, f.id) end as document_id,
+             case when j.kind='credit_note' then 'credit_note' when f.id is not null then 'factura' else 'boleta' end as document_type,
+             case when j.kind='credit_note' then cn.estado_sunat else coalesce(b.estado_sunat, f.estado_sunat) end as document_status,
+             case when j.kind='credit_note' then cn.mto_imp_venta else coalesce(b.mto_imp_venta, f.mto_imp_venta) end as document_total,
+             coalesce(item_summary.items, document_items.items, '[]'::jsonb) as items,
              case when cn.id is not null then 'Nota de crédito ' || cn.numero_completo || ' afecta ' || cn.num_doc_afectado
                   when b.numero_completo is not null then 'Boleta ' || b.numero_completo
                   when f.numero_completo is not null then 'Factura ' || f.numero_completo
                   else null end as document_context
-     from emission_jobs j left join companies c on c.id=j.company_id
+     from recent_jobs j left join companies c on c.id=j.company_id
       left join lateral (
-        select order_number, numero_completo from boletas
+        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles from boletas
        where company_id=j.company_id and numero_completo=j.boleta_numero
+         and coalesce(j.kind, 'document')<>'credit_note'
        order by id desc limit 1
      ) b on true
       left join lateral (
-        select order_number, numero_completo from facturas
+        select id, order_number, numero_completo, fecha_emision, estado_sunat, mto_imp_venta, detalles from facturas
        where company_id=j.company_id and numero_completo=j.boleta_numero
+         and coalesce(j.kind, 'document')<>'credit_note'
        order by id desc limit 1
       ) f on true
       left join lateral (
-        select id, numero_completo, num_doc_afectado
+        select id, numero_completo, num_doc_afectado, fecha_emision, estado_sunat, mto_imp_venta, detalles
         from credit_notes
         where company_id=j.company_id and numero_completo=j.boleta_numero
+          and j.kind='credit_note'
         order by id desc limit 1
       ) cn on true
-     order by j.updated_at desc limit $1`, [Math.min(limit, 200)]);
+      left join lateral (
+        select o.id from orders o
+        join order_channel_accounts account on account.id=o.channel_account_id
+        join order_channels channel on channel.id=account.channel_id and channel.code='falabella'
+        where o.company_id=j.company_id
+          and (o.external_order_id=j.order_id
+            or o.external_order_number=coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number))
+        order by (o.external_order_id=j.order_id) desc nulls last, o.id desc
+        limit 1
+      ) order_row on true
+      left join lateral (
+        select jsonb_agg(jsonb_build_object(
+          'id', oi.id,
+          'title', coalesce(nullif(product.name, ''), nullif(oi.description, ''), 'Producto sin nombre'),
+          'sku', coalesce(nullif(oi.main_sku, ''), nullif(product.main_sku, ''), oi.sku),
+          'quantity', oi.quantity,
+          'imageUrl', coalesce(
+            nullif(product.image_url, ''),
+            nullif(listing.metadata->'images'->>0, ''),
+            nullif(listing.metadata->'images'->0->>'Url', ''),
+            nullif(listing.metadata->'images'->0->>'url', ''),
+            nullif(listing.metadata->>'imageUrl', ''),
+            ${MARKETPLACE_RAW_IMAGE_SQL},
+            case when coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'
+              then 'https://media.falabella.com/falabellaPE/'
+                || coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) || '_01'
+            end
+          ),
+          'stockState', oi.stock_state,
+          'discountedAt', movement.discounted_at
+        ) order by oi.id) as items
+        from order_items oi
+        left join products product on product.id=oi.product_id
+        left join product_listings listing on listing.id=oi.listing_id
+        left join lateral (
+          select max(m.effective_at) as discounted_at
+          from inventory_movements m
+          where m.order_item_id=oi.id
+            and m.movement_type in ('sale', 'sale_adjust') and m.quantity_delta<0
+        ) movement on true
+        where oi.order_id=order_row.id
+      ) item_summary on true
+      left join lateral (
+        select jsonb_agg(jsonb_build_object(
+          'id', line.ordinality,
+          'title', coalesce(nullif(line.item->>'descripcion', ''), nullif(line.item->>'description', ''), 'Producto sin nombre'),
+          'sku', coalesce(nullif(line.item->>'codProducto', ''), nullif(line.item->>'sku', '')),
+          'quantity', coalesce(line.item->'cantidad', line.item->'quantity', '0'::jsonb),
+          'imageUrl', coalesce(line.item->>'imageUrl', line.item->>'imagen'),
+          'stockState', 'none', 'discountedAt', null
+        ) order by line.ordinality) as items
+        from jsonb_array_elements(
+          case when jsonb_typeof(coalesce(cn.detalles, b.detalles, f.detalles))='array'
+            then coalesce(cn.detalles, b.detalles, f.detalles) else '[]'::jsonb end
+        ) with ordinality as line(item, ordinality)
+        where item_summary.items is null
+      ) document_items on true
+     order by j.updated_at desc`, [Math.min(limit, 200)]);
   return r.rows;
 }
 
