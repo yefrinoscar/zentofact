@@ -182,7 +182,7 @@ export default function OrderDocumentPanel({
           <div className="flex flex-wrap gap-2">
             {canManage(active.kind) && (
               <>
-                {!["ACEPTADO", "REVISION_MANUAL", "ENVIANDO"].includes(
+                {!["ACEPTADO", "ENVIANDO"].includes(
                   active.status,
                 ) && (
                   <button
@@ -233,7 +233,7 @@ export default function OrderDocumentPanel({
           </div>
           {active.status === "REVISION_MANUAL" && (
             <p className="text-xs text-muted-foreground">
-              Requiere revisión manual antes de emitir otro comprobante.
+              Al volver a emitir se consulta SUNAT. Si el número pertenece a otro cliente, se usa el siguiente correlativo libre.
             </p>
           )}
         </div>

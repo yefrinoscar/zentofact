@@ -181,8 +181,9 @@ const HUMAN_ONLY_STATES = ['REVISION_MANUAL', 'ANULADO', 'REEMPLAZADO'];
 
 /**
  * Decide qué hace un job de comprobante cuando la orden ya tiene un documento.
- * Un documento no aceptado nunca se reemite a ciegas: se reconcilia con SUNAT
- * (reEmitBoleta/reEmitFactura), salvo en simulación o si espera a una persona.
+ * Un documento no aceptado se reconcilia con SUNAT antes de enviar. También
+ * se revisan los bloqueos históricos por colisión; SUNAT debe confirmar que
+ * el número pertenece a otro cliente para permitir un reemplazo.
  */
 export function decideExistingDocumentJob({ document, tipo, dryRun = false }) {
   const numero = document?.numeroCompleto || '';
@@ -190,7 +191,7 @@ export function decideExistingDocumentJob({ document, tipo, dryRun = false }) {
   if (estado === 'ACEPTADO') {
     return { action: 'done', result: `ya tenía ${tipo} ${numero}`, boletaNumero: numero };
   }
-  if (HUMAN_ONLY_STATES.includes(estado)) {
+  if (['ANULADO', 'REEMPLAZADO'].includes(estado)) {
     return {
       action: 'fail',
       result: `${tipo} ${numero} está ${estado}: requiere revisión manual antes de emitir otro comprobante`,

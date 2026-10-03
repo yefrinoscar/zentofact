@@ -82,7 +82,7 @@ async function checkWithSunat(adapter: ReemissionAdapter, doc: any): Promise<Sta
   const sunat = new SunatService(companyConfig(company));
   const status = await sunat.getStatusCdr(company.ruc, doc.tipoDocumento || adapter.tipoDocumento, doc.serie, doc.correlativo);
   const outcome = classifyStatusCdr(status);
-  const decision = decideReemission({
+  let decision = decideReemission({
     outcome,
     local: {
       numeroCompleto: doc.numeroCompleto,
@@ -93,6 +93,9 @@ async function checkWithSunat(adapter: ReemissionAdapter, doc: any): Promise<Sta
     },
     trace: readReconciliationTrace(doc.datosAdicionales),
   });
+  if (adapter.tipoDocumento === '07' && decision.collision) {
+    decision = { action: 'MANUAL_REVIEW', estadoSunat: 'REVISION_MANUAL', reason: 'El número de la nota de crédito pertenece a otro cliente. Requiere revisión manual.' };
+  }
   return { ruc: company.ruc, doc, status, outcome, decision };
 }
 
@@ -160,9 +163,26 @@ async function persistCheck(adapter: ReemissionAdapter, check: StatusCheck, sour
   return decision;
 }
 
-async function issueReplacement(adapter: ReemissionAdapter, doc: any) {
+async function nextAvailableCorrelative(adapter: ReemissionAdapter, doc: any): Promise<string> {
+  const company = (await db.select().from(companies).where(eq(companies.id, doc.companyId)).limit(1))[0];
+  if (!company) throw new Error('Empresa no encontrada');
+  const sunat = new SunatService(companyConfig(company));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const next = await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, true);
+    const outcome = classifyStatusCdr(await sunat.getStatusCdr(company.ruc, adapter.tipoDocumento, doc.serie, next));
+    if (outcome.kind === 'NOT_FOUND') return next;
+    if (!['ACCEPTED', 'REJECTED', 'VOIDED'].includes(outcome.kind)) {
+      throw new Error(`No se pudo confirmar si ${doc.serie}-${next} está libre en SUNAT: ${outcome.message}`);
+    }
+  }
+  throw new Error('SUNAT tiene ocupados los siguientes 100 correlativos. Vuelve a intentar para continuar la búsqueda.');
+}
+
+async function issueReplacement(adapter: ReemissionAdapter, doc: any, collision = false) {
   if (adapter.tipoDocumento === '07') throw new Error('Las notas de crédito no se reemplazan con otro número; se emiten desde su comprobante afectado.');
-  const nextCorrelativo = await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, true);
+  const nextCorrelativo = collision
+    ? await nextAvailableCorrelative(adapter, doc)
+    : await getNextCorrelative(doc.branchId, adapter.tipoDocumento, doc.serie, true);
   const numeroCompleto = `${doc.serie}-${nextCorrelativo}`;
   const issueDate = resolveIssueDate(doc.fechaEmision, adapter.tipoDocumento as '01' | '03');
   const trace = readReconciliationTrace(doc.datosAdicionales);
@@ -170,7 +190,7 @@ async function issueReplacement(adapter: ReemissionAdapter, doc: any) {
     resendCount: 0,
     newNumberCount: trace.newNumberCount + 1,
     lastDecision: 'ISSUE_NEW_NUMBER',
-    lastReason: `Reemplaza a ${doc.numeroCompleto}, rechazado por SUNAT.`,
+    lastReason: `Reemplaza a ${doc.numeroCompleto}, ${collision ? 'ocupado por otro cliente' : 'rechazado por SUNAT'}.`,
     checkedAt: new Date().toISOString(),
   });
   const table = adapter.table as any;
@@ -228,6 +248,7 @@ function closedResult(adapter: ReemissionAdapter, doc: any) {
 /**
  * Reemite un comprobante no aceptado solo después de consultar SUNAT:
  * - aceptado y es nuestro: se marca ACEPTADO y se guarda el CDR;
+ * - aceptado para otro cliente: busca un correlativo libre y reemplaza;
  * - aceptado pero no se puede probar que sea nuestro: REVISION_MANUAL;
  * - no existe (respuesta explícita): se reenvía el mismo XML firmado;
  * - rechazado: se quema el número y se emite uno nuevo, con tope por pedido;
@@ -241,9 +262,14 @@ export async function reconcileAndReemit(adapter: ReemissionAdapter, id: number)
   return withDocumentLock(lockKey, async () => {
     // Releer dentro del lock: otro proceso pudo reemplazarlo o aceptarlo.
     const doc = await loadDocument(adapter, id);
-    if (CLOSED_STATES.includes(String(doc.estadoSunat || '').toUpperCase())) return closedResult(adapter, doc);
+    const state = String(doc.estadoSunat || '').toUpperCase();
+    // Los bloqueos históricos de ventas se consultan otra vez; solo evidencia
+    // nueva de otro cliente habilita un reemplazo. Las NC mantienen su bloqueo.
+    if (CLOSED_STATES.includes(state) && !(state === 'REVISION_MANUAL' && adapter.tipoDocumento !== '07')) return closedResult(adapter, doc);
 
     const check = await checkWithSunat(adapter, doc);
+    if (state === 'REVISION_MANUAL' && check.decision.action !== 'MARK_ACCEPTED'
+      && !(check.decision.action === 'ISSUE_NEW_NUMBER' && check.decision.collision)) return closedResult(adapter, doc);
     const decision = await persistCheck(adapter, check, 'SUNAT_GET_STATUS_CDR_BEFORE_REEMIT');
     const base = { documentId: doc.id, numeroCompleto: doc.numeroCompleto, decision: decision.action };
 
@@ -270,7 +296,7 @@ export async function reconcileAndReemit(adapter: ReemissionAdapter, id: number)
           await adapter.onDefinitiveRejection(doc);
           return { ...base, success: false, rejected: true, error_code: 'SUNAT_REJECTED', message: `SUNAT rechazó la ${adapter.label} ${doc.numeroCompleto}; se descartó y puede emitirse otra. ${decision.reason}` };
         }
-        const replacement = await issueReplacement(adapter, doc);
+        const replacement = await issueReplacement(adapter, doc, decision.collision);
         const sent = await adapter.send(replacement.id);
         return {
           ...sent,
