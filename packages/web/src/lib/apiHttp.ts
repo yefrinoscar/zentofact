@@ -805,6 +805,7 @@ const apiHttp = {
   autoEmitSetAlertEmails: (emails: string | string[]) => req('/auto-emit/alert-emails', { method: 'POST', body: JSON.stringify({ emails }) }),
   autoEmitSetDryRun: (dryRun: boolean) => req('/auto-emit/dry-run', { method: 'POST', body: JSON.stringify({ dryRun }) }),
   autoEmitRetryJob: (id: number) => req(`/auto-emit/jobs/${id}/retry`, { method: 'POST' }),
+  autoEmitResolveReviewedJob: (id: number) => req(`/auto-emit/jobs/${id}/resolve`, { method: 'POST' }),
   autoEmitOrderPreview: (id: number) => req(`/auto-emit/jobs/${id}/order-preview`),
   autoEmitGetWebhooks: (companyId: number, ids?: string[]) => req(`/auto-emit/webhooks/${companyId}${qs({ ids: ids?.join(',') })}`),
   /** Crea webhook en Falabella; el servidor arma la URL con secret por empresa (no se envía callback del cliente). */
