@@ -15,6 +15,20 @@ import {
 
 const LISTEN_FROM = '2026-09-03T17:00:00.000Z';
 
+test('la incidencia reportada es warning y conserva las unidades sin stock sin mostrar el error viejo', () => {
+  const job = {
+    status: 'warning', attempts: 3, applied_units: 7, insufficient_items: 3,
+    order_status: 'confirmed', fulfillment_status: 'shipped',
+    last_error: 'El producto maestro no tiene stock disponible.',
+    result: { incident: { pendingUnits: 3, note: 'Ticket enviado' } },
+  };
+  assert.equal(visibleStockJobStatus(job, LISTEN_FROM), 'warning');
+  assert.equal(stockJobFilterBucket(job, LISTEN_FROM), 'warning');
+  assert.equal(shouldShowStockJobAttempts(job), false);
+  assert.equal(stockJobDetail(job, LISTEN_FROM), '3 u sin stock · Ticket enviado. Sin reintentos automáticos.');
+  assert.equal(visibleStockJobStatus({ ...job, order_status: 'cancelled' }), 'cancelled');
+});
+
 test('una venta anterior al corte no aparece como descontada', () => {
   const job = {
     status: 'done',

@@ -44,6 +44,7 @@ class InventoryDb {
     this.listings = [];
     this.queries = [];
     this.nextMovementId = 1;
+    this.orderMetadata = {};
   }
 
   async query(sql, params = []) {
@@ -119,6 +120,9 @@ class InventoryDb {
       return { rows: [] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
+    if (compact.startsWith('select id, metadata from orders')) {
+      return { rows: [{ id: params[0], metadata: this.orderMetadata }] };
+    }
     if (compact.includes('from product_listings l') && compact.includes('l.seller_sku=$3')) {
       const matches = this.listings.filter((listing) => (
         listing.channel_code === params[0] && listing.company_id === params[1]
@@ -467,6 +471,40 @@ test('re-sync idéntico no crea movement ni reescribe cantidades', async () => {
   assert.equal(db.movements.size, 0);
   assert.equal(db.items.get(101).stock_revision, 1);
   assert.equal(db.queries.slice(before).some(({ sql }) => sql.startsWith('update order_items')), false);
+});
+
+test('una incidencia reportada suspende descuentos y reservas sin alterar las líneas aplicadas', async () => {
+  for (const fulfillment of ['pending', 'ready_to_ship', 'shipped']) {
+    const db = new InventoryDb(10);
+    db.orderMetadata = { stockIncident: { status: 'reported', note: 'Ticket enviado' } };
+    const applied = item({ product_id: 5, stock_state: 'applied', stock_applied_quantity: 1, quantity: 1, stock_revision: 1 });
+    const shortage = item({ id: 102, product_id: 5, stock_state: 'skipped_insufficient', quantity: 1 });
+    db.items.set(101, applied);
+    db.items.set(102, shortage);
+    const result = await stockPhase(phaseInput(db, [applied, shortage], {
+      existing: { fulfillment_status: fulfillment },
+      persisted: { fulfillment_status: fulfillment },
+    }));
+    assert.equal(db.quantity, 10);
+    assert.equal(db.reserved, 0);
+    assert.equal(db.movements.size, 0);
+    assert.equal(result.applied, 0);
+    assert.equal(applied.stock_applied_quantity, 1);
+    assert.equal(shortage.stock_state, 'skipped_insufficient');
+  }
+});
+
+test('una cancelación real sigue reintegrando stock aunque exista una incidencia reportada', async () => {
+  const db = new InventoryDb(7);
+  db.orderMetadata = { stockIncident: { status: 'reported' } };
+  db.items.set(101, item({ product_id: 5, stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1 }));
+  const result = await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'shipped' },
+    persisted: { order_status: 'cancelled', fulfillment_status: 'cancelled' },
+  }));
+  assert.equal(result.reversed, 1);
+  assert.equal(db.quantity, 9);
+  assert.equal(db.items.get(101).stock_state, 'reversed');
 });
 
 test('líneas históricas hidratadas para ventas nunca aplican stock retroactivo', async () => {

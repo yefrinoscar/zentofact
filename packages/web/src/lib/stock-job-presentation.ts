@@ -48,7 +48,7 @@ function isReintegratedStockJob(job: StockJobForPresentation) {
     && count(job.applied_units) === 0;
 }
 
-const JOB_PIPELINE_STATUSES = new Set(['done', 'pending', 'processing', 'failed', 'skipped']);
+const JOB_PIPELINE_STATUSES = new Set(['done', 'pending', 'processing', 'failed', 'skipped', 'warning']);
 
 function text(value?: string | null) {
   return String(value || '').trim().toLowerCase();
@@ -150,6 +150,11 @@ export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: stri
   const skipped = count(result.skipped);
   const terminal = stockTerminalKind(job);
   if (terminal) return terminalDetail(terminal, reservedUnits, appliedUnits);
+  if (job.status === 'warning') {
+    const incident = result.incident as { note?: string; pendingUnits?: number } | undefined;
+    const units = count(incident?.pendingUnits);
+    return `${units} u sin stock · ${incident?.note || 'Incidencia reportada'}. Sin reintentos automáticos.`;
+  }
   if (job.last_error) return job.last_error;
   if (unmatched > 0) return `${unmatched} línea${unmatched === 1 ? '' : 's'} sin producto maestro`;
   if (insufficient > 0) return `${insufficient} línea${insufficient === 1 ? '' : 's'} sin stock disponible`;
