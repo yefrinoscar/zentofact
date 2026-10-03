@@ -19,6 +19,13 @@ const BLOCKED_REASONS = new Map([
   ['blocked_by_buyer', 'buyer'],
 ]);
 
+// Mercado Envíos 2 bloquea el envío directo hasta que el comprador escribe:
+// eso es "esperando al comprador", no una conversación bloqueada.
+const WAITING_BUYER_SUBSTATUSES = new Set([
+  'blocked_by_conversation_initiated_by_seller',
+  'blocked_by_conversation_initiated_by_seller_limited',
+]);
+
 function loadCore() {
   return import('@zentofact/core');
 }
@@ -116,6 +123,7 @@ function conversationBlock(order, conversationStatus) {
   }
   if (!conversationStatus || conversationStatus.status !== 'blocked') return null;
   const substatus = text(conversationStatus.substatus) || null;
+  if (substatus && WAITING_BUYER_SUBSTATUSES.has(substatus)) return null;
   return { reason: BLOCKED_REASONS.get(substatus) || 'other', substatus };
 }
 
