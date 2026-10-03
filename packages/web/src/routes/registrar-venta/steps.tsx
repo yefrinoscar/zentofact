@@ -1,3 +1,4 @@
+import { OrderRegistrationDatePicker } from '../../components/OrderRegistrationDatePicker';
 import { useState } from 'react';
 import {
   Check,
@@ -186,8 +187,8 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
       <div className="space-y-4">
       {view.isAdmin && (
         <FieldRow label="Fecha de registro" htmlFor="order-date">
-          <input id="order-date" type="date" className="input w-full" value={view.orderDate} onChange={(event) => { if (event.target.value) view.setOrderDate(event.target.value); }} />
-          <p className="mt-1.5 text-xs text-muted-foreground">Solo administradores. Cambiar esta fecha mueve la venta y sus productos a ese día en los reportes. Se pedirá confirmar dos veces al registrar.</p>
+          <OrderRegistrationDatePicker id="order-date" value={view.orderDate} onChange={view.setOrderDate} />
+          <p className="mt-1.5 text-xs text-muted-foreground">La venta aparecerá en ese día en los reportes. Cambiarla requiere dos confirmaciones.</p>
         </FieldRow>
       )}
       {view.showSalespersonSelector ? (
