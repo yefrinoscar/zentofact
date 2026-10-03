@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import OrderDocumentPanel from '../components/OrderDocumentPanel';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -58,11 +59,6 @@ import {
   sellerCellShowsPerson,
   MANAGED_ORDER_TABLE_COLUMNS,
 } from '../lib/managed-orders-presentation';
-import {
-  generateDocumentLabel,
-  generateDocumentPath,
-  pendingDocumentKind,
-} from '../lib/order-document';
 import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
@@ -587,13 +583,10 @@ export default function PedidosMulticanal() {
   const queryClient = useQueryClient();
   const { isAdmin } = usePermissions();
 
-  const goToGenerateDocument = useCallback((order: ManagedOrder) => {
-    const kind = pendingDocumentKind(order);
-    if (!kind) return;
-    navigate(generateDocumentPath(kind), {
-      state: { fromOrderId: order.id, fromOrder: order },
-    });
-  }, [navigate]);
+  const goToGenerateDocument = (order: ManagedOrder) => {
+    setDetailTab('summary');
+    void openDetail(order, 'summary');
+  };
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
@@ -604,6 +597,7 @@ export default function PedidosMulticanal() {
   const [successMessage, setSuccessMessage] = useState('');
   const [syncNote, setSyncNote] = useState('');
   const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [detailTab, setDetailTab] = useState('products');
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [ripleyLogistics, setRipleyLogistics] = useState<RipleyLogisticsOverview | null>(null);
@@ -765,7 +759,8 @@ export default function PedidosMulticanal() {
     }
   };
 
-  const openDetail = async (order: ManagedOrder) => {
+  const openDetail = async (order: ManagedOrder, tab = 'products') => {
+    setDetailTab(tab);
     setDetailOpen(true);
     setDetail(null);
     setRipleyLogistics(null);
@@ -1114,14 +1109,10 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
-              {pendingDocumentKind(row.original) && (
-                <>
-                  <DropdownMenuItem onClick={() => goToGenerateDocument(row.original)}>
-                    <FileText /> {generateDocumentLabel(pendingDocumentKind(row.original)!)}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                </>
-              )}
+              <DropdownMenuItem onClick={() => goToGenerateDocument(row.original)}>
+                <FileText /> Comprobante
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {isAdmin && row.original.channelCode === 'manual' && (
                 <>
                   <DropdownMenuItem onClick={() => void openEdit(row.original)}>
@@ -1297,8 +1288,8 @@ export default function PedidosMulticanal() {
                    </div>
                  </div>
                </SheetHeader>
-                 <Tabs key={detail.id} defaultValue="products" className="min-h-0 flex-1 gap-0 overflow-hidden">
-                 <TabsList aria-label="Secciones del pedido" className="h-16 w-full shrink-0 justify-start gap-1 border-b border-border px-6 py-2">
+                 <Tabs key={detail.id} value={detailTab} onValueChange={setDetailTab} className="min-h-0 flex-1 gap-0 overflow-hidden">
+                 <TabsList aria-label="Secciones del pedido" className="h-16 w-full shrink-0 justify-start gap-1 overflow-x-auto border-b border-border px-6 py-2">
                    <TabsTrigger value="summary" className="h-full flex-none rounded-xl px-4 text-sm text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground">
                      <PanelTop /> Resumen
                    </TabsTrigger>
@@ -1328,20 +1319,7 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
-                      <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
-                      {pendingDocumentKind(detail) && (
-                        <div className="py-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="cursor-pointer"
-                            onClick={() => goToGenerateDocument(detail)}
-                          >
-                            <FileText /> {generateDocumentLabel(pendingDocumentKind(detail)!)}
-                          </Button>
-                        </div>
-                      )}
+                      <DetailField icon={<FileText />} label="Comprobante" content={<button type="button" onClick={() => setDetailTab('summary')} aria-label="Ver comprobante del pedido">{documentBadge(detail)}</button>} />
                        <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
                         // Un solo cobro, el de la zona. Los kilómetros son referencia.
@@ -1448,20 +1426,7 @@ export default function PedidosMulticanal() {
                     </section>
                   )}
 
-                  {detail.documents.length > 0 && (
-                    <section className="border-t border-border px-5 py-5">
-                      <h3 className="mb-3 text-sm font-semibold">Comprobantes vinculados</h3>
-                      <div className="space-y-3">
-                        {detail.documents.map((document) => (
-                          <div key={document.id} className="flex items-center gap-3 text-sm">
-                            <FileText className="size-4 shrink-0 text-muted-foreground" />
-                            <span className="min-w-0 flex-1 truncate font-medium">{document.number || document.kind}</span>
-                            <span className="shrink-0 text-muted-foreground">{DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  <OrderDocumentPanel key={detail.id} order={detail} onUpdated={async () => setDetail(await api.getManagedOrder(detail.id))} />
                 </TabsContent>
 
                  <TabsContent value="products" className="min-h-0 overflow-y-auto px-6 py-5">

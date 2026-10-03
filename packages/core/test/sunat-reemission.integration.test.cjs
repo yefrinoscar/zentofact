@@ -256,6 +256,14 @@ describe('reconciliación con SUNAT antes de reemitir', { skip }, () => {
     assert.notEqual(sunat.sent[1].xml, sunat.sent[0].xml, 'el número nuevo tiene su propio XML');
   });
 
+  it('una boleta activa impide crear una factura para el mismo pedido', async () => {
+    const boleta = await createBoleta();
+    const row = await boletaRow(boleta.id);
+    const { createFactura } = require('../dist/services/factura.service.js');
+    await assert.rejects(createFactura({ company_id: row.company_id, branch_id: row.branch_id, order_number: boleta.orderNumber, serie: 'F001', fecha_emision: row.fecha_emision, metodo_envio: 'individual', client: { tipo_documento: '6', numero_documento: '20123456789', razon_social: 'CLIENTE PRUEBA' }, detalles: row.detalles }), /ya tiene/);
+    assert.equal((await pool.query('select count(*)::int as n from facturas where company_id=$1', [row.company_id])).rows[0].n, 0);
+  });
+
   it('rechazos repetidos agotan el tope de números nuevos y pasan a revisión manual', async () => {
     const boleta = await createBoleta();
     sunat.sendQueue.push(send.rejected());

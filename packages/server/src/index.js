@@ -62,6 +62,7 @@ const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
 const mercadoLibreChat = await import('./mercado-libre-chat.js');
 const orderManagement = await import('./order-management.js');
+const orderDocuments = await import('./order-documents.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
 const orderSyncSettings = await import('./order-sync-settings.js');
@@ -794,6 +795,21 @@ app.get('/order-management/orders/:id', async (c) => {
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });
+for (const action of ['emit', 'refresh', 'reissue', 'pdf', 'xml']) {
+  app.post(`/order-management/orders/:id/document/${action}`, async (c) => {
+    try {
+      const body = await c.req.json();
+      const order = await orderManagement.getOrder(Number(c.req.param('id')));
+      const ownerId = salespersonOnlyUserId(c);
+      if (!order || (ownerId && order.createdBy !== ownerId)) return c.json({ error: 'Pedido no encontrado.' }, 404);
+      const input = action === 'emit' ? await orderDocuments.prepareOrderEmission(order, core) : body;
+      if (!['factura', 'boleta'].includes(input.kind)) return fail(c, new Error('Tipo de comprobante inválido.'), 400);
+      const permission = input.kind === 'factura' ? 'facturas' : 'boletas';
+      if (!userHasPermission(c.get('user'), permission)) return c.json({ error: 'No tienes permiso para este comprobante.' }, 403);
+      return ok(c, await orderDocuments.actOnOrderDocument(order.id, action, input, c.get('user')?.id, core));
+    } catch (e) { return fail(c, e, 400); }
+  });
+}
 app.patch('/order-management/orders/:id/payment', async (c) => {
   try {
     const current = await orderManagement.getOrder(Number(c.req.param('id')));

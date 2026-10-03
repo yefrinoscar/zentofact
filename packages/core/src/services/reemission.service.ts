@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { boletas, clients, companies, creditNotes, facturas } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
@@ -198,6 +198,11 @@ async function issueReplacement(adapter: ReemissionAdapter, doc: any) {
       createdAt: ts,
       updatedAt: ts,
     }).returning({ id: table.id });
+    const column = adapter.documentTable === 'facturas' ? sql`factura_id` : sql`boleta_id`;
+    const kind = adapter.documentTable === 'facturas' ? 'factura' : 'boleta';
+    await tx.execute(sql`insert into order_documents (order_id, document_kind, ${column})
+      select order_id, document_kind, ${inserted[0].id} from order_documents
+      where ${column}=${doc.id} and document_kind=${kind} on conflict do nothing`);
     return inserted[0].id as number;
   });
   return { id: newId, numeroCompleto };
