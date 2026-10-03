@@ -1355,7 +1355,19 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Clock3 />} label="Fecha de registro" content={(
                         <div className="flex flex-wrap items-center gap-2">
                           <span>{formatRegistrationDate(detail.orderedAt || detail.createdAt)}</span>
-                          {isAdmin && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { dateMutation.reset(); setDateOrder(detail); }}>Cambiar fecha</button>}
+                          {isAdmin && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="cursor-pointer text-muted-foreground hover:text-foreground"
+                              aria-label="Cambiar fecha de registro"
+                              title="Cambiar fecha de registro"
+                              onClick={() => { dateMutation.reset(); setDateOrder(detail); }}
+                            >
+                              <Pencil className="size-3.5" />
+                            </Button>
+                          )}
                         </div>
                       )} />
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
