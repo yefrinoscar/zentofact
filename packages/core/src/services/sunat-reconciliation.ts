@@ -89,8 +89,9 @@ export type StatusCdrOutcome =
 
 /**
  * Clasifica la respuesta de getStatusCdr. Códigos del servicio de consulta:
- * 0001 aceptado, 0002 rechazado, 0003 de baja, 0011 no existe, 0012 no
- * pertenece al RUC. Un fallo de red o SOAP nunca es evidencia de inexistencia.
+ * 0001 aceptado, 0002 rechazado, 0003 de baja, 0011/0127 sin registro,
+ * 0012 no pertenece al RUC. 0127 aquí proviene de getStatusCdr por número,
+ * no de getStatus por ticket de resumen. Un fallo de red o SOAP nunca es evidencia de inexistencia.
  */
 export function classifyStatusCdr(result: StatusCdrInput): StatusCdrOutcome {
   if (!result.success) {
@@ -109,7 +110,7 @@ export function classifyStatusCdr(result: StatusCdrInput): StatusCdrOutcome {
   }
   if (statusCode === '0003') return { kind: 'VOIDED', statusCode, message };
   if (statusCode === '0012') return { kind: 'NOT_OWNED', statusCode, message };
-  if (statusCode === '0011' || (!statusCode && /comprobante[^.]*no existe/i.test(message))) {
+  if (statusCode === '0011' || statusCode === '0127' || (!statusCode && /comprobante[^.]*no existe/i.test(message))) {
     return { kind: 'NOT_FOUND', statusCode, message };
   }
   return { kind: 'UNKNOWN', statusCode, message };
