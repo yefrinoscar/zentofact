@@ -129,6 +129,9 @@ export type BandejaView = {
   labelSelection: Set<number> | null;
   setLabelSelection: (selection: Set<number> | null) => void;
   toggleLabel: (order: LogisticsOrder) => void;
+  /** Mensajes de Mercado Libre sin leer por pedido (badge de la fila). */
+  unreadMessages: Record<number, number>;
+  openConversation: (order: LogisticsOrder) => void;
   emptyCopy: string;
 };
 

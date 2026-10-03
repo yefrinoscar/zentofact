@@ -46,6 +46,7 @@ import {
 } from '../lib/logistics-inbox';
 import { logisticsSyncNotice, noticeFromError, type InboxNotice } from '../lib/inbox-notice';
 import { CopyableLogId } from '../components/CopyableLogId';
+import { BuyerConversationSheet } from '../components/buyer-messages/BuyerConversationSheet';
 import { PrototypeSwitcherGroup } from '../components/PrototypeSwitcher';
 import { usePermissions } from '../hooks/usePermissions';
 import { Button } from '../components/ui/button';
@@ -142,6 +143,7 @@ export default function BandejaLogistica() {
   const [deliverOrder, setDeliverOrder] = useState<LogisticsOrder | null>(null);
   const [bulkDeliver, setBulkDeliver] = useState<LogisticsOrder[] | null>(null);
   const [notice, setNotice] = useState<InboxNotice | null>(null);
+  const [conversationOrder, setConversationOrder] = useState<LogisticsOrder | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
   const printPreviewRef = useRef<Window | null>(null);
@@ -168,6 +170,17 @@ export default function BandejaLogistica() {
   const orders = inboxQuery.data?.orders || [];
   const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, readyUnprinted: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
   const loading = inboxQuery.isPending && !inboxQuery.data;
+
+  const mercadoLibreOrderIds = orders
+    .filter((order) => order.channelCode === 'mercado_libre')
+    .map((order) => order.id);
+  const unreadQuery = useQuery({
+    queryKey: ['buyer-messages-unread', mercadoLibreOrderIds.join(',')],
+    queryFn: () => api.buyerMessagesUnread(mercadoLibreOrderIds),
+    enabled: mercadoLibreOrderIds.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
 
   useEffect(() => {
     if (inboxQuery.data?.channels?.ripley === false && channelCode === 'ripley') {
@@ -457,6 +470,8 @@ export default function BandejaLogistica() {
     labelSelection,
     setLabelSelection,
     toggleLabel,
+    unreadMessages: unreadQuery.data?.counts || {},
+    openConversation: (order) => setConversationOrder(order),
     emptyCopy: logisticsEmptyCopy(
       stage,
       stage === 'shipped' ? null : bandejaDeadlineFilter(urgency),
@@ -586,6 +601,17 @@ export default function BandejaLogistica() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BuyerConversationSheet
+        order={conversationOrder}
+        unread={conversationOrder ? unreadQuery.data?.counts?.[conversationOrder.id] || 0 : 0}
+        open={Boolean(conversationOrder)}
+        onOpenChange={(open) => {
+          if (open) return;
+          setConversationOrder(null);
+          void queryClient.invalidateQueries({ queryKey: ['buyer-messages-unread'] });
+        }}
+      />
     </div>
   );
 }

@@ -111,3 +111,155 @@ describe('MercadoLibreApiClient', () => {
     await assert.rejects(() => client.getMe(), /sandbox/);
   });
 });
+
+describe('MercadoLibre chat', () => {
+  it('lists pack messages with the post_sale tag', async () => {
+    const fetchImpl = mock.fn(async () => new Response(JSON.stringify({
+      paging: { limit: 10, offset: 0, total: 1 },
+      conversation_status: {
+        path: '/packs/123/sellers/555',
+        status: 'active',
+        substatus: null,
+        status_date: '2026-10-03T13:00:00Z',
+        claim_id: null,
+        shipping_id: '55',
+      },
+      messages: [{
+        id: 'm1',
+        site_id: 'MPE',
+        from: { user_id: 999 },
+        to: { user_id: 555 },
+        status: 'available',
+        text: '¿Llega mañana?',
+        message_date: { created: '2026-10-03T12:00:00Z', read: null },
+        message_moderation: { status: 'clean' },
+        message_attachments: [{ id: 'att1', filename: 'foto.png', content_type: 'image/png' }],
+        message_resources: [{ id: '123', name: 'packs' }],
+      }],
+      seller_max_message_length: 350,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const page = await client.getPackMessages({ packId: '123', sellerId: '555' });
+    assert.equal(page.total, 1);
+    assert.equal(page.conversationStatus.status, 'active');
+    assert.equal(page.conversationStatus.shippingId, '55');
+    assert.equal(page.sellerMaxMessageLength, 350);
+    assert.equal(page.messages[0].messageId, 'm1');
+    assert.equal(page.messages[0].fromUserId, '999');
+    assert.equal(page.messages[0].text, '¿Llega mañana?');
+    assert.equal(page.messages[0].attachments[0].filename, 'foto.png');
+    assert.equal(page.messages[0].resources[0].name, 'packs');
+    const url = String(fetchImpl.mock.calls[0].arguments[0]);
+    assert.match(url, /\/messages\/packs\/123\/sellers\/555\?tag=post_sale$/);
+  });
+
+  it('can peek messages without marking them as read', async () => {
+    const fetchImpl = mock.fn(async () => new Response('{}', { status: 200 }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    await client.getPackMessages({ packId: '123', sellerId: '555', markAsRead: false, limit: 5 });
+    const url = String(fetchImpl.mock.calls[0].arguments[0]);
+    assert.match(url, /mark_as_read=false/);
+    assert.match(url, /limit=5/);
+  });
+
+  it('sends a message with from/to identities and enforces the 350 character limit', async () => {
+    const fetchImpl = mock.fn(async () => new Response(JSON.stringify({
+      id: 'sent1',
+      from: { user_id: 555 },
+      to: { user_id: 999 },
+      text: 'Hola',
+    }), { status: 200 }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const sent = await client.sendPackMessage({
+      packId: '123',
+      sellerId: '555',
+      fromUserId: '555',
+      toUserId: '999',
+      text: 'Hola',
+    });
+    assert.equal(sent.messageId, 'sent1');
+    const [url, init] = fetchImpl.mock.calls[0].arguments;
+    assert.equal(init.method, 'POST');
+    assert.deepEqual(JSON.parse(init.body), {
+      from: { user_id: '555' },
+      to: { user_id: '999' },
+      text: 'Hola',
+    });
+    assert.match(String(url), /tag=post_sale/);
+    await assert.rejects(
+      () => client.sendPackMessage({
+        packId: '123',
+        sellerId: '555',
+        fromUserId: '555',
+        toUserId: '999',
+        text: 'x'.repeat(351),
+      }),
+      /350/,
+    );
+  });
+
+  it('uploads and downloads attachments with the seller token', async () => {
+    const fetchImpl = mock.fn(async (url) => {
+      const value = String(url);
+      if (value.includes('/messages/attachments/att-1')) {
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+      return new Response(JSON.stringify({ id: 'att-1' }), { status: 200 });
+    });
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', siteId: 'MPE', fetchImpl });
+    const upload = await client.uploadMessageAttachment({
+      file: new Uint8Array([1]),
+      filename: 'foto.png',
+      contentType: 'image/png',
+    });
+    assert.equal(upload.attachmentId, 'att-1');
+    const uploadUrl = String(fetchImpl.mock.calls[0].arguments[0]);
+    assert.match(uploadUrl, /site_id=MPE/);
+    const download = await client.getMessageAttachment('att-1');
+    assert.equal(download.contentType, 'image/png');
+    assert.equal(download.bytes.length, 3);
+    await assert.rejects(
+      () => client.uploadMessageAttachment({ file: new Uint8Array([1]), filename: 'nota.docx' }),
+      /JPG, PNG, PDF o TXT/,
+    );
+  });
+
+  it('lists unread conversations without marking them as read', async () => {
+    const fetchImpl = mock.fn(async () => new Response(JSON.stringify({
+      user_id: 555,
+      results: [
+        { resource: '/packs/123/sellers/555', count: 2 },
+        { resource: '/packs/999/sellers/555', count: 1 },
+      ],
+    }), { status: 200 }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const conversations = await client.listUnreadPackMessages({ role: 'seller' });
+    assert.equal(conversations.length, 2);
+    assert.deepEqual(conversations[0], {
+      resource: '/packs/123/sellers/555',
+      packId: '123',
+      sellerId: '555',
+      count: 2,
+    });
+    const url = String(fetchImpl.mock.calls[0].arguments[0]);
+    assert.match(url, /\/messages\/unread\?/);
+    assert.match(url, /role=seller/);
+    assert.match(url, /tag=post_sale/);
+  });
+
+  it('exposes the order buyer id for post-sale messages', async () => {
+    const fetchImpl = mock.fn(async () => new Response(JSON.stringify({
+      id: 2000018761771764,
+      status: 'paid',
+      buyer: { id: 823716784 },
+      pack_id: '2000015319992713',
+    }), { status: 200 }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const order = await client.getOrder('2000018761771764');
+    assert.equal(order.buyerId, '823716784');
+    assert.equal(order.packId, '2000015319992713');
+  });
+});
