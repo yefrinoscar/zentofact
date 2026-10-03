@@ -3,7 +3,7 @@ import { applyReadyOrderStock } from './catalog-operations.js';
 import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
 import { INVENTORY_LISTEN_FROM_AT, isAfterInventoryListenFrom } from './stock-commitment.js';
-import { loadCore } from './utils.js';
+import { httpError, inTransaction, loadCore, positiveInt } from './utils.js';
 
 const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
 const MAX_ATTEMPTS = 3;
@@ -384,7 +384,7 @@ export const JOB_BUCKET_SQL = `case
 // los jobs que se actualizan solos con cada corrida del worker.
 const JOB_ATTENTION_ORDER_SQL = `case when j.status in ('failed', 'skipped') then 0 else 1 end, j.updated_at desc`;
 
-const JOB_STATUS_FILTERS = ['all', 'done', 'cancelled', 'pending', 'processing', 'failed', 'skipped'];
+const JOB_STATUS_FILTERS = ['all', 'done', 'cancelled', 'pending', 'processing', 'failed', 'skipped', 'warning'];
 
 function normalizeStockJobStatus(value) {
   const status = String(value || '').trim().toLowerCase();
@@ -460,6 +460,56 @@ export async function retryJob(id, db) {
     [jobId],
   );
   return result.rows[0] || null;
+}
+
+// Acknowledging a known stock shortage does not change stock or fulfillment.
+// Keep the canonical job as the durable hold: sync and reconciliation must not
+// recreate it or discount the missing units while a ticket is being handled.
+export async function reportStockIncident(id, input = {}, actorUserId, db) {
+  const jobId = positiveInt(id, 'jobId');
+  const note = text(input.note, 500);
+  if (!note) throw httpError('Indica el motivo de la incidencia.', 400);
+  return inTransaction(db, async (client) => {
+    const reference = (await client.query(
+      'select order_id from inventory_stock_jobs where id=$1', [jobId],
+    )).rows[0];
+    if (!reference?.order_id) throw httpError('Descuento canónico no encontrado.', 404);
+    await client.query('select id from orders where id=$1 for update', [reference.order_id]);
+    const job = (await client.query(
+      'select * from inventory_stock_jobs where id=$1 for update', [jobId],
+    )).rows[0];
+    if (job?.status === 'warning') return mapJob(job);
+    if (!job || !['failed', 'skipped'].includes(job.status)) {
+      throw httpError('El descuento cambió. Actualiza e intenta nuevamente.', 409);
+    }
+    const shortage = (await client.query(
+      `select count(*)::int as line_count, coalesce(sum(quantity), 0) as quantity
+         from order_items where order_id=$1 and stock_state='skipped_insufficient'
+           and stock_applied_quantity=0`, [job.order_id],
+    )).rows[0];
+    if (!Number(shortage?.line_count)) throw httpError('No hay líneas pendientes por falta de stock.', 409);
+    const incident = {
+      status: 'reported',
+      note,
+      reportedAt: new Date().toISOString(),
+      reportedBy: actorUserId || null,
+      pendingLines: Number(shortage.line_count),
+      pendingUnits: Number(shortage.quantity),
+      previousError: job.last_error || null,
+    };
+    await client.query(
+      `update orders set metadata=coalesce(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at=now() where id=$1`,
+      [job.order_id, JSON.stringify({ stockIncident: incident })],
+    );
+    const saved = await client.query(
+      `update inventory_stock_jobs set status='warning', last_error=null,
+              next_attempt_at=null, result=coalesce(result, '{}'::jsonb) || $2::jsonb,
+              updated_at=now() where id=$1 returning *`,
+      [jobId, JSON.stringify({ incident })],
+    );
+    return mapJob(saved.rows[0]);
+  });
 }
 
 export async function jobOrderPreview(id, db) {
@@ -602,8 +652,9 @@ async function enqueueCanonicalStockJob(orderId, source, client) {
        where not exists (select 1 from promoted)
        on conflict (order_id) where order_id is not null do update set
          order_number=excluded.order_number,
-         status=case
-           when exists (select 1 from legacy where status='done') then 'done'
+          status=case
+            when inventory_stock_jobs.status='warning' then 'warning'
+            when exists (select 1 from legacy where status='done') then 'done'
            when inventory_stock_jobs.status='processing' then 'processing'
            else inventory_stock_jobs.status
          end,
@@ -674,7 +725,7 @@ export async function enqueueStockJob(input = {}, db) {
   }
   const source = text(input.source, 50) || 'system';
   let identity = orderId ? (await (await target(db)).query(
-    `select id, company_id, external_order_id, external_order_number, ordered_at
+    `select id, company_id, external_order_id, external_order_number, ordered_at, metadata
      from orders where id=$1`,
     [orderId],
   )).rows[0] : { company_id: companyId, external_order_id: externalOrderId };
@@ -689,7 +740,7 @@ export async function enqueueStockJob(input = {}, db) {
     async (client) => {
       if (orderId) {
         identity = (await client.query(
-          `select id, company_id, external_order_id, external_order_number, ordered_at
+          `select id, company_id, external_order_id, external_order_number, ordered_at, metadata
            from orders where id=$1`,
           [orderId],
         )).rows[0];
@@ -699,7 +750,7 @@ export async function enqueueStockJob(input = {}, db) {
         }
       } else {
         const matches = await client.query(
-          `select id, company_id, external_order_id, external_order_number, ordered_at
+          `select id, company_id, external_order_id, external_order_number, ordered_at, metadata
            from orders
            where company_id=$1 and external_order_id=$2
            order by id limit 2`,
@@ -712,6 +763,9 @@ export async function enqueueStockJob(input = {}, db) {
           }
           orderId = Number(identity.id);
         }
+      }
+      if (identity.metadata?.stockIncident?.status === 'reported') {
+        return { rows: [], ignored: 'incidencia reportada' };
       }
       const enqueued = orderId
         ? await enqueueCanonicalStockJob(orderId, source, client)

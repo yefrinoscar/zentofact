@@ -13,6 +13,8 @@ import {
   runStockReconciliation,
   reopenReservedStockJobsForCommit,
   setPaused,
+  reportStockIncident,
+  retryJob,
 } from './stock-jobs.js';
 import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { invalidateSystemConfigCache } from '../system-config.js';
@@ -141,6 +143,65 @@ class JobDb {
 
 beforeEach(() => {
   invalidateSystemConfigCache();
+});
+
+test('reportar una incidencia conserva cantidades, guarda el ticket y no vuelve a procesar el job', async () => {
+  const db = new JobDb();
+  const { job } = await enqueueStockJob({ companyId: 1, externalOrderId: '123', orderNumber: '123' }, db);
+  const row = [...db.jobs.values()][0];
+  Object.assign(row, { order_id: 20, status: 'failed', attempts: 3, last_error: '3 líneas sin stock', result: { insufficient: 3 } });
+  const original = db.query.bind(db);
+  let metadata;
+  db.query = async (sql, params) => {
+    const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (compact.startsWith('select order_id from inventory_stock_jobs')) return { rows: [{ order_id: row.order_id }] };
+    if (compact.startsWith('select id from orders')) return { rows: [{ id: row.order_id }] };
+    if (compact.startsWith('select * from inventory_stock_jobs')) return { rows: [row] };
+    if (compact.startsWith('select count(*)::int as line_count')) return { rows: [{ line_count: 3, quantity: 3 }] };
+    if (compact.startsWith('update orders set metadata')) { metadata = JSON.parse(params[1]); return { rows: [] }; }
+    if (compact.includes("set status='warning'")) {
+      Object.assign(row, { status: 'warning', last_error: null, next_attempt_at: null, result: { ...row.result, ...JSON.parse(params[1]) } });
+      return { rows: [row] };
+    }
+    return original(sql, params);
+  };
+  const result = await reportStockIncident(job.id, { note: 'Ticket enviado' }, 'operator-id', db);
+  assert.equal(result.status, 'warning');
+  assert.equal(result.lastError, null);
+  assert.equal(result.result.insufficient, 3);
+  assert.equal(metadata.stockIncident.pendingUnits, 3);
+  assert.equal(metadata.stockIncident.reportedBy, 'operator-id');
+  assert.equal(metadata.stockIncident.previousError, '3 líneas sin stock');
+  assert.equal((await reportStockIncident(job.id, { note: 'Ticket enviado' }, 'other', db)).status, 'warning');
+  assert.equal(metadata.stockIncident.reportedBy, 'operator-id');
+  assert.equal(await retryJob(job.id, db), null);
+  const processed = await processStockQueue({ apply: () => { throw new Error('No debe descontar'); } }, db);
+  assert.equal(processed.claimed, 0);
+});
+
+test('reportar una incidencia exige motivo y un job canónico', async () => {
+  await assert.rejects(reportStockIncident(1, { note: ' ' }, null, new JobDb()), /motivo/);
+  await assert.rejects(reportStockIncident(1, { note: 'Ticket enviado' }, null, {
+    query: async () => ({ rows: [] }),
+  }), /canónico no encontrado/);
+});
+
+test('la conciliación y el sync no reencolan un pedido con incidencia reconocida', async () => {
+  let inserts = 0;
+  const identity = {
+    id: 20, company_id: 1, external_order_id: '123', ordered_at: INVENTORY_LISTEN_FROM_AT,
+    metadata: { stockIncident: { status: 'reported' } },
+  };
+  const db = { query: async (sql) => {
+    if (sql.includes('pg_advisory_xact_lock')) return { rows: [] };
+    if (sql.includes('from orders')) return { rows: [identity] };
+    inserts += 1;
+    throw new Error('No debe volver a encolar');
+  } };
+  const result = await enqueueStockJob({ orderId: 20, resetAttempts: true }, db);
+  assert.equal(result.enqueued, false);
+  assert.equal(result.ignored, 'incidencia reportada');
+  assert.equal(inserts, 0);
 });
 
 test('encolar el mismo pedido dos veces no duplica el job', async () => {
