@@ -67,6 +67,7 @@ export interface SearchItemsOptions {
 export interface MercadoLibreOrder {
   orderId: string;
   packId: string | null;
+  buyerId: string | null;
   status: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -134,4 +135,93 @@ export interface MercadoLibreUser {
   nickname: string | null;
   siteId: string | null;
   raw: unknown;
+}
+
+export interface MercadoLibreMessageAttachment {
+  attachmentId: string;
+  filename: string | null;
+  contentType: string | null;
+  size: number | null;
+}
+
+export interface MercadoLibreMessageResource {
+  id: string;
+  name: string;
+}
+
+export interface MercadoLibreMessage {
+  messageId: string;
+  fromUserId: string | null;
+  toUserId: string | null;
+  text: string;
+  status: string | null;
+  moderationStatus: string | null;
+  createdAt: string | null;
+  readAt: string | null;
+  attachments: MercadoLibreMessageAttachment[];
+  resources: MercadoLibreMessageResource[];
+  raw: unknown;
+}
+
+export interface MercadoLibreConversationStatus {
+  path: string | null;
+  status: string | null;
+  substatus: string | null;
+  statusDate: string | null;
+  claimId: string | null;
+  shippingId: string | null;
+}
+
+export interface MercadoLibrePackMessages {
+  packId: string;
+  sellerId: string;
+  messages: MercadoLibreMessage[];
+  total: number;
+  offset: number;
+  limit: number;
+  conversationStatus: MercadoLibreConversationStatus | null;
+  sellerMaxMessageLength: number | null;
+  raw: unknown;
+}
+
+export interface PackMessagesOptions {
+  packId: string;
+  sellerId: string;
+  /** Por defecto Mercado Libre marca los mensajes como leídos. */
+  markAsRead?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
+export interface SendPackMessageOptions {
+  packId: string;
+  sellerId: string;
+  fromUserId: string;
+  toUserId: string;
+  text: string;
+  /** IDs obtenidos al subir adjuntos con uploadMessageAttachment. */
+  attachments?: string[];
+}
+
+export interface MercadoLibreMessageAttachmentUpload {
+  attachmentId: string;
+  raw: unknown;
+}
+
+export interface UploadMessageAttachmentOptions {
+  file: Uint8Array;
+  filename: string;
+  contentType?: string;
+  siteId?: string;
+}
+
+export interface MercadoLibreUnreadConversation {
+  resource: string;
+  packId: string;
+  sellerId: string;
+  count: number;
+}
+
+export interface ListUnreadMessagesOptions {
+  role?: 'seller' | 'buyer';
 }

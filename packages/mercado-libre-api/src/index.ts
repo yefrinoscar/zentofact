@@ -1,4 +1,4 @@
-export { MercadoLibreApiClient, expandItemListings, extractOrderItemSellerSku, extractSellerSku, hourPrecision } from './client.js';
+export { MercadoLibreApiClient, MERCADO_LIBRE_MESSAGE_MAX_LENGTH, expandItemListings, extractOrderItemSellerSku, extractSellerSku, hourPrecision } from './client.js';
 export { authorizationUrl, exchangeAuthorizationCode, normalizeToken, refreshAccessToken } from './oauth.js';
 export { DEFAULT_API_BASE, DEFAULT_AUTH_HOST } from './http.js';
 export type {
@@ -6,14 +6,25 @@ export type {
   ExchangeCodeOptions,
   MercadoLibreApiClientOptions,
   MercadoLibreBillingInfo,
+  MercadoLibreConversationStatus,
   MercadoLibreItem,
   MercadoLibreItemPage,
+  MercadoLibreMessage,
+  MercadoLibreMessageAttachment,
+  MercadoLibreMessageAttachmentUpload,
+  MercadoLibreMessageResource,
   MercadoLibreOrder,
   MercadoLibreOrderPage,
+  MercadoLibrePackMessages,
   MercadoLibreShipment,
   MercadoLibreToken,
+  MercadoLibreUnreadConversation,
   MercadoLibreUser,
+  ListUnreadMessagesOptions,
+  PackMessagesOptions,
   RefreshTokenOptions,
   SearchItemsOptions,
   SearchOrdersOptions,
+  SendPackMessageOptions,
+  UploadMessageAttachmentOptions,
 } from './types.js';

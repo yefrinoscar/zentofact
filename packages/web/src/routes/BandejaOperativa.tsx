@@ -19,6 +19,7 @@ import {
   ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
   type BandejaView, type LogisticsOrder,
 } from './bandeja-prototype/shared';
+import { BuyerMessagesButton } from '../components/buyer-messages/BuyerMessagesButton';
 
 const STAGE_TABS = [
   { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
@@ -196,10 +197,18 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
                           {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span>
                             : <span className="flex flex-wrap items-center justify-end gap-2">
+                              {order.channelCode === 'mercado_libre' && (
+                                <BuyerMessagesButton
+                                  order={order}
+                                  unread={view.unreadMessages[order.id] || 0}
+                                  disabled={locked}
+                                  onOpen={() => view.openConversation(order)}
+                                />
+                              )}
                               {canMarkLogisticsDelivered(order) && <Button size="sm" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(order)}><Truck />Marcar entregado</Button>}
                               {canMarkLogisticsReady(order) && <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />{logisticsReadyActionLabel(order)}</Button>}
                               {canPrintLogisticsLabel(order) && <Button size="sm" variant={canMarkLogisticsDelivered(order) ? 'ghost' : 'outline'} disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>}
-                              {!canMarkLogisticsDelivered(order) && !canMarkLogisticsReady(order) && !canPrintLogisticsLabel(order) && view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
+                              {order.channelCode !== 'mercado_libre' && !canMarkLogisticsDelivered(order) && !canMarkLogisticsReady(order) && !canPrintLogisticsLabel(order) && view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
                             </span>}
                         </div>
                         {layout === '12' && <p className="col-start-2 text-sm font-semibold tabular-nums md:col-start-3">{orderUnits(order)} {orderUnits(order) === 1 ? 'unidad para empacar' : 'unidades para empacar'}</p>}
