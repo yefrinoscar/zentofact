@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createTable, functionalUpdate, getCoreRowModel } from '@tanstack/react-table';
 import {
   MANAGED_ORDER_LIST_LIMIT,
   MANAGED_ORDER_TABLE_COLUMNS,
   buildManagedOrderListFilters,
+  managedOrderListRows,
   deliveryLabel,
   deliveryShowsAsTag,
   isSalespersonOrder,
@@ -16,6 +18,44 @@ import {
   sellerCellLabel,
   sellerCellShowsPerson,
 } from './managed-orders-presentation.ts';
+
+test('cambiar a un origen sin datos no genera un bucle de renders durante la carga', async () => {
+  let updates = 0;
+  let state;
+  let response = [{ id: 1 }];
+  const table = createTable({
+    data: managedOrderListRows(response),
+    columns: [],
+    getCoreRowModel: getCoreRowModel(),
+    state: {},
+    onStateChange(updater) {
+      state = functionalUpdate(updater, state);
+      updates += 1;
+      if (updates < 30) queueMicrotask(render);
+    },
+  });
+  state = table.initialState;
+  function render() {
+    table.setOptions((previous) => ({
+      ...previous,
+      data: managedOrderListRows(response),
+      state,
+    }));
+    table.getRowModel();
+  }
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  response = undefined;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(updates <= 1, `La tabla reinició su estado ${updates} veces durante la carga`);
+  assert.equal(table.getRowModel().rows.length, 0);
+
+  response = [{ id: 2 }];
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(table.getRowModel().rows[0].original.id, 2);
+});
 
 test('la bandeja avanza a hoy si permaneció abierta durante la medianoche', () => {
   assert.equal(managedOrdersDateAfterDayChange({
