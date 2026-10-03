@@ -184,6 +184,12 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel title="Cliente" hint="Quién compra y qué comprobante pide." icon={User}>
       <div className="space-y-4">
+      {view.isAdmin && (
+        <FieldRow label="Fecha de registro" htmlFor="order-date">
+          <input id="order-date" type="date" className="input w-full" value={view.orderDate} onChange={(event) => { if (event.target.value) view.setOrderDate(event.target.value); }} />
+          <p className="mt-1.5 text-xs text-muted-foreground">Solo administradores. Cambiar esta fecha mueve la venta y sus productos a ese día en los reportes. Se pedirá confirmar dos veces al registrar.</p>
+        </FieldRow>
+      )}
       {view.showSalespersonSelector ? (
         <FieldRow label="Vendedora" htmlFor="salesperson-id">
           <div className="flex flex-col gap-2 sm:flex-row">
