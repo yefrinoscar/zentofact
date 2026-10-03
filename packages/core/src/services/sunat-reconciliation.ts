@@ -6,7 +6,7 @@ import { readDatoAdicional, withDatoAdicional } from '../utils/datos-adicionales
 // SUNAT respondió y lo que tenemos guardado, y devuelven una decisión.
 //
 // Invariantes:
-// - Nunca usar un nuevo correlativo mientras el anterior pueda existir en SUNAT.
+// - Nunca usar otro correlativo mientras el anterior pueda corresponder a esta venta.
 // - Nunca reutilizar un correlativo.
 // - Nunca generar dos XML distintos para el mismo correlativo.
 // - Un "no existe" solo cuenta si SUNAT lo responde de forma explícita.
@@ -14,7 +14,7 @@ import { readDatoAdicional, withDatoAdicional } from '../utils/datos-adicionales
 export const MAX_SAME_NUMBER_RESENDS = 3;
 export const MAX_NEW_NUMBERS_PER_ORDER = 2;
 
-/** Estado local que exige intervención humana; ningún proceso automático lo cambia. */
+/** Estado bloqueado: en ventas se vuelve a consultar antes de permitir un reemplazo. */
 export const MANUAL_REVIEW_STATE = 'REVISION_MANUAL';
 /** Estados que ya no admiten envío ni reemisión. */
 export const CLOSED_STATES = ['ACEPTADO', 'ANULADO', 'REEMPLAZADO', MANUAL_REVIEW_STATE];
@@ -128,7 +128,9 @@ export interface LocalDocument {
  * (otro número u otro cliente), así que el número está ocupado por otro emisor.
  * UNVERIFIABLE: no se puede probar ninguna de las dos cosas.
  */
-export type IdentityCheck = { result: 'MATCH' | 'MISMATCH' | 'UNVERIFIABLE'; reason: string };
+export type IdentityCheck =
+  | { result: 'MATCH' | 'UNVERIFIABLE'; reason: string }
+  | { result: 'MISMATCH'; reason: string; differentCustomer: boolean };
 
 function normalizeDocumentNumber(value: string | null | undefined): string | null {
   const match = String(value || '').trim().toUpperCase().match(/^([A-Z0-9]{4})-0*(\d+)$/);
@@ -170,7 +172,7 @@ export function compareCdrIdentity(identity: CdrIdentity | null, local: LocalDoc
   const cdrNumber = normalizeDocumentNumber(identity.documentId);
   const localNumber = normalizeDocumentNumber(local.numeroCompleto);
   if (cdrNumber && localNumber && cdrNumber !== localNumber) {
-    return { result: 'MISMATCH', reason: `El CDR corresponde a ${identity.documentId}, no a ${local.numeroCompleto}.` };
+    return { result: 'MISMATCH', differentCustomer: false, reason: `El CDR corresponde a ${identity.documentId}, no a ${local.numeroCompleto}.` };
   }
 
   const cdrHash = String(identity.documentHash || '').trim();
@@ -189,11 +191,11 @@ export function compareCdrIdentity(identity: CdrIdentity | null, local: LocalDoc
     return { result: 'UNVERIFIABLE', reason: 'No se puede comparar el documento del cliente con el CDR.' };
   }
   if (cdrRecipient !== localRecipient) {
-    return { result: 'MISMATCH', reason: `El número está ocupado por un comprobante del cliente ${cdrRecipient}, no de ${localRecipient}.` };
+    return { result: 'MISMATCH', differentCustomer: Boolean(cdrNumber && cdrNumber === localNumber), reason: `El número está ocupado por un comprobante del cliente ${cdrRecipient}, no de ${localRecipient}.` };
   }
   const localType = local.clientTipoDocumento?.trim().toUpperCase();
   if (cdrParty.type && localType && cdrParty.type !== localType) {
-    return { result: 'MISMATCH', reason: 'El tipo de documento del cliente en el CDR no coincide con el comprobante local.' };
+    return { result: 'MISMATCH', differentCustomer: false, reason: 'El tipo de documento del cliente en el CDR no coincide con el comprobante local.' };
   }
 
   const cdrDate = normalizeDate(identity.issueDate);
@@ -201,7 +203,7 @@ export function compareCdrIdentity(identity: CdrIdentity | null, local: LocalDoc
   if (cdrDate && localDate && cdrDate !== localDate) {
     // La fecha distinta prueba que no podemos atribuir el CDR al XML local.
     // No se emite otro número automáticamente: queda como colisión para revisión.
-    return { result: 'MISMATCH', reason: `Mismo cliente, pero el CDR tiene fecha ${cdrDate} y el comprobante local ${localDate}.` };
+    return { result: 'MISMATCH', differentCustomer: false, reason: `Mismo cliente, pero el CDR tiene fecha ${cdrDate} y el comprobante local ${localDate}.` };
   }
   return { result: 'MATCH', reason: 'El cliente y la fecha del CDR coinciden con el comprobante local.' };
 }
@@ -255,6 +257,9 @@ export function decideReemission(input: {
     case 'ACCEPTED': {
       const identity = compareCdrIdentity(outcome.identity, local);
       if (identity.result === 'MATCH') return { action: 'MARK_ACCEPTED', estadoSunat: 'ACEPTADO', reason: identity.reason };
+      if (identity.result === 'MISMATCH' && identity.differentCustomer) {
+        return newNumberOrManual(trace, maxNewNumbers, `Colisión de correlativo: ${identity.reason} Se emitirá con el siguiente número libre confirmado por SUNAT.`, true);
+      }
       if (identity.result === 'MISMATCH') {
         return {
           action: 'MANUAL_REVIEW',

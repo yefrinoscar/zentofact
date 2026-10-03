@@ -182,29 +182,52 @@ describe('reconciliación con SUNAT antes de reemitir', { skip }, () => {
     assert.equal((await companyBoletas(boleta.companyId)).length, 1, 'no se crea otra boleta');
   });
 
-  it('1033 por colisión de serie: aceptado para otro cliente → revisión manual, sin otro número', async () => {
+  it('1033 de otro cliente: salta correlativos ocupados y conserva la orden en el nuevo', async () => {
     const boleta = await createBoleta();
-    sunat.sendQueue.push(send.fault('soap-env:Client.1033', 'El comprobante fue registrado previamente con otros datos'));
+    sunat.sendQueue.push(send.fault('soap-env:Client.1033', 'El comprobante fue registrado previamente con otros datos'), send.accepted());
     await boletaService.sendBoletaToSunat(boleta.id);
-    assert.equal((await boletaRow(boleta.id)).estado_sunat, 'NO_CONFIRMADO');
+    sunat.statusQueue.push(status.accepted(OTHER_CLIENT_DOC), status.accepted(OTHER_CLIENT_DOC), status.notFound());
+    const result = await boletaService.reEmitBoleta(boleta.id);
+    assert.equal(result.success, true);
+    assert.equal(result.numeroCompleto, 'B001-000003');
+    assert.deepEqual(sunat.queried, ['B001-000001', 'B001-000002', 'B001-000003']);
+    const old = await boletaRow(boleta.id);
+    assert.equal(old.estado_sunat, 'REEMPLAZADO');
+    assert.equal(old.order_number, null);
+    const next = await boletaRow(result.documentId);
+    assert.equal(next.order_number, boleta.orderNumber);
+    assert.equal(next.estado_sunat, 'ACEPTADO');
+    assert.equal((await companyBoletas(boleta.companyId)).length, 2);
+    assert.equal(sunat.sent[1].number, 'B001-000003');
+  });
 
-    sunat.statusQueue.push(status.accepted(OTHER_CLIENT_DOC));
-    const reconciled = await boletaService.reEmitBoleta(boleta.id);
-    assert.equal(reconciled.success, false);
-    assert.equal(reconciled.manualReview, true);
+  it('recupera una colisión guardada como revisión manual en una factura', async () => {
+    const company = await createCompany();
+    const facturaService = require('../dist/services/factura.service.js');
+    const factura = await facturaService.createFactura({
+      company_id:company.companyId, branch_id:company.branchId, order_number:newOrderNumber(),
+      serie:'F001', fecha_emision:new Date().toISOString().slice(0,10), metodo_envio:'individual',
+      client:{tipo_documento:'6',numero_documento:'20615835162',razon_social:'CLIENTE'},
+      detalles:[{codigo:'P1',descripcion:'PRODUCTO',unidad:'NIU',cantidad:1,mto_valor_unitario:84.75,mto_bruto:100,porcentaje_igv:18,tip_afe_igv:'10'}],
+    });
+    await pool.query("update facturas set estado_sunat='REVISION_MANUAL', respuesta_sunat=$2, updated_at=0 where id=$1",[factura.id,JSON.stringify({reason:'Colisión de correlativo: El número está ocupado por otro cliente.'})]);
+    const pending = await sweep.listDocumentsNeedingReconciliation({limit:1000});
+    assert.ok(pending.some(d=>d.table==='facturas' && d.id===factura.id), 'el barrido recupera colisiones bloqueadas para la automatización');
+    sunat.statusQueue.push(status.accepted('20602177786'), status.accepted('20602177786'), status.notFound());
+    sunat.sendQueue.push(send.accepted());
+    const result = await facturaService.reEmitFactura(factura.id);
+    assert.equal(result.success, true);
+    assert.equal(result.numeroCompleto, 'F001-000003');
+    assert.equal((await pool.query('select estado_sunat from facturas where id=$1',[factura.id])).rows[0].estado_sunat,'REEMPLAZADO');
+  });
 
-    const row = await boletaRow(boleta.id);
-    assert.equal(row.estado_sunat, 'REVISION_MANUAL');
-    assert.equal(row.order_number, boleta.orderNumber, 'la orden sigue vinculada para revisión');
-    assert.equal((await companyBoletas(boleta.companyId)).length, 1);
-
-    // Ningún camino automático sale de REVISION_MANUAL.
-    const resend = await boletaService.sendBoletaToSunat(boleta.id);
-    assert.equal(resend.error_code, 'DOCUMENT_CLOSED');
-    const again = await boletaService.reEmitBoleta(boleta.id);
-    assert.equal(again.error_code, 'DOCUMENT_CLOSED');
-    assert.equal(sunat.sent.length, 1);
-    assert.equal(sunat.queried.length, 1);
+  it('no emite reemplazo si SUNAT no confirma que el candidato esté libre', async () => {
+    const boleta = await createBoleta();
+    sunat.statusQueue.push(status.accepted(OTHER_CLIENT_DOC), status.fails());
+    await assert.rejects(()=>boletaService.reEmitBoleta(boleta.id), /No se pudo confirmar/);
+    assert.equal(sunat.sent.length,0);
+    assert.equal((await companyBoletas(boleta.companyId)).length,1);
+    assert.equal((await boletaRow(boleta.id)).order_number,boleta.orderNumber);
   });
 
   it('no existe en SUNAT → se reenvía exactamente el mismo XML firmado y el mismo número', async () => {
@@ -324,7 +347,7 @@ describe('reconciliación con SUNAT antes de reemitir', { skip }, () => {
 
     sunat.statusQueue.push(status.accepted(OTHER_CLIENT_DOC));
     const refreshed = await summaryQuery.refreshBoletaStatus(boleta.id);
-    assert.equal(refreshed.estadoSunat, 'REVISION_MANUAL');
+    assert.equal(refreshed.estadoSunat, 'RECHAZADO');
 
     // Verificar es solo lectura: un "no existe" no consume reenvíos.
     const second = await createBoleta();

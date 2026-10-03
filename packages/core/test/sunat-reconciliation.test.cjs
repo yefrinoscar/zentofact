@@ -121,10 +121,11 @@ test('respuesta perdida: SUNAT tiene aceptado nuestro comprobante → se recuper
   assert.equal(decision.estadoSunat, 'ACEPTADO');
 });
 
-test('colisión de serie: el número está aceptado para otro cliente → revisión manual, sin otro número', () => {
+test('colisión probada con otro cliente → número nuevo consultando los siguientes', () => {
   const decision = decide({ success: true, statusCode: '0001', cdrZip: cdrZip({ recipient: '70000001' }), cdrResponse: { code: '0' } });
-  assert.equal(decision.action, 'MANUAL_REVIEW');
-  assert.equal(decision.estadoSunat, 'REVISION_MANUAL');
+  assert.equal(decision.action, 'ISSUE_NEW_NUMBER');
+  assert.equal(decision.estadoSunat, 'RECHAZADO');
+  assert.equal(decision.collision, true);
 });
 
 test('aceptado sin CDR legible → revisión manual, nunca aceptación a ciegas', () => {
@@ -210,4 +211,10 @@ test('CDR: RUC prefijado, DNI con cero inicial y documento plano', () => {
 test('CDR: SUNAT puede incluir tipo-número sin atributo schemeID', () => {
   const identity = parseCdrIdentityXml(cdrXml({ recipient: '1-76805729' }).replace(' schemeID="1"', ''));
   assert.equal(compareCdrIdentity(identity, { ...local, clientDocumento: '76805729', clientTipoDocumento: '1' }).result, 'MATCH');
+});
+
+test('otro número, misma identidad con fecha distinta o tipo distinto no autorizan reemplazo por colisión', () => {
+  for (const attrs of [{number:'B001-000124',recipient:'70000001'}, {issueDate:'2026-09-18'}, {recipient:'6-45678912'}]) {
+    assert.equal(decide({success:true,statusCode:'0001',cdrZip:cdrZip(attrs),cdrResponse:{code:'0'}}).action,'MANUAL_REVIEW');
+  }
 });
