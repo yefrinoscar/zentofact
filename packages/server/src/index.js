@@ -201,6 +201,9 @@ app.use('/order-management/*', orderManagementGuard);
 const logisticsInboxGuard = requireAnyPermission(['orders_inbox', 'order_management']);
 app.use('/logistics-inbox', logisticsInboxGuard);
 app.use('/logistics-inbox/*', logisticsInboxGuard);
+// El chat posventa de Mercado Libre vive en la bandeja: mismo acceso.
+app.use('/mercado-libre', logisticsInboxGuard);
+app.use('/mercado-libre/*', logisticsInboxGuard);
 
 const catalogGuard = (c, next) => {
   const path = c.req.path;
@@ -511,7 +514,7 @@ app.post('/logistics-inbox/:orderId/delivered', async (c) => {
 });
 
 // ── Conversaciones posventa de Mercado Libre (chat desde la bandeja) ──
-app.get('/mercado-libre/conversations/:orderId', requirePermission('orders_inbox'), async (c) => {
+app.get('/mercado-libre/conversations/:orderId', async (c) => {
   try {
     return ok(c, await mercadoLibreChat.getOrderConversation({
       orderId: c.req.param('orderId'),
@@ -521,14 +524,14 @@ app.get('/mercado-libre/conversations/:orderId', requirePermission('orders_inbox
     return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.conversation' });
   }
 });
-app.get('/mercado-libre/unread', requirePermission('orders_inbox'), async (c) => {
+app.get('/mercado-libre/unread', async (c) => {
   try {
     return ok(c, await mercadoLibreChat.listUnreadMessages({ orderIds: c.req.query('orderIds') }));
   } catch (e) {
     return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.unread' });
   }
 });
-app.post('/mercado-libre/conversations/:orderId/messages', requirePermission('orders_inbox'), async (c) => {
+app.post('/mercado-libre/conversations/:orderId/messages', async (c) => {
   let body = {};
   try {
     body = await c.req.json();
@@ -545,7 +548,7 @@ app.post('/mercado-libre/conversations/:orderId/messages', requirePermission('or
     return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.message-send' });
   }
 });
-app.post('/mercado-libre/conversations/:orderId/attachments', requirePermission('orders_inbox'), async (c) => {
+app.post('/mercado-libre/conversations/:orderId/attachments', async (c) => {
   try {
     const body = await c.req.parseBody();
     const file = body?.file;
@@ -563,7 +566,7 @@ app.post('/mercado-libre/conversations/:orderId/attachments', requirePermission(
     return fail(c, e, Number(e?.status || 400), { operation: 'mercado-libre.attachment-upload' });
   }
 });
-app.get('/mercado-libre/attachments/:orderId/:attachmentId', requirePermission('orders_inbox'), async (c) => {
+app.get('/mercado-libre/attachments/:orderId/:attachmentId', async (c) => {
   try {
     const file = await mercadoLibreChat.downloadOrderAttachment({
       orderId: c.req.param('orderId'),

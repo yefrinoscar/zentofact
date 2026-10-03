@@ -151,6 +151,26 @@ test('respeta el motivo de bloqueo que informa Mercado Libre', async () => {
   assert.deepEqual(conversation.blocked, { reason: 'mediation', substatus: 'blocked_by_mediation' });
 });
 
+test('no marca bloqueada la conversación que solo espera al comprador', async () => {
+  const context = deps({
+    client: {
+      getPackMessages: async () => page({
+        messages: [],
+        conversationStatus: {
+          path: '/packs/1/sellers/555',
+          status: 'blocked',
+          substatus: 'blocked_by_conversation_initiated_by_seller_limited',
+          statusDate: null,
+          claimId: null,
+          shippingId: null,
+        },
+      }),
+    },
+  });
+  const conversation = await getOrderConversation({ orderId: 44 }, context);
+  assert.equal(conversation.blocked, null);
+});
+
 test('envía el mensaje con el comprador resuelto desde la orden', async () => {
   const calls = [];
   const client = {

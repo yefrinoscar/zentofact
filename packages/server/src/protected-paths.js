@@ -3,6 +3,7 @@ export const PROTECTED_PATHS = [
   '/pagos',
   '/orders-inbox',
   '/logistics-inbox',
+  '/mercado-libre',
   '/order-management',
   '/products',
   '/product-listings',
