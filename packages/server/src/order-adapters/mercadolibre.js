@@ -141,10 +141,12 @@ export function mapMercadoLibreShipping(shipment) {
   const raw = objectRecord(shipment?.raw) || objectRecord(shipment) || {};
   const destination = objectRecord(raw.destination) || {};
   const address = objectRecord(destination.shipping_address || destination.receiver_address || raw.receiver_address) || {};
+  // address_line ya suele traer calle y número: no los repitas.
+  const streetLine = text(address.address_line)
+    || [text(address.street_name), text(address.street_number)].filter(Boolean).join(' ');
   return {
     type: text(shipment?.logisticType || raw.logistic_type || raw.mode),
-    address: [address.address_line, address.street_name, address.street_number, address.comment]
-      .map(text).filter(Boolean).join(', '),
+    address: [streetLine, text(address.comment)].filter(Boolean).join(', '),
     city: text(address.city?.name || address.city),
     region: text(address.state?.name || address.state),
     trackingCode: text(shipment?.trackingNumber || raw.tracking_number),

@@ -187,10 +187,15 @@ export function BuyerConversation({
           <p className="font-medium">{blockedCopy.title}</p>
           <p className="text-muted-foreground">{blockedCopy.body}</p>
         </div>
+      ) : disabledReason ? (
+        <div className="border-t bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          {disabledReason === 'no-permission'
+            ? 'Tu rol puede ver la conversación, pero no responder.'
+            : 'Mercado Libre solo permite responder cuando el comprador escribe primero.'}
+        </div>
       ) : (
         <ConversationComposer
           orderId={order.id}
-          disabledReason={disabledReason}
           sending={sendMutation.isPending}
           onSend={send}
         />

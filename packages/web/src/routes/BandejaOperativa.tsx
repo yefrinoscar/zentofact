@@ -11,7 +11,7 @@ import { sellerShortName } from '../lib/seller-name';
 import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
-  limaDeadlineKey, logisticsAddressShort, logisticsAddressTitle, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
+  limaDeadlineKey, logisticsAddressSummary, logisticsAddressTitle, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
   logisticsReadyActionLabel, logisticsUpdatedClock, mercadoLibreDispatchLabel, remainingReadyToPrint,
   LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
@@ -179,7 +179,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
                       const selectable = canMarkLogisticsReady(order) || canMarkLogisticsDelivered(order) || (isReady && canPrintLogisticsLabel(order));
                       const printed = labelWasPrinted(order);
-                      const addressShort = logisticsAddressShort(order.shipping);
+                      const addressSummary = logisticsAddressSummary(order.shipping);
                       const addressTitle = logisticsAddressTitle(order.shipping);
                       const dispatchLabel = order.channelCode === 'mercado_libre'
                         ? mercadoLibreDispatchLabel(order.metadata?.shippingMode, order.metadata?.logisticType)
@@ -190,14 +190,17 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                         <div className="min-w-0 self-start pt-1">
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
-                          {(addressShort || dispatchLabel) && (
-                            <p className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={addressTitle || undefined}>
-                              {addressShort && (
-                                <>
-                                  <MapPin className="size-3 shrink-0" aria-hidden="true" />
-                                  <span className="truncate">{addressShort}</span>
-                                </>
-                              )}
+                        </div>
+                        <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
+                          {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
+                            <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? 'size-24' : isCard ? 'size-20' : layout === '7' ? 'size-8' : 'size-12')} onOpen={setPreview} />
+                            <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{logisticsItemSku(item) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{logisticsItemSku(item)}</p>}</div>
+                            <QuantityTag item={item} />
+                          </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
+                          {(addressSummary || dispatchLabel) && (
+                            <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={addressTitle || undefined}>
+                              <MapPin className="size-3 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{addressSummary}</span>
                               {dispatchLabel && (
                                 <span
                                   className="shrink-0 font-medium text-amber-700"
@@ -210,13 +213,6 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                               )}
                             </p>
                           )}
-                        </div>
-                        <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
-                          {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
-                            <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? 'size-24' : isCard ? 'size-20' : layout === '7' ? 'size-8' : 'size-12')} onOpen={setPreview} />
-                            <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{logisticsItemSku(item) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{logisticsItemSku(item)}</p>}</div>
-                            <QuantityTag item={item} />
-                          </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                         </div>
                         <div className={cn("flex items-center justify-between gap-2 sm:col-start-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
