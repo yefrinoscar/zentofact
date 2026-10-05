@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FileText, Loader2, RefreshCw } from "lucide-react";
 import api from "../lib/api";
 import { usePermissions } from "../hooks/usePermissions";
+import { cn } from "../lib/cn";
+import { Button } from "./ui/button";
 
 type Kind = "factura" | "boleta";
 type Document = {
@@ -35,6 +37,13 @@ const STATUS: Record<string, string> = {
   ENVIANDO: "Enviando",
   REVISION_MANUAL: "Revisión manual",
   NO_ENVIADA: "No enviado",
+};
+const STATUS_DOT: Record<string, string> = {
+  ACEPTADO: "bg-emerald-500",
+  RECHAZADO: "bg-rose-500",
+  ANULADO: "bg-rose-500",
+  ENVIANDO: "bg-sky-500",
+  REEMPLAZADO: "bg-muted-foreground/50",
 };
 function download(base64: string, filename: string, format: "pdf" | "xml") {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
@@ -123,149 +132,135 @@ export default function OrderDocumentPanel({
     mutation.mutate({ action, doc });
   };
   const busy = mutation.isPending;
+  const pendingAction = busy ? mutation.variables?.action : undefined;
+  const typeLabel = order.documentDecision?.type === "factura" ? "factura" : order.documentDecision?.type === "boleta" ? "boleta" : "comprobante";
   return (
-    <section className="order-document-panel border-t border-border px-5 py-5">
-      <h3 className="mb-3 text-sm font-semibold">Comprobante</h3>
+    <div className="space-y-3">
       {query.isPending && (
-        <p role="status" className="text-sm text-muted-foreground">
-          Cargando…
-        </p>
+        <div role="status" aria-label="Cargando comprobante" className="h-9 w-48 rounded-md bg-muted motion-safe:animate-pulse" />
       )}
       {query.error && (
         <p role="alert" className="text-sm text-destructive">
           {query.error.message}
         </p>
       )}
-      {note && (
-        <p role="status" className="mb-3 text-sm leading-5">
-          {note}
-        </p>
-      )}
       {!query.isPending &&
         !query.error &&
         !active &&
         order.documentRequirement !== "disabled" && (
-          <button
-            type="button"
-            className="daisy-btn daisy-btn-sm"
-            disabled={busy || !(can("facturas") || can("boletas"))}
-            onClick={() => run("emit")}
-          >
-            {busy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <FileText className="size-4" />
-            )}
-            Emitir comprobante
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Todavía no se emite la {typeLabel}.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="cursor-pointer"
+              disabled={busy || !(can("facturas") || can("boletas"))}
+              onClick={() => run("emit")}
+            >
+              {pendingAction === "emit" ? <Loader2 className="animate-spin" /> : <FileText />}
+              Emitir comprobante
+            </Button>
+          </div>
         )}
       {active && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <span className="font-medium">{active.number}</span>
-            <span
-              className={
-                active.status === "RECHAZADO"
-                  ? "text-destructive"
-                  : "text-muted-foreground"
-              }
-            >
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <span className="font-mono text-sm font-medium tabular-nums">{active.number}</span>
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <span aria-hidden="true" className={cn("size-1.5 rounded-full", STATUS_DOT[active.status] || "bg-muted-foreground/50")} />
               {STATUS[active.status] || active.status}
             </span>
           </div>
           {active.status !== "ACEPTADO" && (
-            <p className="border-l-2 border-destructive pl-3 text-sm leading-5">
+            <p className={cn(
+              "border-l-2 pl-3 text-sm leading-5",
+              active.status === "RECHAZADO" ? "border-destructive" : "border-amber-400",
+            )}>
               {active.reason ||
                 "No hay un motivo registrado. Consulta SUNAT para confirmar el estado."}
             </p>
           )}
-          <div className="flex flex-wrap gap-2">
-            {canManage(active.kind) && (
-              <>
-                {!["ACEPTADO", "ENVIANDO"].includes(
-                  active.status,
-                ) && (
-                  <button
-                    className="daisy-btn daisy-btn-sm"
-                    disabled={busy}
-                    onClick={() => run("reissue", active)}
-                  >
-                    {busy ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="size-4" />
-                    )}
-                    Volver a emitir
-                  </button>
-                )}
-                {active.status !== "ACEPTADO" && (
-                  <button
-                    className="daisy-btn daisy-btn-sm daisy-btn-outline"
-                    disabled={busy}
-                    onClick={() => run("refresh", active)}
-                  >
-                    Consultar SUNAT
-                  </button>
-                )}
-                <button
-                  className="daisy-btn daisy-btn-sm daisy-btn-outline"
-                  disabled={busy || !active.canDownloadPdf}
-                  title={
-                    !active.canDownloadPdf
-                      ? "Disponible cuando SUNAT acepta el comprobante."
-                      : undefined
-                  }
-                  onClick={() => run("pdf", active)}
-                >
-                  <Download className="size-4" />
-                  PDF
-                </button>
-                <button
-                  className="daisy-btn daisy-btn-sm daisy-btn-outline"
-                  disabled={busy || !active.hasXml}
-                  title={!active.hasXml ? "No hay XML archivado." : undefined}
-                  onClick={() => run("xml", active)}
-                >
-                  XML
-                </button>
-              </>
-            )}
-          </div>
+          {canManage(active.kind) && (
+            <div className="flex flex-wrap gap-2">
+              {!["ACEPTADO", "ENVIANDO"].includes(active.status) && (
+                <Button size="sm" className="cursor-pointer" disabled={busy} onClick={() => run("reissue", active)}>
+                  {pendingAction === "reissue" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  Volver a emitir
+                </Button>
+              )}
+              {active.status !== "ACEPTADO" && (
+                <Button size="sm" variant="outline" className="cursor-pointer" disabled={busy} onClick={() => run("refresh", active)}>
+                  {pendingAction === "refresh" && <Loader2 className="animate-spin" />}
+                  Consultar SUNAT
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="cursor-pointer"
+                disabled={busy || !active.canDownloadPdf}
+                title={!active.canDownloadPdf ? "Disponible cuando SUNAT acepta el comprobante." : undefined}
+                onClick={() => run("pdf", active)}
+              >
+                {pendingAction === "pdf" ? <Loader2 className="animate-spin" /> : <Download />}
+                PDF
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="cursor-pointer"
+                disabled={busy || !active.hasXml}
+                title={!active.hasXml ? "No hay XML archivado." : undefined}
+                onClick={() => run("xml", active)}
+              >
+                {pendingAction === "xml" ? <Loader2 className="animate-spin" /> : <Download />}
+                XML
+              </Button>
+            </div>
+          )}
           {active.status === "REVISION_MANUAL" && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs leading-5 text-muted-foreground">
               Al volver a emitir se consulta SUNAT. Si el número pertenece a otro cliente, se usa el siguiente correlativo libre.
             </p>
           )}
-        </div>
+        </>
+      )}
+      {note && (
+        <p role="status" className="text-sm leading-5 text-muted-foreground">
+          {note}
+        </p>
       )}
       {documents.length > 1 && (
-        <details className="mt-4 text-sm">
-          <summary className="cursor-pointer text-muted-foreground">
-            Comprobantes anteriores
+        <details className="group text-sm">
+          <summary className="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <span className="group-open:hidden">Ver comprobantes anteriores ({documents.length - 1})</span>
+            <span className="hidden group-open:inline">Ocultar comprobantes anteriores</span>
           </summary>
-          {documents
-            .filter((d) => d !== active)
-            .map((d) => (
-              <div
-                key={`${d.kind}-${d.id}`}
-                className="flex flex-wrap items-center justify-between gap-2 border-t border-border py-2"
-              >
-                <span>
-                  {d.number} · {STATUS[d.status] || d.status}
-                </span>
-                {d.kind !== "credit_note" && canManage(d.kind) && d.hasXml && (
-                  <button
-                    className="daisy-btn daisy-btn-xs daisy-btn-ghost"
-                    disabled={busy}
-                    onClick={() => run("xml", d)}
-                  >
-                    XML
-                  </button>
-                )}
-              </div>
-            ))}
+          <ul className="mt-2 divide-y divide-border/60">
+            {documents
+              .filter((d) => d !== active)
+              .map((d) => (
+                <li
+                  key={`${d.kind}-${d.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2"
+                >
+                  <span className="font-mono text-[13px] tabular-nums">{d.number}</span>
+                  <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {d.kind === "credit_note" ? "Nota de crédito · " : ""}
+                    {STATUS[d.status] || d.status}
+                    {d.kind !== "credit_note" && canManage(d.kind) && d.hasXml && (
+                      <Button size="xs" variant="ghost" className="cursor-pointer" disabled={busy} onClick={() => run("xml", d)}>
+                        XML
+                      </Button>
+                    )}
+                  </span>
+                </li>
+              ))}
+          </ul>
         </details>
       )}
-    </section>
+    </div>
   );
 }
