@@ -109,5 +109,6 @@ test('arma los datos de envío con dirección, transportista y seguimiento', () 
   assert.equal(shipping.trackingCode, '2602663006');
   assert.equal(shipping.city, 'Chorrillos');
   assert.equal(shipping.region, 'Lima Metropolitana');
-  assert.match(shipping.address, /Calle Avelino/);
+  // address_line ya trae calle y número: no se repiten.
+  assert.equal(shipping.address, 'Calle Avelino Andrés Cáceres calle 3, Mz. D Lt.9');
 });
