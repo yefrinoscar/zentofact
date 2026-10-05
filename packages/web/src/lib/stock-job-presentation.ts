@@ -13,6 +13,7 @@ export type StockJobForPresentation = {
   fulfillment_status?: string | null;
   orderStatus?: string | null;
   fulfillmentStatus?: string | null;
+  transfer?: { code?: string | null; sourceMainSku?: string | null; quantity?: number } | null;
 };
 
 export type StockOrderForPresentation = {
@@ -150,6 +151,16 @@ export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: stri
   const skipped = count(result.skipped);
   const terminal = stockTerminalKind(job);
   if (terminal) return terminalDetail(terminal, reservedUnits, appliedUnits);
+  const transfer = job.transfer;
+  if (transfer?.code) {
+    const source = transfer.sourceMainSku || 'otro producto';
+    if (job.status === 'pending' || job.status === 'processing') {
+      return `Stock movido desde ${source} (${transfer.code}) · reintentando`;
+    }
+    if (job.status === 'done' && appliedUnits > 0) {
+      return `${appliedUnits} u descontada${appliedUnits === 1 ? '' : 's'} · stock movido desde ${source}`;
+    }
+  }
   if (job.status === 'warning') {
     const incident = result.incident as { note?: string; pendingUnits?: number } | undefined;
     const units = count(incident?.pendingUnits);
