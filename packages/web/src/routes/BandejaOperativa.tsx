@@ -197,7 +197,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                             <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{logisticsItemSku(item) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{logisticsItemSku(item)}</p>}</div>
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
-                          {(addressSummary || dispatchLabel) && (
+                          {order.channelCode === 'mercado_libre' && (addressSummary || dispatchLabel) && (
                             <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={addressTitle || undefined}>
                               <MapPin className="size-3 shrink-0" aria-hidden="true" />
                               <span className="truncate">{addressSummary}</span>
