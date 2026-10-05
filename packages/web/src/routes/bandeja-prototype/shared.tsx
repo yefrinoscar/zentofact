@@ -74,8 +74,8 @@ export type LogisticsOrder = {
   currency: string;
   total: number | null;
   customer?: { name?: string; phone?: string; documentNumber?: string };
-  shipping?: { type?: string; carrier?: string; address?: string; district?: string; trackingCode?: string };
-  metadata?: { delivery?: string; shippingCarrier?: string };
+  shipping?: { type?: string; carrier?: string; address?: string; district?: string; city?: string; region?: string; trackingCode?: string };
+  metadata?: { delivery?: string; shippingCarrier?: string; logisticType?: string; shippingMode?: string; shippingSubstatus?: string };
   promisedShippingAt?: string | null;
   orderedAt?: string | null;
   createdAt?: string | null;

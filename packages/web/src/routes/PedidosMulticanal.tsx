@@ -18,6 +18,7 @@ import {
   Hash,
   ImagePlus,
   Loader2,
+  MapPin,
   MessageCircle,
   MoreHorizontal,
   Package,
@@ -39,6 +40,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
 import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import { mercadoLibreDispatchCopy, sellerDispatchesMercadoLibre } from '../lib/logistics-inbox';
 import {
   buildManualOrderEditPayload,
   MANUAL_EDIT_DOCUMENT_TYPES,
@@ -200,6 +202,8 @@ type ManagedOrder = {
     trackingCode?: string;
     address?: string;
     district?: string;
+    city?: string;
+    region?: string;
     province?: string;
     department?: string;
     reference?: string;
@@ -221,6 +225,10 @@ type ManagedOrder = {
     delivery?: string;
     deliveryDate?: string;
     shippingCarrier?: string;
+    shippingId?: string;
+    shippingMode?: string;
+    logisticType?: string;
+    shippingSubstatus?: string;
     receivedBy?: string;
     paidTo?: string;
     paymentProof?: { name?: string; type?: string; dataUrl?: string; hasData?: boolean } | null;
@@ -533,6 +541,21 @@ function shippingAddress(shipping?: ManagedOrder['shipping']) {
 
 function addressText(order: ManagedOrder) {
   return shippingAddress(order.shipping) || '—';
+}
+
+const LIMA_TIME_ZONE = 'America/Lima';
+
+function formatEstimatedDelivery(value?: string | null) {
+  if (!value) return 'Sin fecha';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Sin fecha';
+  const label = new Intl.DateTimeFormat('es-PE', {
+    timeZone: LIMA_TIME_ZONE,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(date);
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function paymentMethodLabel(order: ManagedOrder) {
@@ -1394,6 +1417,68 @@ export default function PedidosMulticanal() {
                       )}
                     </div>
                   </section>
+
+                  {detail.channelCode === 'mercado_libre' && (
+                    <section className="border-b border-border px-6 py-5">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold">Envío de Mercado Libre</h3>
+                        {detail.metadata?.shippingMode && (
+                          <Badge variant="outline" className="uppercase">{detail.metadata.shippingMode}</Badge>
+                        )}
+                        {sellerDispatchesMercadoLibre(detail.metadata?.logisticType) && (
+                          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Despachas tú</Badge>
+                        )}
+                      </div>
+                      <div className="space-y-0.5">
+                        <DetailField
+                          icon={<Clock3 />}
+                          label="Entrega estimada"
+                          content={<span className="font-medium">{formatEstimatedDelivery(detail.promisedShippingAt)}</span>}
+                        />
+                        <DetailField
+                          icon={<Truck />}
+                          label="Despacho"
+                          content={<span>{mercadoLibreDispatchCopy(detail.metadata?.logisticType)}</span>}
+                        />
+                        <DetailField
+                          icon={<Store />}
+                          label="Transportista"
+                          content={<span className="font-medium">{detail.shipping?.carrier || 'Mercado Envíos'}</span>}
+                        />
+                        <DetailField
+                          icon={<Hash />}
+                          label="Seguimiento"
+                          content={<span className="break-all font-mono text-xs">{detail.shipping?.trackingCode || '—'}</span>}
+                        />
+                        <DetailField
+                          icon={<UserRound />}
+                          label="Destinatario"
+                          content={(
+                            <span>
+                              <span className="font-medium">{detail.customer?.name || 'Sin nombre'}</span>
+                              {detail.customer?.documentNumber ? (
+                                <span className="block text-xs text-muted-foreground">DNI {detail.customer.documentNumber}</span>
+                              ) : null}
+                            </span>
+                          )}
+                        />
+                        <DetailField
+                          icon={<MapPin />}
+                          label="Dirección"
+                          content={(
+                            <span className="whitespace-pre-wrap">
+                              <span>{shippingAddress(detail.shipping) || '—'}</span>
+                              {[detail.shipping?.district || detail.shipping?.city, detail.shipping?.region].filter(Boolean).length ? (
+                                <span className="block text-xs text-muted-foreground">
+                                  {[detail.shipping?.district || detail.shipping?.city, detail.shipping?.region].filter(Boolean).join(' · ')}
+                                </span>
+                              ) : null}
+                            </span>
+                          )}
+                        />
+                      </div>
+                    </section>
+                  )}
 
                   {detail.channelCode === 'ripley' && (
                    <section className="border-b border-border px-6 py-5">

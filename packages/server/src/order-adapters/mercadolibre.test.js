@@ -5,6 +5,7 @@ import {
   mapMercadoLibreCustomer,
   mapMercadoLibreOrderItems,
   mapMercadoLibrePromisedShippingAt,
+  mapMercadoLibreShipping,
   mercadoLibrePaymentStatus,
   mercadoLibreRequestedDocumentType,
 } from './mercadolibre.js';
@@ -83,4 +84,30 @@ test('el plazo de la bandeja sale del envío ME2 o del día siguiente', () => {
   );
   const fallback = mapMercadoLibrePromisedShippingAt(null, '2026-09-05T10:00:00.000Z');
   assert.equal(fallback, '2026-09-06T10:00:00.000Z');
+});
+
+test('arma los datos de envío con dirección, transportista y seguimiento', () => {
+  const shipping = mapMercadoLibreShipping({
+    logisticType: 'drop_off',
+    trackingNumber: '2602663006',
+    raw: {
+      tracking_method: 'OLVA Estándar a domicilio',
+      destination: {
+        shipping_address: {
+          address_line: 'Calle Avelino Andrés Cáceres calle 3',
+          street_name: 'Calle Avelino Andrés Cáceres calle 3',
+          street_number: 'SN',
+          comment: 'Mz. D Lt.9',
+          city: { name: 'Chorrillos' },
+          state: { name: 'Lima Metropolitana' },
+        },
+      },
+    },
+  });
+  assert.equal(shipping.type, 'drop_off');
+  assert.equal(shipping.carrier, 'OLVA Estándar a domicilio');
+  assert.equal(shipping.trackingCode, '2602663006');
+  assert.equal(shipping.city, 'Chorrillos');
+  assert.equal(shipping.region, 'Lima Metropolitana');
+  assert.match(shipping.address, /Calle Avelino/);
 });
