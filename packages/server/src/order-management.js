@@ -2,7 +2,7 @@ import { orderDateTimestamp } from './order-date.js';
 import { listOrderDocuments } from './order-documents.js';
 import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { MARKETPLACE_RAW_IMAGE_SQL } from './catalog/item-image.js';
 import { stockPhase } from './catalog/stock-phase.js';
 import { applyInventoryMovement, applyInventoryPendingReturn } from './catalog/inventory-service.js';
@@ -1834,8 +1834,28 @@ export async function getOrder(orderId, db) {
           coalesce(oi.commission_amount, p.commission_amount) as commission_amount,
           oi.provider_status, oi.metadata, oi.raw_data,
           oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity, oi.stock_revision,
-          oi.created_at, oi.updated_at
-        from order_items oi left join products p on p.id=oi.product_id
+          oi.created_at, oi.updated_at,
+          nullif(trim(coalesce(p.name, psku.name, '')), '') as product_name,
+          coalesce(
+            nullif(p.image_url, ''),
+            nullif(psku.image_url, ''),
+            nullif(listing.metadata->'images'->>0, ''),
+            nullif(listing.metadata->'images'->0->>'Url', ''),
+            nullif(listing.metadata->'images'->0->>'url', ''),
+            nullif(listing.metadata->>'imageUrl', ''),
+            ${MARKETPLACE_RAW_IMAGE_SQL}
+          ) as image_url,
+          coalesce(
+            nullif(trim(listing.shop_sku), ''),
+            nullif(trim(oi.provider_sku), ''),
+            nullif(trim(oi.raw_data->>'ShopSku'), ''),
+            nullif(trim(oi.raw_data->>'ShopSKU'), '')
+          ) as shop_sku
+        from order_items oi
+        left join products p on p.id=oi.product_id
+        left join products psku
+          on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+        left join product_listings listing on listing.id = oi.listing_id
         where oi.order_id=$1 order by oi.id`,
       [id],
     ),
@@ -1868,6 +1888,9 @@ export async function getOrder(orderId, db) {
       sku: row.sku,
       providerSku: row.provider_sku,
       description: row.description,
+      productName: row.product_name || null,
+      imageUrl: row.image_url || null,
+      shopSku: row.shop_sku || null,
       quantity: Number(row.quantity),
       unitPrice: row.unit_price == null ? null : Number(row.unit_price),
       discountAmount: row.discount_amount == null ? null : Number(row.discount_amount),
@@ -2137,7 +2160,7 @@ async function updateManualOrderWithDb(orderId, input, db) {
       if (unitPrice == null || unitPrice < 0) throw new Error('El precio no puede ser negativo.');
       await db.query(
         `update order_items
-           set quantity=$2, unit_price=$3, total=round(($2 * $3)::numeric, 2), updated_at=now()
+           set quantity=$2, unit_price=$3, total=round($2::numeric * $3::numeric, 2), updated_at=now()
          where id=$1 and order_id=$4`,
         [itemId, quantity, unitPrice, id],
       );
@@ -2205,7 +2228,8 @@ async function updateManualOrderWithDb(orderId, input, db) {
       'order.updated',
       'manual',
       optionalText(input.actorUserId, 300),
-      `order.manual_edit:${id}:${persisted.updated_at}`,
+      // `updated_at` como texto solo llega al segundo: dos ediciones seguidas chocaban en la clave única.
+      `order.manual_edit:${id}:${randomUUID()}`,
       JSON.stringify(changes.before),
       JSON.stringify(changes.after),
       JSON.stringify({ reason: 'manual_edit' }),
