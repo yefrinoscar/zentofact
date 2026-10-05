@@ -3202,7 +3202,7 @@ function movementLabel(type: string, reason?: string | null) {
   if (type === 'sale_reversal') {
     return String(reason || '').startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
   }
-  return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
+  return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', transfer_in: 'Transferencia recibida', transfer_out: 'Transferencia enviada', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
 }
 
 function movementCaption(movement: Movement) {

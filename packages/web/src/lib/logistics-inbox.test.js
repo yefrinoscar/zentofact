@@ -248,7 +248,7 @@ test('el flujo de despacho marca los pasos completados', () => {
   );
 });
 
-test('Mercado Libre espera ME2 y luego imprime 10×15', () => {
+test('Mercado Libre espera ME2 y luego habilita la etiqueta', () => {
   assert.match(
     logisticsFlowCopy({ channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1 }),
     /Espera a que Mercado Envíos/,
@@ -265,11 +265,11 @@ test('Mercado Libre espera ME2 y luego imprime 10×15', () => {
         shippingSubstatus: 'ready_to_print',
       },
     }),
-    /10×15/,
+    /habilitó la etiqueta/,
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => step.label),
-    ['Preparar', 'Etiqueta ME2', 'Despachar'],
+    ['Pedido confirmado', 'Etiqueta ME2', 'Despachar'],
   );
 });
 

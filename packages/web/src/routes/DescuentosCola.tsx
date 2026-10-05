@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, CheckCircle2, Clock, Link2, Loader2, PackageMinus, Pause, Play,
+  AlertTriangle, ArrowRightLeft, CheckCircle2, Clock, Link2, Loader2, PackageMinus, Pause, Play,
   RefreshCw, RotateCcw, XCircle,
 } from 'lucide-react';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
+import { StockTransferSheet } from '../components/stock-transfer/StockTransferSheet';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
@@ -87,6 +88,7 @@ type Job = {
   insufficient_items?: number;
   order_status?: string | null;
   fulfillment_status?: string | null;
+  transfer?: { code: string; quantity: number; sourceMainSku: string | null; createdAt: string } | null;
 };
 
 type JobsPage = {
@@ -514,6 +516,7 @@ export default function DescuentosCola() {
   const [submittedProductSearch, setSubmittedProductSearch] = useState('');
   const [assigningProductId, setAssigningProductId] = useState<number | null>(null);
   const [reportingJobId, setReportingJobId] = useState<number | null>(null);
+  const [transferJob, setTransferJob] = useState<Job | null>(null);
 
   const configQuery = useQuery<Config>({
     queryKey: ['stock-jobs', 'config'],
@@ -916,6 +919,16 @@ export default function DescuentosCola() {
                             <RotateCcw className="h-3 w-3" /> Reintentar
                           </button>
                         )}
+                        {(failed || job.status === 'skipped') && Number(job.insufficient_items) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setTransferJob(job)}
+                            title="Mover stock desde otro producto y reintentar"
+                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-accent"
+                          >
+                            <ArrowRightLeft className="h-3 w-3" /> Mover stock
+                          </button>
+                        )}
                         {failed && Number(job.insufficient_items) > 0 && (
                           <button
                             type="button"
@@ -983,6 +996,12 @@ export default function DescuentosCola() {
         description={assignmentItem
           ? `Elige el maestro para ${assignmentItem.sellerSku}. La asociación se aplicará a sus pedidos pendientes.`
           : 'Elige el producto maestro.'}
+      />
+
+      <StockTransferSheet
+        job={transferJob}
+        open={transferJob != null}
+        onOpenChange={(open) => { if (!open) setTransferJob(null); }}
       />
     </div>
   );

@@ -53,6 +53,7 @@ await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
 const stockAssociations = await import('./catalog/stock-associations.js');
+const stockTransfers = await import('./catalog/stock-transfers.js');
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
 const { shouldListenStockOrder } = await import('./catalog/stock-commitment.js');
@@ -1170,6 +1171,37 @@ app.post('/catalog/stock-jobs/unmatched/:orderItemId/assign', async (c) => {
       orderItemId: Number(c.req.param('orderItemId')),
       productId: (await c.req.json()).productId,
     }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+// Resolución de stock corto: diagnóstico, candidatos de origen, transferencia
+// atómica entre productos maestros y reencolado de pedidos cubiertos.
+app.get('/catalog/stock-jobs/jobs/:id/shortage', async (c) => {
+  try {
+    return ok(c, await stockTransfers.getJobShortage(
+      Number(c.req.param('id')),
+      c.req.query('orderItemId'),
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/stock-jobs/requeue', async (c) => {
+  try { return ok(c, await stockTransfers.requeueStockJobs(await c.req.json())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/:id/inventory/transfer-candidates', async (c) => {
+  try { return ok(c, await stockTransfers.listTransferCandidates(c.req.param('id'), c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/inventory/transfers/preview', async (c) => {
+  try { return ok(c, await stockTransfers.previewTransfer(await c.req.json())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/inventory/transfers', async (c) => {
+  try {
+    const body = await c.req.json();
+    return ok(c, await stockTransfers.createTransfer({
+      ...body,
+      idempotencyKey: c.req.header('idempotency-key') || body.idempotencyKey,
+    }, c.get('user')?.id), 201);
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
