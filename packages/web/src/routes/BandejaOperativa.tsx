@@ -11,8 +11,8 @@ import { sellerShortName } from '../lib/seller-name';
 import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
-  limaDeadlineKey, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
-  logisticsReadyActionLabel, logisticsUpdatedClock, remainingReadyToPrint,
+  limaDeadlineKey, logisticsAddressSummary, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
+  logisticsReadyActionLabel, logisticsUpdatedClock, remainingReadyToPrint, sellerDispatchesMercadoLibre,
   LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
 import {
@@ -179,12 +179,19 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
                       const selectable = canMarkLogisticsReady(order) || canMarkLogisticsDelivered(order) || (isReady && canPrintLogisticsLabel(order));
                       const printed = labelWasPrinted(order);
+                      const addressSummary = logisticsAddressSummary(order.shipping);
                       const rowClass = cn('grid grid-cols-1 items-center gap-x-3 gap-y-2 py-3 hover:bg-muted/30 sm:grid-cols-[20px_minmax(0,1fr)] sm:px-3', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
                       const content = <>
                         <div className="hidden sm:block">{view.stage !== 'shipped' && !isChecklist && <SelectionBox checked={selectable && selected.has(order.id)} disabled={locked || !selectable || (isPending && !view.canDispatch)} label={`Seleccionar pedido ${order.externalOrderNumber}`} onChange={() => toggle(order)} />}</div>
                         <div className="min-w-0 self-start pt-1">
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
+                          {addressSummary && (
+                            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground" title={addressSummary}>{addressSummary}</p>
+                          )}
+                          {order.channelCode === 'mercado_libre' && sellerDispatchesMercadoLibre(order.metadata?.logisticType) && (
+                            <span className="mt-1 inline-flex items-center rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground" title="Tú llevas el paquete al punto de entrega de Mercado Envíos">Despachas tú</span>
+                          )}
                         </div>
                         <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
