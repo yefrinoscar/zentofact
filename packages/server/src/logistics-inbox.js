@@ -846,7 +846,16 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
         skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta Mercado Libre.' });
       }
     }
-    if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
+    if (buffers.length) {
+      // Mercado Libre entrega dos páginas: la etiqueta y una hoja de
+      // identificación. Solo se imprime la etiqueta (página 1).
+      pdfParts.push(await composeA4ShippingLabelSheet(
+        buffers,
+        buffers.map(() => [1]),
+        [],
+        { channel: 'mercado_libre' },
+      ));
+    }
   }
 
   const manual = orders.filter((order) => order.channelCode === 'manual');
