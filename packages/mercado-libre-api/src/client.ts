@@ -220,9 +220,9 @@ export class MercadoLibreApiClient {
 
   async getShipment(shipmentId: string): Promise<MercadoLibreShipment> {
     const id = encodeURIComponent(requiredId(shipmentId, 'shipmentId'));
-    const shipment = normalizeShipment(await this.getJson(`/shipments/${id}`, {
-      'x-format-new': 'true',
-    }));
+    // Sin x-format-new: el formato nuevo omite mode y logistic_type, y la
+    // bandeja los necesita para saber si la etiqueta ME2 es imprimible.
+    const shipment = normalizeShipment(await this.getJson(`/shipments/${id}`));
     if (!shipment) throw new Error('Mercado Libre devolvió un envío inválido.');
     return shipment;
   }
