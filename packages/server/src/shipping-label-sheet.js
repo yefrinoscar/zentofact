@@ -1,6 +1,17 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import {
+  PDFDocument,
+  StandardFonts,
+  clip,
+  closePath,
+  endPath,
+  lineTo,
+  moveTo,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+} from 'pdf-lib';
 
 export const A4_WIDTH = 595.28;
 export const A4_HEIGHT = 841.89;
@@ -12,6 +23,12 @@ const MAX_LABELS = 500;
 const LABEL_TIMEOUT_MS = 45_000;
 const LABEL_WIDTH_RATIO = 0.445;
 const LABEL_HEIGHT_RATIO = 0.495;
+// Etiqueta ME2 de 10 × 15 cm en la esquina superior izquierda de una hoja A4
+// horizontal, el formato en que Mercado Libre entrega la etiqueta.
+const ML_LABEL_LEFT_RATIO = 0.037;
+const ML_LABEL_RIGHT_RATIO = 0.341;
+const ML_LABEL_BOTTOM_RATIO = 0.244;
+const ML_LABEL_TOP_RATIO = 0.952;
 const LABEL_REFERENCE_HEIGHT = 24;
 const INVENTORY_MARGIN = 28;
 const INVENTORY_HEADER_HEIGHT = 58;
@@ -31,13 +48,24 @@ const INVENTORY_COLORS = {
   white: rgb(1, 1, 1),
 };
 
-export function shippingLabelCropBox(page) {
+export function shippingLabelCropBox(page, options = {}) {
   const box = page.getCropBox();
   const shortSide = Math.min(box.width, box.height);
   const longSide = Math.max(box.width, box.height);
   const pageRatio = shortSide / longSide;
   const isFullSheet = pageRatio >= 0.69 && pageRatio <= 0.73;
   if (!isFullSheet) return undefined;
+  if (box.width > box.height) {
+    // Mercado Libre entrega la etiqueta 10 × 15 dentro de una hoja A4
+    // horizontal; otras hojas horizontales se conservan completas.
+    if (String(options.channel || '').trim().toLowerCase() !== 'mercado_libre') return undefined;
+    return {
+      left: box.x + box.width * ML_LABEL_LEFT_RATIO,
+      bottom: box.y + box.height * ML_LABEL_BOTTOM_RATIO,
+      right: box.x + box.width * ML_LABEL_RIGHT_RATIO,
+      top: box.y + box.height * ML_LABEL_TOP_RATIO,
+    };
+  }
   return {
     left: box.x,
     bottom: box.y + box.height * (1 - LABEL_HEIGHT_RATIO),
@@ -770,7 +798,7 @@ export async function appendTicketInventoryPages(pdf, ticketInventories, options
   };
 }
 
-export async function composeA4ShippingLabelSheet(pdfBuffers, selectedLabelIndexes = [], ticketReferences = []) {
+export async function composeA4ShippingLabelSheet(pdfBuffers, selectedLabelIndexes = [], ticketReferences = [], options = {}) {
   if (!Array.isArray(pdfBuffers) || pdfBuffers.length === 0) {
     throw new Error('Selecciona al menos una etiqueta para imprimir.');
   }
@@ -789,7 +817,7 @@ export async function composeA4ShippingLabelSheet(pdfBuffers, selectedLabelIndex
       ? selected.map((labelIndex) => source.getPage(labelIndex - 1))
       : source.getPages();
     const labels = await Promise.all(pages.map((page) => (
-      output.embedPage(page, shippingLabelCropBox(page))
+      output.embedPage(page, shippingLabelCropBox(page, options))
     )));
 
     for (let labelIndex = 0; labelIndex < labels.length; labelIndex += 1) {
@@ -811,12 +839,29 @@ export async function composeA4ShippingLabelSheet(pdfBuffers, selectedLabelIndex
       const cellX = PAGE_MARGIN + column * cellWidth;
       const cellY = A4_HEIGHT - PAGE_MARGIN - (row + 1) * cellHeight;
 
+      const drawX = cellX + (cellWidth - width) / 2;
+      const drawY = cellY + referenceHeight + (cellHeight - referenceHeight - height) / 2;
+
+      // pdf-lib no limita el contenido del embed a la caja del recorte: sin
+      // este clip, lo que queda fuera se derrama sobre las celdas vecinas y
+      // solo lo corta el borde de la hoja.
+      page.pushOperators(
+        pushGraphicsState(),
+        moveTo(drawX, drawY),
+        lineTo(drawX + width, drawY),
+        lineTo(drawX + width, drawY + height),
+        lineTo(drawX, drawY + height),
+        closePath(),
+        clip(),
+        endPath(),
+      );
       page.drawPage(label, {
-        x: cellX + (cellWidth - width) / 2,
-        y: cellY + referenceHeight + (cellHeight - referenceHeight - height) / 2,
+        x: drawX,
+        y: drawY,
         width,
         height,
       });
+      page.pushOperators(popGraphicsState());
 
       if (reference) {
         const code = reference.code || ticketCode(reference.ticketNumber);

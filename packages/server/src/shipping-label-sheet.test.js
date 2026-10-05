@@ -181,6 +181,46 @@ test('detecta una hoja A4 reducida por su proporción y no por sus puntos físic
   });
 });
 
+test('recorta la etiqueta ME2 de la esquina de una hoja A4 horizontal', async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([A4_HEIGHT, A4_WIDTH]);
+
+  assert.equal(shippingLabelCropBox(page), undefined);
+  assert.deepEqual(shippingLabelCropBox(page, { channel: 'mercado_libre' }), {
+    left: A4_HEIGHT * 0.037,
+    bottom: A4_WIDTH * 0.244,
+    right: A4_HEIGHT * 0.341,
+    top: A4_WIDTH * 0.952,
+  });
+});
+
+test('limita el dibujo del embed al recorte para no derramar contenido vecino', async () => {
+  const source = await PDFDocument.create();
+  const page = source.addPage([A4_HEIGHT, A4_WIDTH]);
+  page.drawText('ETIQUETA ME2', { x: 80, y: A4_WIDTH - 80, size: 14 });
+  page.drawText('HOJA DE IDENTIFICACION', { x: 430, y: A4_WIDTH - 80, size: 14 });
+
+  const composed = await composeA4ShippingLabelSheet(
+    [Buffer.from(await source.save())],
+    [[1]],
+    [],
+    { channel: 'mercado_libre' },
+  );
+  assert.equal((await PDFDocument.load(composed)).getPageCount(), 1);
+
+  const { getDocument, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const document = await getDocument({ data: new Uint8Array(composed), disableWorker: true, verbosity: 0 }).promise;
+  const outputPage = await document.getPage(1);
+  const operators = await outputPage.getOperatorList();
+  const clipIndex = operators.fnArray.indexOf(OPS.clip);
+  const formIndex = operators.fnArray.indexOf(OPS.paintFormXObjectBegin);
+  assert.notEqual(clipIndex, -1, 'la hoja debe recortar el embed');
+  assert.notEqual(formIndex, -1, 'la hoja debe dibujar la etiqueta embebida');
+  assert.ok(clipIndex < formIndex, 'el recorte debe aplicarse antes de dibujar la etiqueta');
+  outputPage.cleanup();
+  await document.destroy();
+});
+
 test('obtiene cada etiqueta y devuelve un único PDF imprimible', async () => {
   const label = await sampleLabel();
   const seen = [];
