@@ -910,23 +910,21 @@ export default function DescuentosCola() {
                             ({shownAttempts} de {config.maxAttempts || 3} intentos)
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => setTransferJob(job)}
+                          title="Mover stock desde otro producto"
+                          className="ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-accent"
+                        >
+                          <ArrowRightLeft className="h-3 w-3 shrink-0" /> Mover stock
+                        </button>
                         {canRetry && (
                           <button
                             onClick={() => retryJob(job.id)}
                             title="Volver a intentar"
-                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                            className="ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
                           >
-                            <RotateCcw className="h-3 w-3" /> Reintentar
-                          </button>
-                        )}
-                        {(failed || job.status === 'skipped') && Number(job.insufficient_items) > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setTransferJob(job)}
-                            title="Mover stock desde otro producto y reintentar"
-                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-accent"
-                          >
-                            <ArrowRightLeft className="h-3 w-3" /> Mover stock
+                            <RotateCcw className="h-3 w-3 shrink-0" /> Reintentar
                           </button>
                         )}
                         {failed && Number(job.insufficient_items) > 0 && (

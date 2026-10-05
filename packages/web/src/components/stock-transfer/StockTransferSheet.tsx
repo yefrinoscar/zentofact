@@ -25,6 +25,7 @@ type ShortageLine = {
   quantity: number;
   applied: number;
   missing: number;
+  stockState: string;
   sellerSku: string | null;
   shopSku: string | null;
   listingId: number | null;
@@ -298,7 +299,7 @@ export function StockTransferSheet({
         reasonCode,
         note: note.trim() || undefined,
         stockJobId: jobId,
-        retry,
+        retry: retryEnabled,
         acknowledgeCommitted: ack,
       }, idempotencyKey);
       setResult(response as TransferResult);
@@ -307,7 +308,7 @@ export function StockTransferSheet({
       await queryClient.invalidateQueries({ queryKey: ['product-inventory'] });
       await queryClient.invalidateQueries({ queryKey: ['product-movements'] });
       showSnackbar({
-        message: `Stock movido · ${(response as TransferResult).transfer.code}${retry && (response as TransferResult).requeued.length ? ` · ${(response as TransferResult).requeued.length} pedido(s) reencolado(s)` : ''}`,
+        message: `Stock movido · ${(response as TransferResult).transfer.code}${retryEnabled && (response as TransferResult).requeued.length ? ` · ${(response as TransferResult).requeued.length} pedido(s) reencolado(s)` : ''}`,
       });
     } catch (error: any) {
       setFormError(error?.message || 'No se pudo mover el stock.');
@@ -332,6 +333,9 @@ export function StockTransferSheet({
 
   const target = shortage?.lines.find((line) => line.orderItemId === shortage.selectedOrderItemId)?.product ?? null;
   const targetInventory = shortage?.lines.find((line) => line.orderItemId === shortage.selectedOrderItemId)?.inventory ?? null;
+  const isShortLine = (selectedLine?.missing ?? 0) > 0;
+  const orderTerminal = ['cancelled', 'returned'].includes(String(shortage?.order.fulfillmentStatus || '').toLowerCase());
+  const retryEnabled = retry && isShortLine && !orderTerminal;
   const committedWarning = preview?.requiresAcknowledgeCommitted === true;
   const previewErrors = preview?.errors ?? [];
   const canSubmit = Boolean(sourceId && targetProductId && validQuantity && !previewErrors.length && (!committedWarning || ack) && !submitting);
@@ -417,8 +421,8 @@ export function StockTransferSheet({
           ) : !shortage ? null : shortage.lines.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <CheckCircle2 className="size-8 text-muted-foreground/50" />
-              <p className="text-sm font-medium">Esta orden ya no tiene líneas sin stock.</p>
-              <p className="text-sm text-muted-foreground">Actualiza la cola para ver su estado actual.</p>
+              <p className="text-sm font-medium">Esta orden no tiene líneas para mover stock.</p>
+              <p className="text-sm text-muted-foreground">Actualiza la cola o revisa el pedido.</p>
             </div>
           ) : (
             <div className="space-y-5 p-5">
@@ -476,13 +480,21 @@ export function StockTransferSheet({
                   <NumberCell label="En devolución" value={selectedLine?.inventory?.pendingReturn ?? 0} />
                   <NumberCell label="Disponible" value={selectedLine?.inventory?.available ?? 0} tone={(selectedLine?.inventory?.available ?? 0) <= 0 ? 'danger' : undefined} />
                 </div>
-                <p className="text-sm text-foreground">
-                  Faltan <span className="font-semibold tabular-nums">{selectedLine?.missing ?? 0} u</span> en{' '}
-                  <span className="font-mono">{selectedLine?.product?.mainSku || 'el producto'}</span>
-                  {shortage.missingForProduct > (selectedLine?.missing ?? 0)
-                    ? <> · <span className="font-semibold tabular-nums">{shortage.missingForProduct} u</span> para todos los pedidos que esperan este producto.</>
-                    : '.'}
-                </p>
+                {isShortLine ? (
+                  <p className="text-sm text-foreground">
+                    Faltan <span className="font-semibold tabular-nums">{selectedLine?.missing ?? 0} u</span> en{' '}
+                    <span className="font-mono">{selectedLine?.product?.mainSku || 'el producto'}</span>
+                    {shortage.missingForProduct > (selectedLine?.missing ?? 0)
+                      ? <> · <span className="font-semibold tabular-nums">{shortage.missingForProduct} u</span> para todos los pedidos que esperan este producto.</>
+                      : '.'}
+                  </p>
+                ) : (
+                  <p className="text-sm text-foreground">
+                    <span className="font-mono">{selectedLine?.product?.mainSku || 'El producto'}</span> tiene{' '}
+                    <span className="font-semibold tabular-nums">{selectedLine?.inventory?.available ?? 0} u</span> disponibles.
+                    {' '}{orderTerminal ? 'El pedido está cancelado; igual puedes mover stock.' : 'Puedes mover unidades desde otro producto igualmente.'}
+                  </p>
+                )}
                 {shortage.waiting.length ? (
                   <div className="overflow-hidden rounded-md border border-border">
                     <table className="w-full text-xs">
@@ -664,10 +676,18 @@ export function StockTransferSheet({
                     className="mt-1"
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={retry} onCheckedChange={(value) => setRetry(value === true)} />
-                  Reintentar los pedidos cubiertos al confirmar
-                </label>
+                {isShortLine && !orderTerminal ? (
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={retry} onCheckedChange={(value) => setRetry(value === true)} />
+                    Reintentar los pedidos cubiertos al confirmar
+                  </label>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {orderTerminal
+                      ? 'Pedido cancelado: no se reintenta el descuento.'
+                      : 'Sin líneas pendientes: el movimiento no reintenta nada.'}
+                  </p>
+                )}
               </section>
 
               {/* Efecto */}
@@ -709,9 +729,11 @@ export function StockTransferSheet({
                         </table>
                       </div>
                       <p className="text-sm text-foreground">
-                        {preview.covered.length
-                          ? <>Cubre <span className="font-semibold">{preview.covered.length}</span> de {preview.covered.length + preview.uncovered.length} pedidos que esperan {preview.target.mainSku}: {preview.covered.map((entry) => entry.orderNumber || entry.jobId).join(', ')}.</>
-                          : <>No cubre ningún pedido todavía: faltan unidades en el destino.</>}
+                        {preview.target.missingBefore === 0
+                          ? <>No hay pedidos esperando {preview.target.mainSku}.</>
+                          : preview.covered.length
+                            ? <>Cubre <span className="font-semibold">{preview.covered.length}</span> de {preview.covered.length + preview.uncovered.length} pedidos que esperan {preview.target.mainSku}: {preview.covered.map((entry) => entry.orderNumber || entry.jobId).join(', ')}.</>
+                            : <>No cubre ningún pedido todavía: faltan unidades en el destino.</>}
                         {preview.uncovered.length ? <span className="text-muted-foreground"> {preview.uncovered.length} seguirán en Requiere atención.</span> : null}
                       </p>
                       {previewErrors.length ? (
@@ -755,7 +777,7 @@ export function StockTransferSheet({
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
             <Button onClick={openConfirm} disabled={!canSubmit}>
               <ArrowRightLeft className="h-4 w-4" />
-              {retry ? `Mover ${validQuantity ? quantityNumber : 0} u y reintentar` : `Mover ${validQuantity ? quantityNumber : 0} u`}
+              {retryEnabled ? `Mover ${validQuantity ? quantityNumber : 0} u y reintentar` : `Mover ${validQuantity ? quantityNumber : 0} u`}
             </Button>
           </div>
         ) : null}
@@ -777,7 +799,7 @@ export function StockTransferSheet({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-sm">
-            {retry && preview?.covered.length ? (
+            {retryEnabled && preview?.covered.length ? (
               <p>Se reintentará: <span className="font-mono text-xs">{preview.covered.map((entry) => entry.orderNumber || entry.jobId).join(', ')}</span></p>
             ) : null}
             <p>Motivo: {REASONS.find((reason) => reason.value === reasonCode)?.label || reasonCode}{note.trim() ? ` · ${note.trim()}` : ''}</p>
