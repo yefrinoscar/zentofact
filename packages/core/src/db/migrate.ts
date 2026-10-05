@@ -1333,7 +1333,7 @@ const DDL = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (movement_type IN (
       'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
-      'return', 'initial', 'import'
+      'return', 'initial', 'import', 'transfer_out', 'transfer_in'
     )),
     CHECK (quantity_delta <> 0)
   );
@@ -1349,6 +1349,45 @@ const DDL = `
     ON inventory_movements(order_id) WHERE order_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
     ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
+
+  -- Transferencias de stock entre productos maestros: mover unidades de un
+  -- duplicado (u otro maestro) al producto que necesita el descuento. Cada fila
+  -- genera dos movimientos en la misma transacción: transfer_out en el origen
+  -- y transfer_in en el destino. No toca publicaciones ni marketplaces.
+  DO $$ BEGIN
+    ALTER TABLE inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_movement_type_check;
+    ALTER TABLE inventory_movements ADD CONSTRAINT inventory_movements_movement_type_check
+      CHECK (movement_type IN (
+        'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
+        'return', 'initial', 'import', 'transfer_out', 'transfer_in'
+      ));
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+  CREATE TABLE IF NOT EXISTS inventory_transfers (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    source_product_id BIGINT NOT NULL REFERENCES products(id),
+    target_product_id BIGINT NOT NULL REFERENCES products(id),
+    quantity NUMERIC(14,4) NOT NULL,
+    reason_code TEXT NOT NULL,
+    note TEXT,
+    actor_user_id TEXT NOT NULL,
+    stock_job_id BIGINT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    requeued_job_ids BIGINT[] NOT NULL DEFAULT '{}',
+    acknowledged_committed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (quantity > 0),
+    CHECK (source_product_id <> target_product_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_transfers_source
+    ON inventory_transfers(source_product_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_transfers_target
+    ON inventory_transfers(target_product_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_transfers_job
+    ON inventory_transfers(stock_job_id) WHERE stock_job_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_inventory_transfers_requeued
+    ON inventory_transfers USING gin (requeued_job_ids);
 
   -- Registro auditable de devoluciones. Entran directo al stock vendible; un
   -- operador puede marcar por producto si la devolución no llegó o es inusable.

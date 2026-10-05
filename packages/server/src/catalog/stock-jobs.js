@@ -350,7 +350,15 @@ const JOB_LIST_COLUMNS = `j.id, j.company_id,
             coalesce(item_summary.reserved_units, 0) as reserved_units,
             coalesce(item_summary.applied_units, 0) as applied_units,
             coalesce(item_summary.unmatched_items, 0)::int as unmatched_items,
-            coalesce(item_summary.insufficient_items, 0)::int as insufficient_items`;
+            coalesce(item_summary.insufficient_items, 0)::int as insufficient_items,
+            (select jsonb_build_object(
+               'code', t.code, 'quantity', t.quantity,
+               'sourceMainSku', source_product.main_sku, 'createdAt', t.created_at)
+               from inventory_transfers t
+               join products source_product on source_product.id = t.source_product_id
+              where t.stock_job_id = j.id or j.id = any(t.requeued_job_ids)
+              order by t.created_at desc
+              limit 1) as transfer`;
 
 // Señales de reversión por job, baratas de calcular (sin jsonb ni imágenes).
 // Reproduce isReintegratedStockJob del frontend: una línea reintegrada y sin

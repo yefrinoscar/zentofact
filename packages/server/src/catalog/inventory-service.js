@@ -11,7 +11,7 @@ import {
 
 export const MOVEMENT_TYPES = [
   'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
-  'return', 'initial', 'import',
+  'return', 'initial', 'import', 'transfer_out', 'transfer_in',
 ];
 
 function envBoolean(name, fallback = false) {
