@@ -24,6 +24,7 @@ import {
   stockJobSourceLabel,
   stockOrderStatusLabel,
   stockPreviewFooter,
+  stockTerminalKind,
   visibleStockJobStatus,
 } from '../lib/stock-job-presentation';
 
@@ -891,6 +892,7 @@ export default function DescuentosCola() {
               <tbody>
                 {jobs.map((job) => {
                   const failed = job.status === 'failed';
+                  const terminal = stockTerminalKind(job) != null;
                   const unmatchedItem = unmatched.find((item) => item.orderNumbers.includes(job.order_number));
                   const canRetry = (failed || job.status === 'skipped') && !unmatchedItem;
                   const shownAttempts = Math.min(job.attempts, config.maxAttempts || 3);
@@ -910,14 +912,16 @@ export default function DescuentosCola() {
                             ({shownAttempts} de {config.maxAttempts || 3} intentos)
                           </span>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setTransferJob(job)}
-                          title="Mover stock desde otro producto"
-                          className="ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-accent"
-                        >
-                          <ArrowRightLeft className="h-3 w-3 shrink-0" /> Mover stock
-                        </button>
+                        {!terminal ? (
+                          <button
+                            type="button"
+                            onClick={() => setTransferJob(job)}
+                            title="Mover stock desde otro producto"
+                            className="ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-accent"
+                          >
+                            <ArrowRightLeft className="h-3 w-3 shrink-0" /> Mover stock
+                          </button>
+                        ) : null}
                         {canRetry && (
                           <button
                             onClick={() => retryJob(job.id)}

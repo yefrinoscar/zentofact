@@ -492,7 +492,7 @@ export function StockTransferSheet({
                   <p className="text-sm text-foreground">
                     <span className="font-mono">{selectedLine?.product?.mainSku || 'El producto'}</span> tiene{' '}
                     <span className="font-semibold tabular-nums">{selectedLine?.inventory?.available ?? 0} u</span> disponibles.
-                    {' '}{orderTerminal ? 'El pedido está cancelado; igual puedes mover stock.' : 'Puedes mover unidades desde otro producto igualmente.'}
+                    {' '}{orderTerminal ? 'El pedido ya no descuenta.' : 'Puedes mover unidades desde otro producto igualmente.'}
                   </p>
                 )}
                 {shortage.waiting.length ? (
@@ -533,6 +533,17 @@ export function StockTransferSheet({
                 ) : null}
               </section>
 
+              {orderTerminal ? (
+                <div className="flex gap-2 rounded-md border border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Este pedido ya no descuenta ({shortage.order.fulfillmentStatus === 'returned' ? 'devuelto' : 'cancelado'}):
+                    no se mueve stock desde esta orden.
+                  </span>
+                </div>
+              ) : null}
+              {!orderTerminal ? (
+                <>
               {/* Origen */}
               <section className="space-y-3">
                 <h3 className="text-sm font-semibold text-foreground">1 · Producto de origen</h3>
@@ -768,17 +779,24 @@ export function StockTransferSheet({
                   ) : null}
                 </section>
               ) : null}
+                </>
+              ) : null}
             </div>
           )}
         </div>
 
-        {!result && shortage && shortage.lines.length > 0 ? (
+        {!result && shortage && shortage.lines.length > 0 && !orderTerminal ? (
           <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
             <Button onClick={openConfirm} disabled={!canSubmit}>
               <ArrowRightLeft className="h-4 w-4" />
               {retryEnabled ? `Mover ${validQuantity ? quantityNumber : 0} u y reintentar` : `Mover ${validQuantity ? quantityNumber : 0} u`}
             </Button>
+          </div>
+        ) : null}
+        {!result && shortage && shortage.lines.length > 0 && orderTerminal ? (
+          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
           </div>
         ) : null}
         {result ? (
