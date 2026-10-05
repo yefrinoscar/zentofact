@@ -30,12 +30,10 @@ function subscribeOnline(callback: () => void) {
 
 export function ConversationComposer({
   orderId,
-  disabledReason,
   sending,
   onSend,
 }: {
   orderId: number;
-  disabledReason: 'no-permission' | 'waiting-buyer' | null;
   sending: boolean;
   onSend: (input: { text: string; attachmentId?: string; attachmentName?: string }) => void;
 }) {
@@ -47,7 +45,7 @@ export function ConversationComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const trimmed = text.trim();
   const overLimit = trimmed.length > BUYER_MESSAGE_MAX;
-  const canSend = online && !sending && !disabledReason && trimmed.length > 0 && !overLimit;
+  const canSend = online && !sending && trimmed.length > 0 && !overLimit;
 
   const updateText = (value: string) => {
     setText(value);
@@ -133,10 +131,10 @@ export function ConversationComposer({
       <textarea
         rows={2}
         value={text}
-        disabled={Boolean(disabledReason) || !online}
+        disabled={!online}
         onChange={(event) => updateText(event.target.value)}
         onKeyDown={onKeyDown}
-        placeholder={disabledReason === 'waiting-buyer' ? 'Disponible cuando el comprador escriba' : 'Escribe una respuesta…'}
+        placeholder="Escribe una respuesta…"
         aria-label="Mensaje para el comprador"
         aria-describedby={overLimit ? `buyer-message-limit-${orderId}` : undefined}
         className="max-h-40 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
@@ -147,14 +145,6 @@ export function ConversationComposer({
         </p>
       )}
       {fileError && <p className="mt-1 text-xs text-destructive">{fileError}</p>}
-      {disabledReason === 'waiting-buyer' && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          Mercado Libre solo permite responder cuando el comprador escribe primero.
-        </p>
-      )}
-      {disabledReason === 'no-permission' && (
-        <p className="mt-1 text-xs text-muted-foreground">Tu rol puede ver la conversación, pero no responder.</p>
-      )}
       <div className="mt-2 flex items-center gap-2">
         <input
           ref={fileInputRef}
@@ -171,7 +161,7 @@ export function ConversationComposer({
           size="icon"
           aria-label="Adjuntar archivo"
           title="Adjuntar JPG, PNG, PDF o TXT (máx. 25 MB)"
-          disabled={Boolean(disabledReason) || !online || Boolean(attachment)}
+          disabled={!online || Boolean(attachment)}
           onClick={() => fileInputRef.current?.click()}
         >
           <Paperclip />

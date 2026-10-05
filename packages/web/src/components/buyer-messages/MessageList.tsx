@@ -176,9 +176,7 @@ export function MessageList({
           <AlertCircle className="size-5 text-muted-foreground" />
         </span>
         <p className="text-sm font-medium">Aún no hay mensajes</p>
-        <p className="text-xs text-muted-foreground">
-          Mercado Libre solo permite responder cuando el comprador escribe primero. Te avisaremos en la bandeja cuando llegue su mensaje.
-        </p>
+        <p className="text-xs text-muted-foreground">Te avisaremos en la bandeja cuando llegue su mensaje.</p>
       </div>
     );
   }
