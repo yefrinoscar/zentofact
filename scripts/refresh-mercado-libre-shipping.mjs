@@ -47,7 +47,10 @@ const { rows: orders } = await client.query(`
          o.metadata->>'shippingSubstatus' as shipping_substatus,
          o.shipping->>'carrier' as shipping_carrier,
          o.shipping->>'type' as shipping_type,
-         o.shipping->>'trackingCode' as shipping_tracking
+         o.shipping->>'trackingCode' as shipping_tracking,
+         o.shipping->>'address' as shipping_address,
+         o.shipping->>'city' as shipping_city,
+         o.shipping->>'region' as shipping_region
     from orders o
     join order_channel_accounts account on account.id = o.channel_account_id
     join order_channels channel on channel.id = account.channel_id
@@ -120,7 +123,10 @@ for (const order of orders) {
       || currentPromised !== promisedShippingAt
       || (order.shipping_carrier || null) !== (nextShipping.carrier || null)
       || (order.shipping_type || null) !== (nextShipping.type || null)
-      || (order.shipping_tracking || null) !== (nextShipping.trackingCode || null);
+      || (order.shipping_tracking || null) !== (nextShipping.trackingCode || null)
+      || (order.shipping_address || null) !== (nextShipping.address || null)
+      || (order.shipping_city || null) !== (nextShipping.city || null)
+      || (order.shipping_region || null) !== (nextShipping.region || null);
     const detail = [
       `pedido ${order.id}`,
       order.fulfillment_status,
