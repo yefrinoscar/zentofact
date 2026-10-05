@@ -1438,7 +1438,7 @@ export default function PedidosMulticanal() {
                         <DetailField
                           icon={<Truck />}
                           label="Despacho"
-                          content={<span>{mercadoLibreDispatchCopy(detail.metadata?.logisticType)}</span>}
+                          content={<span>{mercadoLibreDispatchCopy(detail.metadata?.shippingMode, detail.metadata?.logisticType)}</span>}
                         />
                         <DetailField
                           icon={<Store />}

@@ -201,10 +201,43 @@ export function sellerDispatchesMercadoLibre(logisticType?: string | null) {
   return MERCADO_LIBRE_SELLER_DISPATCH_TYPES.has(String(logisticType || '').trim().toLowerCase());
 }
 
-export function mercadoLibreDispatchCopy(logisticType?: string | null) {
+/**
+ * Etiqueta operativa para la fila: ME2 con drop off se despacha en el punto de
+ * entrega; el envío personalizado se coordina con el comprador (suele escribir).
+ */
+export function mercadoLibreDispatchLabel(
+  shippingMode?: string | null,
+  logisticType?: string | null,
+): 'Despachas tú' | 'Coordina entrega' | null {
+  if (sellerDispatchesMercadoLibre(logisticType)) return 'Despachas tú';
+  if (String(shippingMode || '').trim().toLowerCase() === 'custom') return 'Coordina entrega';
+  return null;
+}
+
+/** Distrito o ciudad, para la línea corta de la fila. */
+export function logisticsAddressShort(
+  shipping?: { district?: string | null; city?: string | null } | null,
+) {
+  return String(shipping?.district || shipping?.city || '').trim();
+}
+
+/** Dirección completa para el tooltip de la fila. */
+export function logisticsAddressTitle(
+  shipping?: { address?: string | null; district?: string | null; city?: string | null; region?: string | null } | null,
+) {
+  return [shipping?.address, shipping?.district || shipping?.city, shipping?.region]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' · ');
+}
+
+export function mercadoLibreDispatchCopy(shippingMode?: string | null, logisticType?: string | null) {
   const type = String(logisticType || '').trim().toLowerCase();
   if (type === 'cross_docking') return 'Tú despachas: deja el paquete en el punto de Mercado Envíos.';
   if (MERCADO_LIBRE_SELLER_DISPATCH_TYPES.has(type)) return 'Tú despachas: lleva el paquete al punto de entrega.';
+  if (String(shippingMode || '').trim().toLowerCase() === 'custom') {
+    return 'Envío personalizado: coordina la entrega con el comprador.';
+  }
   return 'Despacho por Mercado Envíos.';
 }
 

@@ -6,7 +6,9 @@ import {
   canMarkLogisticsDelivered,
   canMarkLogisticsReady,
   canPrintLogisticsLabel,
+  logisticsAddressShort,
   logisticsAddressSummary,
+  logisticsAddressTitle,
   logisticsItemSku,
   logisticsReadyConfirmCopy,
   logisticsReadyActionLabel,
@@ -15,6 +17,7 @@ import {
   logisticsRipleyLabelSoon,
   RIPLEY_LABEL_SOON_COPY,
   mercadoLibreDispatchCopy,
+  mercadoLibreDispatchLabel,
   sellerDispatchesMercadoLibre,
   groupLogisticsByUrgency,
   labelWasPrinted,
@@ -486,9 +489,28 @@ test('el despacho ME2 lo hace el vendedor (drop off y cross docking)', () => {
   assert.equal(sellerDispatchesMercadoLibre('cross_docking'), true);
   assert.equal(sellerDispatchesMercadoLibre('fulfillment'), false);
   assert.equal(sellerDispatchesMercadoLibre(null), false);
-  assert.match(mercadoLibreDispatchCopy('drop_off'), /Tú despachas/);
-  assert.match(mercadoLibreDispatchCopy('cross_docking'), /punto de Mercado Envíos/);
-  assert.match(mercadoLibreDispatchCopy('fulfillment'), /Mercado Envíos/);
+  assert.match(mercadoLibreDispatchCopy('me2', 'drop_off'), /Tú despachas/);
+  assert.match(mercadoLibreDispatchCopy('me2', 'cross_docking'), /punto de Mercado Envíos/);
+  assert.match(mercadoLibreDispatchCopy('custom', null), /coordina la entrega/);
+  assert.match(mercadoLibreDispatchCopy('me2', 'fulfillment'), /Mercado Envíos/);
+});
+
+test('la etiqueta operativa distingue despacho propio de coordinación', () => {
+  assert.equal(mercadoLibreDispatchLabel('me2', 'drop_off'), 'Despachas tú');
+  assert.equal(mercadoLibreDispatchLabel('custom', null), 'Coordina entrega');
+  assert.equal(mercadoLibreDispatchLabel('me2', 'fulfillment'), null);
+  assert.equal(mercadoLibreDispatchLabel(null, null), null);
+});
+
+test('la fila usa distrito/ciudad y la dirección completa para el tooltip', () => {
+  assert.equal(logisticsAddressShort({ city: 'Chorrillos', region: 'Lima Metropolitana' }), 'Chorrillos');
+  assert.equal(logisticsAddressShort({ district: 'Ate', city: 'Lima' }), 'Ate');
+  assert.equal(
+    logisticsAddressTitle({ address: 'Av. La roncadora', city: 'Ate', region: 'Lima Metropolitana' }),
+    'Av. La roncadora · Ate · Lima Metropolitana',
+  );
+  assert.equal(logisticsAddressShort(null), '');
+  assert.equal(logisticsAddressTitle({}), '');
 });
 
 test('resume la dirección de entrega para la fila de la bandeja', () => {
