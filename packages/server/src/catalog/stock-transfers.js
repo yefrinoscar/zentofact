@@ -189,7 +189,7 @@ export async function getJobShortage(jobIdInput, orderItemIdInput, db) {
          left join products p on p.id = oi.product_id
          left join product_inventory i on i.product_id = oi.product_id
          left join product_listings l on l.id = oi.listing_id
-        where oi.order_id = $1 and oi.stock_state = 'skipped_insufficient'
+        where oi.order_id = $1
         order by oi.id`,
       [jobRow.order_id],
     );
@@ -198,6 +198,7 @@ export async function getJobShortage(jobIdInput, orderItemIdInput, db) {
       quantity: Number(row.quantity),
       applied: Number(row.applied),
       missing: Number(row.missing),
+      stockState: row.stock_state,
       sellerSku: row.seller_sku || null,
       shopSku: row.shop_sku || row.provider_sku || null,
       listingId: row.listing_id == null ? null : Number(row.listing_id),
@@ -212,7 +213,10 @@ export async function getJobShortage(jobIdInput, orderItemIdInput, db) {
   }
 
   const requestedItemId = orderItemIdInput == null || orderItemIdInput === '' ? null : Number(orderItemIdInput);
-  const selected = lines.find((line) => line.orderItemId === requestedItemId) || lines[0] || null;
+  const selected = lines.find((line) => line.orderItemId === requestedItemId)
+    || lines.find((line) => line.missing > 0 && !['applied', 'reversed'].includes(line.stockState))
+    || lines[0]
+    || null;
   const waiting = selected?.product?.id ? await listWaitingJobs(client, selected.product.id) : [];
 
   return {
@@ -587,15 +591,10 @@ export async function createTransfer(input = {}, actorUserId, db) {
 
     if (stockJobId != null) {
       const job = await client.query(
-        'select id, status from inventory_stock_jobs where id=$1 for update',
+        'select id from inventory_stock_jobs where id=$1 for update',
         [stockJobId],
       );
       if (!job.rows.length) throw httpError('Job no encontrado.', 404);
-      if (!['failed', 'skipped', 'pending', 'processing', 'warning'].includes(job.rows[0].status)) {
-        const error = httpError('Esta orden ya no requiere stock.', 409);
-        error.code = 'job_changed';
-        throw error;
-      }
     }
 
     const [sourceProduct, targetProduct] = await Promise.all([
