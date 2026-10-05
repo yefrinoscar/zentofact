@@ -4,6 +4,7 @@ import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
 import { Check, ChevronRight, Layers3, Loader2, MapPin, PackageCheck, Printer, RefreshCw, Search, Truck } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
 import { WorkLoader } from '../components/WorkLoader';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
@@ -198,18 +199,19 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                           {order.channelCode === 'mercado_libre' && (addressSummary || dispatchLabel) && (
-                            <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={addressTitle || undefined}>
+                            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" title={addressTitle || undefined}>
                               <MapPin className="size-3 shrink-0" aria-hidden="true" />
                               <span className="truncate">{addressSummary}</span>
                               {dispatchLabel && (
-                                <span
-                                  className="shrink-0 font-medium text-amber-700"
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 border-amber-300 bg-amber-50 text-amber-800"
                                   title={dispatchLabel === 'Coordina entrega'
                                     ? 'Envío personalizado: los compradores suelen escribir para coordinar la entrega. Revisa la conversación.'
                                     : 'Tú llevas el paquete al punto de entrega de Mercado Envíos.'}
                                 >
-                                  · {dispatchLabel}
-                                </span>
+                                  {dispatchLabel}
+                                </Badge>
                               )}
                             </p>
                           )}
