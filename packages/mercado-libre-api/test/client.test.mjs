@@ -48,7 +48,7 @@ describe('hourPrecision', () => {
 });
 
 describe('MercadoLibreApiClient', () => {
-  it('sends Bearer tokens and the shipment format header', async () => {
+  it('sends Bearer tokens and reads the shipment without the new format', async () => {
     const fetchImpl = mock.fn(async () => new Response(JSON.stringify({ id: 1 }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -65,7 +65,26 @@ describe('MercadoLibreApiClient', () => {
     assert.equal(String(firstCall[0]), 'https://api.mercadolibre.com/users/me');
     assert.equal(String(secondCall[0]), 'https://api.mercadolibre.com/shipments/99');
     assert.equal(new Headers(firstCall[1].headers).get('authorization'), 'Bearer tok');
-    assert.equal(new Headers(secondCall[1].headers).get('x-format-new'), 'true');
+    // El formato nuevo de ML no devuelve mode ni logistic_type.
+    assert.equal(new Headers(secondCall[1].headers).get('x-format-new'), null);
+  });
+
+  it('mapea mode y logistic_type del envío clásico', async () => {
+    const fetchImpl = mock.fn(async () => new Response(JSON.stringify({
+      id: 48157132844,
+      status: 'ready_to_ship',
+      substatus: 'printed',
+      mode: 'me2',
+      logistic_type: 'drop_off',
+      tracking_number: '2602663006',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const shipment = await client.getShipment('48157132844');
+    assert.equal(shipment.status, 'ready_to_ship');
+    assert.equal(shipment.substatus, 'printed');
+    assert.equal(shipment.mode, 'me2');
+    assert.equal(shipment.logisticType, 'drop_off');
+    assert.equal(shipment.trackingNumber, '2602663006');
   });
 
   it('throws on HTTP failures', async () => {
