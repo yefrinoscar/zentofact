@@ -881,6 +881,30 @@ const apiHttp = {
     `/catalog/stock-jobs/unmatched/${orderItemId}/assign`,
     { method: 'POST', body: JSON.stringify({ productId }) },
   ),
+  // Resolución de stock corto: mover unidades desde otro producto maestro.
+  stockJobShortage: (id: number, orderItemId?: number | null) => req(
+    `/catalog/stock-jobs/jobs/${id}/shortage${qs(orderItemId ? { orderItemId } : {})}`,
+  ),
+  stockJobsRequeue: (jobIds: number[]) => req(
+    '/catalog/stock-jobs/requeue',
+    { method: 'POST', body: JSON.stringify({ jobIds }) },
+  ),
+  stockTransferCandidates: (productId: number, params: { q?: string; limit?: number; offset?: number } = {}) => req(
+    `/products/${productId}/inventory/transfer-candidates${qs(params)}`,
+  ),
+  stockTransferPreview: (body: {
+    sourceProductId: number; targetProductId: number; quantity: number;
+    stockJobId?: number | null; acknowledgeCommitted?: boolean;
+  }) => req('/inventory/transfers/preview', { method: 'POST', body: JSON.stringify(body) }),
+  stockTransferCreate: (body: {
+    sourceProductId: number; targetProductId: number; quantity: number;
+    reasonCode: string; note?: string; stockJobId?: number | null;
+    retry?: boolean; acknowledgeCommitted?: boolean;
+  }, idempotencyKey: string) => req('/inventory/transfers', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Idempotency-Key': idempotencyKey },
+  }),
 
   // Conversaciones posventa de Mercado Libre (chat desde la bandeja)
   buyerMessagesUnread: (orderIds: number[]) => req<{ counts: BuyerUnreadCounts }>(

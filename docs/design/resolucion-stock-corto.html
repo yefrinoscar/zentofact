@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mock · Resolver stock corto · ZentoFact</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --fg:#0f172a; --muted:#f1f5f9; --muted-fg:#64748b; --border:#e2e8f0;
+    --primary:#0f172a; --primary-fg:#fff; --accent:#f1f5f9; --ring:#94a3b8;
+    --red:#dc2626; --red-bg:#fef2f2; --red-bd:#fecaca;
+    --amber:#b45309; --amber-bg:#fffbeb; --amber-bd:#fde68a;
+    --em:#047857; --em-bg:#ecfdf5; --em-bd:#a7f3d0;
+    --blue:#1d4ed8; --blue-bg:#eff6ff; --blue-bd:#bfdbfe;
+    --slate-bg:#f8fafc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);background:#e9ecf1}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .num{font-variant-numeric:tabular-nums}
+  .muted{color:var(--muted-fg)}
+  .xs{font-size:12px}.sm{font-size:13px}
+  .fw{font-weight:500}.fb{font-weight:600}
+  .row{display:flex;align-items:center;gap:8px}
+  .between{justify-content:space-between}
+  .wrap{flex-wrap:wrap}
+  .stack>*+*{margin-top:4px}
+  h1.doc{font-size:20px;margin:0 0 4px}
+  .intro{max-width:1240px;margin:24px auto 8px;padding:0 16px}
+  .frame{max-width:1240px;margin:28px auto;padding:0 16px}
+  .frame>.label{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#475569;margin:0 0 8px}
+  .frame>.label span{font-weight:400;text-transform:none;letter-spacing:0;color:#64748b;margin-left:6px}
+  .screen{position:relative;background:var(--bg);border:1px solid #cbd5e1;border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+
+  /* App chrome */
+  .app{display:grid;grid-template-columns:150px 1fr;min-height:560px}
+  .side{background:#fff;border-right:1px solid var(--border);padding:14px 10px}
+  .side .brand{font-weight:700;padding:4px 8px 14px}
+  .side a{display:block;padding:6px 8px;border-radius:6px;color:#334155;text-decoration:none;font-size:13px}
+  .side a.on{background:var(--muted);font-weight:500;color:var(--fg)}
+  .main{padding:16px 20px;min-width:0;overflow-x:auto}
+  .ph{margin-bottom:14px}.ph h2{margin:0;font-size:18px}.ph p{margin:2px 0 0;color:var(--muted-fg);font-size:13px}
+
+  /* controls */
+  .btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;color:var(--fg);font:500 13px/1 inherit;cursor:pointer;white-space:nowrap}
+  .btn.sm{height:28px;padding:0 8px;font-size:12px}
+  .btn.xs{height:24px;padding:0 7px;font-size:11.5px}
+  .btn.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+  .btn.ghost{border-color:transparent;background:transparent}
+  .btn.ghost:hover,.btn:hover{background:var(--accent)}
+  .btn.primary:hover{background:#1e293b}
+  .btn.danger{color:var(--red)}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+  .icon-btn{width:28px;padding:0;justify-content:center}
+  .input{height:36px;border:1px solid var(--border);border-radius:6px;background:#fff;padding:0 10px;display:flex;align-items:center;gap:6px;color:var(--muted-fg);font-size:13px}
+  .input.val{color:var(--fg)}
+  .input.focus{outline:2px solid #cbd5e1;outline-offset:1px}
+  .select{justify-content:space-between}
+  .field label{display:block;font-size:12.5px;font-weight:500;margin-bottom:5px}
+  .field .help{font-size:12px;color:var(--muted-fg);margin-top:4px}
+  textarea.input{height:64px;padding:8px 10px;resize:none;font:13px/1.4 inherit;width:100%;color:var(--fg)}
+  .check{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+  .box{width:16px;height:16px;border:1px solid #94a3b8;border-radius:4px;flex:none;margin-top:1px;display:grid;place-items:center;font-size:11px;background:#fff}
+  .box.on{background:var(--primary);border-color:var(--primary);color:#fff}
+  .radio{width:16px;height:16px;border:1px solid #94a3b8;border-radius:50%;flex:none;display:grid;place-items:center;background:#fff}
+  .radio.on::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--primary)}
+
+  /* badges */
+  .badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:6px;border:1px solid;font-size:11.5px;font-weight:500;white-space:nowrap}
+  .b-red{color:var(--red);background:var(--red-bg);border-color:var(--red-bd)}
+  .b-amber{color:var(--amber);background:var(--amber-bg);border-color:var(--amber-bd)}
+  .b-em{color:var(--em);background:var(--em-bg);border-color:var(--em-bd)}
+  .b-blue{color:var(--blue);background:var(--blue-bg);border-color:var(--blue-bd)}
+  .b-slate{color:#475569;background:var(--slate-bg);border-color:var(--border)}
+  .tag{display:inline-flex;height:18px;align-items:center;padding:0 6px;border-radius:4px;font-size:10.5px;font-weight:600;letter-spacing:.02em}
+  .t-fal{background:#e8f5e1;color:#3f7d20}.t-rip{background:#f3e8ff;color:#7e22ce}.t-ml{background:#fff6cc;color:#7a5d00}
+
+  /* table panel */
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .panel-h{background:rgba(241,245,249,.5);padding:10px 16px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--muted-fg)}
+  .seg{display:inline-flex;gap:2px;background:var(--muted);padding:3px;border-radius:12px}
+  .seg span{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border-radius:9px;font-size:13px;font-weight:500;color:var(--muted-fg)}
+  .seg span.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .seg .ct{min-width:18px;text-align:center;border-radius:9px;padding:1px 5px;font-size:11px;background:rgba(255,255,255,.7)}
+  .seg .ct.r{background:#fee2e2;color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:rgba(241,245,249,.6);color:var(--muted-fg);font-weight:500;text-align:left;padding:8px 12px;font-size:12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:9px 12px;border-bottom:1px solid rgba(226,232,240,.7);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  tr.hl td{background:#fffdf5}
+  tr.sel td{background:#f8fafc}
+  tr.dis td{opacity:.5}
+  .r{text-align:right}
+  .thumb{width:36px;height:36px;border-radius:5px;background:linear-gradient(135deg,#d6b26a,#8a6a2a);flex:none;position:relative;overflow:hidden}
+  .thumb::after{content:"";position:absolute;inset:7px;border:2px solid rgba(255,255,255,.55);border-radius:50% 0}
+  .thumb.b{background:linear-gradient(135deg,#d9c08a,#9b7d3d)}
+  .thumb.c{background:linear-gradient(135deg,#a3a3a3,#525252)}
+  .thumb.sm{width:30px;height:30px}
+  .pcell{white-space:nowrap}
+  .pcell .fw{max-width:190px;overflow:hidden;text-overflow:ellipsis}
+  .copy{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted-fg)}
+  .copy svg{opacity:.6}
+
+  /* sheet */
+  .overlay{position:absolute;inset:0;background:rgba(15,23,42,.35)}
+  .sheet{position:absolute;top:0;right:0;bottom:0;width:720px;max-width:100%;background:#fff;border-left:1px solid var(--border);display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(15,23,42,.12)}
+  .sheet-h{padding:16px 20px 12px;border-bottom:1px solid var(--border)}
+  .sheet-h h3{margin:0;font-size:16px}
+  .sheet-b{flex:1;overflow:auto}
+  .sheet-f{border-top:1px solid var(--border);padding:12px 20px;display:flex;justify-content:flex-end;gap:8px;background:#fff}
+  .diag{background:rgba(241,245,249,.5);padding:14px 20px;border-bottom:1px solid var(--border)}
+  .nums{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin-top:12px;border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden}
+  .nums div{padding:7px 10px;border-right:1px solid var(--border)}
+  .nums div:last-child{border-right:0}
+  .nums .k{font-size:11.5px;color:var(--muted-fg)}
+  .nums .v{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+  .sect{padding:16px 20px}
+  .sect+.sect{padding-top:4px}
+  .step{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;margin-bottom:10px}
+  .step i{font-style:normal;width:20px;height:20px;border-radius:50%;background:var(--muted);display:grid;place-items:center;font-size:11.5px;color:#334155}
+  .tabsbar{padding:12px 20px 0}
+  .alert{border:1px solid;border-radius:6px;padding:9px 12px;font-size:13px;display:flex;gap:8px;align-items:flex-start}
+  .a-amber{background:var(--amber-bg);border-color:var(--amber-bd);color:#78350f}
+  .a-red{background:var(--red-bg);border-color:var(--red-bd);color:#7f1d1d}
+  .a-em{background:var(--em-bg);border-color:var(--em-bd);color:#064e3b}
+  .a-slate{background:var(--slate-bg);border-color:var(--border);color:#334155}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .effect td,.effect th{padding:7px 10px}
+  .delta-n{color:var(--red);font-weight:600}.delta-p{color:var(--em);font-weight:600}
+  .arrow{color:var(--muted-fg)}
+
+  /* dialog */
+  .overlay2{position:absolute;inset:0;background:rgba(15,23,42,.45);display:grid;place-items:center}
+  .dialog{width:480px;background:#fff;border-radius:10px;border:1px solid var(--border);box-shadow:0 20px 50px rgba(15,23,42,.25);padding:20px}
+  .dialog h4{margin:0 0 4px;font-size:16px}
+  .kv{display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;font-size:13px;margin:14px 0;padding:12px;background:var(--slate-bg);border-radius:6px}
+
+  /* menu */
+  .menu{position:absolute;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(15,23,42,.14);padding:4px;width:250px;z-index:5}
+  .menu div{padding:7px 9px;border-radius:5px;font-size:13px;display:flex;gap:8px;align-items:center}
+  .menu div.on{background:var(--accent)}
+  .menu hr{border:0;border-top:1px solid var(--border);margin:4px 0}
+
+  .timeline{list-style:none;margin:0;padding:0}
+  .timeline li{display:grid;grid-template-columns:52px 88px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,.7);font-size:13px}
+  .timeline li:last-child{border-bottom:0}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #cbd5e1;border-top-color:#334155;border-radius:50%}
+  .notes{max-width:1240px;margin:8px auto 0;padding:0 16px;font-size:12.5px;color:#475569}
+  .notes li{margin:2px 0}
+  .side-by-side{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .solo{position:relative;height:760px}
+  .solo .sheet{position:absolute;left:0;right:auto;width:100%;box-shadow:none;border-left:0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0 5 5L13 18l-3 3-3-3 3-3 6.7-6.7a4 4 0 0 0-2-3z"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></symbol>
+</svg>
+
+<div class="intro">
+  <h1 class="doc">Resolver stock corto · Mock visual</h1>
+  <p class="muted sm">Vistas estáticas para la spec <span class="mono">docs/design/resolucion-stock-corto.md</span>. Se implementa con <span class="mono">Sheet</span>, <span class="mono">Tabs</span>, <span class="mono">DataTable</span>, <span class="mono">Dialog</span>, <span class="mono">Select</span>, <span class="mono">Input</span>, <span class="mono">Checkbox</span>, <span class="mono">Badge</span> y <span class="mono">DropdownMenu</span> de <span class="mono">components/ui</span>. Datos del caso real: LIMBO · Falabella · Orden 3254021996 · G1H0JAS.</p>
+</div>
+
+<!-- ===================================================== 1. FILA -->
+<section class="frame">
+  <p class="label">1 · Cola de descuentos: fila con acción nueva y estados <span>/descuentos-stock · menú ⋯ abierto en la primera fila</span></p>
+  <div class="screen">
+    <div class="app">
+      <nav class="side">
+        <div class="brand">ZentoFact</div>
+        <a>Recepción de pedidos</a><a>Todos los pedidos</a><a>Productos</a><a class="on">Cola de descuentos</a><a>Boletas</a>
+      </nav>
+      <div class="main">
+        <div class="ph"><h2>Descuentos de stock</h2><p>Cola que descuenta inventario por pedido.</p></div>
+        <div class="panel">
+          <div class="panel-h row between"><span>12 en cola · 3 requieren atención · corte 03/09/2026 12:00</span></div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
+            <div class="seg"><span>Todos <b class="ct">12</b></span><span class="on">Requiere atención <b class="ct r">3</b></span><span>Incidencias <b class="ct">1</b></span><span>En cola <b class="ct">2</b></span><span>Descontados <b class="ct">6</b></span></div>
+          </div>
+          <div style="position:relative">
+          <table>
+            <thead><tr><th>Empresa</th><th>Orden</th><th>Producto</th><th>Estado</th><th>Origen</th><th>Detalle</th><th>Cuándo</th><th class="r"><span style="position:absolute;left:-9999px">Acciones</span></th></tr></thead>
+            <tbody>
+              <tr class="hl">
+                <td><div class="fw">LIMBO</div><span class="tag t-fal">FALABELLA</span></td>
+                <td class="mono num">3254021996</td>
+                <td class="pcell"><div class="row"><div class="thumb sm"></div><div><div class="fw sm">Adorno de Pared de Metal…</div><div class="xs muted">Maestro <span class="mono">G1H0JAS</span> · SKU <span class="mono">CUA12454522</span></div></div></div></td>
+                <td><div class="stack"><span class="badge b-red">Requiere atención</span><br><span class="badge b-amber"><svg width="11" height="11"><use href="#i-clock"/></svg>Despacha hoy 18:00</span></div></td>
+                <td><span class="badge b-slate">Cron</span></td>
+                <td class="xs" style="max-width:230px"><span style="color:var(--red)">1 línea sin stock · faltan 1 u de G1H0JAS</span> <span class="muted">(3 de 3 intentos)</span>
+                  <div class="row" style="margin-top:6px"><button class="btn xs"><svg width="12" height="12"><use href="#i-wrench"/></svg>Resolver</button><span class="badge b-amber">Comparte stock: 3 pedidos</span></div></td>
+                <td class="xs muted num">05/10 09:30</td>
+                <td class="r"><button class="btn sm ghost icon-btn" aria-label="Acciones de la orden 3254021996" style="background:var(--accent)"><svg width="16" height="16"><use href="#i-dots"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><div class="fw">LIMBO</div><span class="tag t-fal">FALABELLA</span></td>
+                <td class="mono num">3254030112</td>
+                <td class="pcell"><div class="row"><div class="thumb sm"></div><div><div class="fw sm">Adorno de Pared de Metal…</div><div class="xs muted">Maestro <span class="mono">G1H0JAS</span></div></div></div></td>
+                <td><span class="badge b-red">Requiere atención</span></td>
+                <td><span class="badge b-slate">Webhook</span></td>
+                <td class="xs"><span style="color:var(--red)">1 línea sin stock · faltan 1 u de G1H0JAS</span> <span class="muted">(3 de 3 intentos)</span>
+                  <div class="row" style="margin-top:6px"><button class="btn xs"><svg width="12" height="12"><use href="#i-wrench"/></svg>Resolver</button></div></td>
+                <td class="xs muted num">05/10 09:12</td>
+                <td class="r"><button class="btn sm ghost icon-btn" aria-label="Acciones"><svg width="16" height="16"><use href="#i-dots"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><div class="fw">MANTA RAYA</div><span class="tag t-rip">RIPLEY</span></td>
+                <td class="mono num">2000011802</td>
+                <td class="pcell"><div class="row"><div class="thumb sm c"></div><div><div class="fw sm">Lámpara Colgante Ratán…</div><div class="xs muted">Maestro <span class="mono">LMP-RT-40</span></div></div></div></td>
+                <td><span class="badge b-amber">Incidencia abierta</span></td>
+                <td><span class="badge b-slate">Cron</span></td>
+                <td class="xs">Ticket <span class="mono">RIP-90233</span> · Soporte Ripley · hace 2 h · <span class="muted">Sin reintentos automáticos</span>
+                  <div class="row" style="margin-top:6px"><button class="btn xs"><svg width="12" height="12"><use href="#i-eye"/></svg>Ver incidencia</button></div></td>
+                <td class="xs muted num">05/10 10:12</td>
+                <td class="r"><button class="btn sm ghost icon-btn" aria-label="Acciones"><svg width="16" height="16"><use href="#i-dots"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><div class="fw">YAKURUNA</div><span class="tag t-ml">MERCADO LIBRE</span></td>
+                <td class="mono num">MLP-41887210</td>
+                <td class="pcell"><div class="row"><div class="thumb sm b"></div><div><div class="fw sm">Espejo Sol Dorado 50 cm</div><div class="xs muted">Maestro <span class="mono">ESP-SOL-50</span></div></div></div></td>
+                <td><span class="badge b-blue">En cola</span></td>
+                <td><span class="badge b-slate">Manual</span></td>
+                <td class="xs">Stock movido desde <span class="mono">ESP-SOL-50B</span> (<span class="mono">TRF-7Q1A</span>) · <span class="muted">reintentando</span></td>
+                <td class="xs muted num">05/10 12:40</td>
+                <td class="r"><button class="btn sm ghost icon-btn" aria-label="Acciones"><svg width="16" height="16"><use href="#i-dots"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><div class="fw">LIMBO</div><span class="tag t-fal">FALABELLA</span></td>
+                <td class="mono num">3253990041</td>
+                <td class="pcell"><div class="row"><div class="thumb sm"></div><div><div class="fw sm">Adorno de Pared de Metal…</div><div class="xs muted">Maestro <span class="mono">G1H0JAS</span></div></div></div></td>
+                <td><span class="badge b-em">Descontado</span></td>
+                <td><span class="badge b-slate">Manual</span></td>
+                <td class="xs muted">1 u descontada · stock movido desde <span class="mono">G1H0JAS-B</span></td>
+                <td class="xs muted num">05/10 08:02</td>
+                <td class="r"><button class="btn sm ghost icon-btn" aria-label="Acciones"><svg width="16" height="16"><use href="#i-dots"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="menu" style="right:14px;top:72px">
+            <div class="on"><svg width="14" height="14"><use href="#i-retry"/></svg>Reintentar ahora</div>
+            <hr>
+            <div><svg width="14" height="14"><use href="#i-swap"/></svg>Mover stock desde otro producto…</div>
+            <div><svg width="14" height="14"><use href="#i-link"/></svg>Cambiar maestro del SKU…</div>
+            <div><svg width="14" height="14"><use href="#i-alert"/></svg>Reportar incidencia…</div>
+            <hr>
+            <div><svg width="14" height="14"><use href="#i-eye"/></svg>Ver pedido</div>
+          </div>
+          </div>
+          <div class="panel-h" style="border-top:1px solid var(--border);border-bottom:0">Mostrando 1 a 5 de 3 en este filtro + 2 de ejemplo</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>“Marcar ticket enviado” (window.confirm) desaparece. La incidencia se registra en el drawer, tab Incidencia.</li>
+    <li>“Asignar maestro” para líneas <b>sin producto</b> se mantiene igual porque es otro problema.</li>
+  </ul>
+</section>
+
+<!-- ===================================================== 2. DRAWER MOVER -->
+<section class="frame">
+  <p class="label">2 · Drawer “Resolver stock”: diagnóstico + Mover stock <span>Sheet derecho 720 px · candidato sugerido seleccionado · cantidad 1 · efecto en vivo</span></p>
+  <div class="screen" style="height:1560px">
+    <div class="app" style="min-height:1560px"><nav class="side"><div class="brand">ZentoFact</div></nav><div class="main"></div></div>
+    <div class="overlay"></div>
+    <aside class="sheet">
+      <div class="sheet-h">
+        <div class="row between"><h3>Resolver stock · Orden <span class="mono">3254021996</span></h3><button class="btn ghost icon-btn sm" aria-label="Cerrar"><svg width="16" height="16"><use href="#i-x"/></svg></button></div>
+        <div class="row wrap sm" style="margin-top:6px"><b>LIMBO</b><span class="tag t-fal">FALABELLA</span><span class="muted">·</span><span class="badge b-red">Requiere atención</span><span class="muted xs">Cron · 3 de 3 intentos</span></div>
+        <div class="row xs" style="margin-top:6px;color:var(--amber)"><svg width="13" height="13"><use href="#i-clock"/></svg><b>Despacho comprometido: hoy 18:00</b><span>(en 5 h 20 min)</span></div>
+      </div>
+      <div class="sheet-b">
+        <div class="diag">
+          <div class="row" style="gap:12px;align-items:flex-start">
+            <div class="thumb"></div>
+            <div style="flex:1">
+              <div class="fw">Adorno de Pared de Metal Hojas Doradas Decoración Sala</div>
+              <div class="row wrap xs muted" style="gap:12px;margin-top:3px">
+                <span>SKU interno <span class="mono" style="color:var(--fg)">G1H0JAS</span> <svg width="11" height="11"><use href="#i-copy"/></svg></span>
+                <span>SKU del seller <span class="mono" style="color:var(--fg)">CUA12454522</span></span>
+                <span>Shop SKU <span class="mono" style="color:var(--fg)">138442012</span></span>
+              </div>
+            </div>
+          </div>
+          <div class="nums">
+            <div><div class="k">Requerido</div><div class="v">1</div></div>
+            <div><div class="k">Físico</div><div class="v">0</div></div>
+            <div><div class="k">Reservado</div><div class="v">0</div></div>
+            <div><div class="k">En devolución</div><div class="v">0</div></div>
+            <div style="background:var(--red-bg)"><div class="k">Disponible</div><div class="v" style="color:var(--red)">0</div></div>
+          </div>
+          <p class="sm" style="margin:10px 0 8px">Faltan <b>1 u</b> en <span class="mono">G1H0JAS</span> para este pedido · <b>3 u</b> para todos los pedidos que esperan este producto.</p>
+          <table style="background:#fff;border:1px solid var(--border);border-radius:6px;font-size:12.5px">
+            <thead><tr><th>Orden</th><th>Seller</th><th class="r">Cant.</th><th>Despacho</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">3254021996 <span class="badge b-slate" style="height:18px;font-family:inherit">Este</span></td><td>LIMBO <span class="tag t-fal">FAL</span></td><td class="r num">1</td><td style="color:var(--amber)" class="fw">hoy 18:00</td><td><span class="badge b-red">Requiere atención</span></td></tr>
+              <tr><td class="mono">3254030112</td><td>LIMBO <span class="tag t-fal">FAL</span></td><td class="r num">1</td><td>mañana 12:00</td><td><span class="badge b-red">Requiere atención</span></td></tr>
+              <tr><td class="mono">2000011873</td><td>MANTA RAYA <span class="tag t-rip">RIP</span></td><td class="r num">1</td><td>07/10</td><td><span class="badge b-blue">En cola · 2/3</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tabsbar"><div class="seg"><span class="on">Mover stock</span><span>Cambiar maestro</span><span>Incidencia</span><span>Historial</span></div></div>
+
+        <div class="sect">
+          <div class="step"><i>1</i>Producto de origen</div>
+          <div class="input" style="margin-bottom:10px"><svg width="15" height="15"><use href="#i-search"/></svg>Buscar por SKU interno, SKU del seller o nombre</div>
+          <div class="panel">
+            <table>
+              <thead><tr><th style="width:32px"></th><th>Producto</th><th>Por qué se sugiere</th><th class="r">Disponible</th><th class="r">Comprometido</th></tr></thead>
+              <tbody>
+                <tr class="sel"><td><span class="radio on"></span></td>
+                  <td><div class="row"><div class="thumb sm b"></div><div><div class="fw sm">Adorno de Pared de Metal Hojas Doradas</div><div class="xs muted"><span class="mono">G1H0JAS-B</span> · YAKURUNA <span class="tag t-fal">FAL</span></div></div></div></td>
+                  <td><span class="badge b-blue">Mismo Shop SKU</span></td><td class="r num fb">4</td><td class="r num muted">0</td></tr>
+                <tr><td><span class="radio"></span></td>
+                  <td><div class="row"><div class="thumb sm"></div><div><div class="fw sm">Adorno de Pared Hojas Doradas 60 cm</div><div class="xs muted"><span class="mono">G1H0JAS2</span> · MANTA RAYA <span class="tag t-rip">RIP</span></div></div></div></td>
+                  <td><span class="badge b-blue">Mismo SKU del seller</span></td><td class="r num fb">2</td><td class="r"><span class="badge b-amber">1 · 1 pedido espera</span></td></tr>
+                <tr><td><span class="radio"></span></td>
+                  <td><div class="row"><div class="thumb sm c"></div><div><div class="fw sm">Cuadro Decorativo Hojas Metal</div><div class="xs muted"><span class="mono">DEC-HJ-01</span> · sin publicaciones</div></div></div></td>
+                  <td><span class="badge b-slate" title="Coincidencia por título e imagen; verifica que sea la misma pieza">Título similar 86 %</span></td><td class="r num fb">1</td><td class="r num muted">0</td></tr>
+                <tr class="dis"><td><span class="radio"></span></td>
+                  <td><div class="row"><div class="thumb sm"></div><div><div class="fw sm">Adorno Pared Hojas (importado)</div><div class="xs muted"><span class="mono">G1H0JAS-C</span> · LIMBO <span class="tag t-rip">RIP</span></div></div></div></td>
+                  <td><span class="badge b-blue">Mismo Shop SKU</span></td><td class="r num">0</td><td class="r xs muted">Sin stock disponible</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="step"><i>2</i>Cantidad y motivo</div>
+          <div class="grid2">
+            <div class="field"><label>Unidades a mover</label>
+              <div class="row"><div class="input val num" style="width:110px;justify-content:space-between"><span>1</span><span class="muted xs">máx. 4</span></div>
+                <button class="btn sm ghost" style="background:var(--accent)">Cubrir este pedido (1)</button><button class="btn sm ghost">Cubrir todos (3)</button></div>
+            </div>
+            <div class="field"><label>Motivo</label><div class="input val select"><span>Duplicado de importación</span><svg width="14" height="14"><use href="#i-down"/></svg></div></div>
+          </div>
+          <div class="field" style="margin-top:10px"><label>Nota <span class="muted" style="font-weight:400">(opcional)</span></label><div class="input">Ej.: misma pieza importada por YAKURUNA</div></div>
+          <label class="check" style="margin-top:12px"><span class="box on">✓</span><span>Reintentar los pedidos cubiertos al confirmar</span></label>
+        </div>
+
+        <div class="sect">
+          <div class="step"><i>3</i>Efecto</div>
+          <div class="panel">
+            <table class="effect">
+              <thead><tr><th></th><th class="r">Disponible antes</th><th class="r">Movimiento</th><th class="r">Disponible después</th></tr></thead>
+              <tbody>
+                <tr><td><span class="muted xs">Origen</span> <span class="mono fw">G1H0JAS-B</span> <span class="xs muted">YAKURUNA</span></td><td class="r num">4</td><td class="r num delta-n">−1</td><td class="r num fb">3</td></tr>
+                <tr><td><span class="muted xs">Destino</span> <span class="mono fw">G1H0JAS</span> <span class="xs muted">LIMBO</span></td><td class="r num">0</td><td class="r num delta-p">+1</td><td class="r num fb">1</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="sm" style="margin:10px 0 0">Cubre <b>1 de 3</b> pedidos que esperan <span class="mono">G1H0JAS</span>: <span class="mono">3254021996</span>. Los otros 2 seguirán en Requiere atención.</p>
+          <p class="xs muted" style="margin:6px 0 0">No cambia publicaciones ni stock en Falabella, Ripley o Mercado Libre.</p>
+        </div>
+      </div>
+      <div class="sheet-f"><button class="btn">Cancelar</button><button class="btn primary"><svg width="15" height="15"><use href="#i-swap"/></svg>Mover 1 u y reintentar</button></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ===================================================== 3. CONFIRM + EDGE -->
+<section class="frame">
+  <p class="label">3 · Confirmación (Dialog sobre el drawer) y aviso de stock comprometido <span>izq.: confirmación normal · der.: origen con pedidos esperando</span></p>
+  <div class="side-by-side">
+    <div class="screen" style="height:520px">
+      <aside class="sheet" style="width:100%"><div class="sheet-h"><h3>Resolver stock · Orden 3254021996</h3></div><div class="sheet-b"></div></aside>
+      <div class="overlay2">
+        <div class="dialog" role="dialog" aria-labelledby="dlg1">
+          <div class="row between"><h4 id="dlg1">¿Mover 1 unidad de G1H0JAS-B a G1H0JAS?</h4><svg width="16" height="16" class="muted"><use href="#i-x"/></svg></div>
+          <div class="kv">
+            <span class="mono fw">G1H0JAS-B</span><span class="muted">YAKURUNA</span><span class="num">4 <span class="arrow">→</span> <b>3</b> disp.</span>
+            <span class="mono fw">G1H0JAS</span><span class="muted">LIMBO</span><span class="num">0 <span class="arrow">→</span> <b>1</b> disp.</span>
+          </div>
+          <div class="sm stack"><div><span class="muted">Se reintentará:</span> <span class="mono">3254021996</span></div><div><span class="muted">Motivo:</span> Duplicado de importación</div></div>
+          <p class="xs muted" style="margin:12px 0 0">Este movimiento queda registrado a tu nombre en ambos productos. No cambia publicaciones ni stock en Falabella, Ripley o Mercado Libre.</p>
+          <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn">Volver</button><button class="btn primary">Confirmar movimiento</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="screen" style="height:520px">
+      <aside class="sheet" style="width:100%;position:absolute">
+        <div class="sheet-b">
+          <div class="sect">
+            <div class="step"><i>2</i>Cantidad y motivo</div>
+            <div class="row"><div class="input val num" style="width:110px;justify-content:space-between"><span>2</span><span class="muted xs">máx. 2</span></div><span class="xs muted">Origen: <span class="mono">G1H0JAS2</span> · MANTA RAYA</span></div>
+          </div>
+          <div class="sect">
+            <div class="step"><i>3</i>Efecto</div>
+            <div class="alert a-amber"><svg width="16" height="16" style="flex:none;margin-top:1px"><use href="#i-alert"/></svg>
+              <div><b>MANTA RAYA tiene 1 pedido esperando G1H0JAS2</b> (<span class="mono">2000011873</span>, despacha 07/10). Si mueves 2 u, ese pedido quedará sin stock.
+                <label class="check" style="margin-top:8px"><span class="box"></span><span>Entiendo, mover de todas formas</span></label></div></div>
+            <p class="sm" style="margin:10px 0 0">Cubre <b>2 de 3</b> pedidos que esperan <span class="mono">G1H0JAS</span>.</p>
+          </div>
+          <div class="sect">
+            <p class="label xs muted fb" style="margin:0 0 6px">Sin candidatos</p>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 0;text-align:center;border:1px dashed var(--border);border-radius:6px">
+              <svg width="28" height="28" style="color:#cbd5e1"><use href="#i-search"/></svg>
+              <p class="sm fw" style="margin:0">No encontramos otro producto con stock para G1H0JAS.</p>
+              <p class="sm muted" style="margin:0">Busca por SKU o nombre, o registra una incidencia.</p>
+              <button class="btn sm"><svg width="13" height="13"><use href="#i-alert"/></svg>Reportar incidencia</button>
+            </div>
+          </div>
+        </div>
+        <div class="sheet-f"><button class="btn">Cancelar</button><button class="btn primary" disabled><svg width="15" height="15"><use href="#i-swap"/></svg>Mover 2 u y reintentar</button></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== 4. SUCCESS -->
+<section class="frame">
+  <p class="label">4 · Éxito: pedidos reintentados en vivo <span>polling 2 s mientras haya “En cola”; izq.: descontado · der.: sin reintento automático o fallo</span></p>
+  <div class="side-by-side">
+    <div class="screen solo" style="height:430px">
+      <aside class="sheet">
+        <div class="tabsbar"><div class="seg"><span class="on">Mover stock</span><span>Cambiar maestro</span><span>Incidencia</span><span>Historial</span></div></div>
+        <div class="sheet-b"><div class="sect">
+          <div class="alert a-em"><svg width="16" height="16" style="flex:none;margin-top:1px"><use href="#i-check"/></svg>
+            <div style="flex:1"><div class="row between"><b>Stock movido · <span class="mono">TRF-8F2K</span></b><button class="btn xs ghost"><svg width="12" height="12"><use href="#i-copy"/></svg>Copiar</button></div>
+            <div class="xs">1 u de <span class="mono">G1H0JAS-B</span> → <span class="mono">G1H0JAS</span> · Ana P. · 05/10/2026 12:41</div></div></div>
+          <p class="sm fw" style="margin:16px 0 6px">Pedidos reintentados</p>
+          <table style="border:1px solid var(--border)"><tbody>
+            <tr><td class="mono">3254021996</td><td>LIMBO <span class="tag t-fal">FAL</span></td><td class="r"><span class="badge b-em">Descontado</span></td></tr>
+          </tbody></table>
+          <div class="row" style="margin-top:16px;justify-content:space-between"><button class="btn sm">Ver movimientos de G1H0JAS</button><button class="btn sm primary">Cerrar</button></div>
+        </div></div>
+      </aside>
+    </div>
+    <div class="screen solo" style="height:430px">
+      <aside class="sheet">
+        <div class="sheet-b"><div class="sect">
+          <div class="alert a-em"><svg width="16" height="16" style="flex:none;margin-top:1px"><use href="#i-check"/></svg><div><b>Stock movido · <span class="mono">TRF-8F3M</span></b><div class="xs">3 u de <span class="mono">G1H0JAS-B</span> → <span class="mono">G1H0JAS</span></div></div></div>
+          <p class="sm fw" style="margin:16px 0 6px">Pedidos reintentados</p>
+          <table style="border:1px solid var(--border)"><tbody>
+            <tr><td class="mono">3254021996</td><td>LIMBO</td><td class="r"><span class="badge b-em">Descontado</span></td></tr>
+            <tr><td class="mono">3254030112</td><td>LIMBO</td><td class="r"><span class="badge b-blue"><span class="spin"></span>En cola</span></td></tr>
+            <tr><td class="mono">2000011873</td><td>MANTA RAYA</td><td class="r"><span class="badge b-slate">No se reintentó: pedido cancelado</span></td></tr>
+          </tbody></table>
+          <div class="alert a-red" style="margin-top:10px"><svg width="16" height="16" style="flex:none;margin-top:1px"><use href="#i-alert"/></svg><div>El reintento de <span class="mono">3254030112</span> volvió a fallar: 1 línea sin stock disponible. Actualizamos el diagnóstico.</div></div>
+          <div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn sm"><svg width="13" height="13"><use href="#i-retry"/></svg>Reintentar ahora (1 pedido)</button><button class="btn sm primary">Cerrar</button></div>
+        </div></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== 5. CAMBIAR MAESTRO -->
+<section class="frame">
+  <p class="label">5 · Tab “Cambiar maestro”: cuando el SKU apunta al producto equivocado</p>
+  <div class="screen solo" style="height:740px;max-width:720px">
+    <aside class="sheet">
+      <div class="tabsbar"><div class="seg"><span>Mover stock</span><span class="on">Cambiar maestro</span><span>Incidencia</span><span>Historial</span></div></div>
+      <div class="sheet-b">
+        <div class="sect">
+          <p class="sm" style="margin:0 0 8px">El SKU del seller <span class="mono fw">CUA12454522</span> (LIMBO <span class="tag t-fal">FAL</span>) descuenta hoy de:</p>
+          <div class="row" style="padding:8px 10px;background:var(--slate-bg);border-radius:6px"><div class="thumb sm"></div><div style="flex:1"><div class="fw sm">Adorno de Pared de Metal…</div><div class="xs muted mono">G1H0JAS</div></div><span class="xs muted">Disponible</span> <b class="num" style="color:var(--red)">0</b></div>
+        </div>
+        <div class="sect">
+          <div class="step"><i>1</i>Nuevo producto maestro</div>
+          <div class="input val" style="margin-bottom:8px"><svg width="15" height="15"><use href="#i-search"/></svg>G1H0JAS</div>
+          <div class="panel"><table><tbody>
+            <tr class="sel"><td style="width:32px"><span class="radio on"></span></td><td><div class="fw sm">Adorno de Pared de Metal Hojas Doradas</div><div class="xs muted"><span class="mono">G1H0JAS-B</span> · YAKURUNA</div></td><td><span class="badge b-blue">Mismo Shop SKU</span></td><td class="r num fb">4</td></tr>
+            <tr><td><span class="radio"></span></td><td><div class="fw sm">Adorno de Pared Hojas Doradas 60 cm</div><div class="xs muted"><span class="mono">G1H0JAS2</span> · MANTA RAYA</div></td><td><span class="badge b-blue">Mismo SKU del seller</span></td><td class="r num fb">2</td></tr>
+          </tbody></table></div>
+        </div>
+        <div class="sect">
+          <div class="step"><i>2</i>Efecto</div>
+          <ul class="sm" style="margin:0;padding-left:18px">
+            <li><span class="mono">CUA12454522</span> dejará de descontar de <span class="mono">G1H0JAS</span> y descontará de <span class="mono">G1H0JAS-B</span>.</li>
+            <li>2 líneas abiertas pasarán a <span class="mono">G1H0JAS-B</span>: <span class="mono">3254021996</span>, <span class="mono">3254030112</span>.</li>
+            <li>Disponible de <span class="mono">G1H0JAS-B</span>: 4 → <b>2</b> tras descontar.</li>
+          </ul>
+          <div class="alert a-amber" style="margin-top:10px"><svg width="16" height="16" style="flex:none;margin-top:1px"><use href="#i-alert"/></svg><div><span class="mono">G1H0JAS</span> quedará sin publicaciones. 1 venta ya descontada de <span class="mono">G1H0JAS</span> no se mueve; si corresponde, usa <b>Mover stock</b>.</div></div>
+          <div class="grid2" style="margin-top:12px">
+            <div class="field"><label>Motivo</label><div class="input val select"><span>Maestro equivocado</span><svg width="14" height="14"><use href="#i-down"/></svg></div></div>
+            <div class="field"><label>Nota <span class="muted" style="font-weight:400">(opcional)</span></label><div class="input"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="sheet-f"><button class="btn">Cancelar</button><button class="btn primary"><svg width="15" height="15"><use href="#i-link"/></svg>Cambiar maestro y reintentar</button></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ===================================================== 6. INCIDENCIA -->
+<section class="frame">
+  <p class="label">6 · Tab “Incidencia”: registrar (izq.) y cerrar o deshacer (der.)</p>
+  <div class="side-by-side">
+    <div class="screen solo" style="height:560px">
+      <aside class="sheet">
+        <div class="tabsbar"><div class="seg"><span>Mover stock</span><span>Cambiar maestro</span><span class="on">Incidencia</span><span>Historial</span></div></div>
+        <div class="sheet-b"><div class="sect">
+          <div class="alert a-slate" style="margin-bottom:14px">La orden dejará de reintentarse sola. No cambia stock ni el estado del pedido en el marketplace. Puedes cerrar la incidencia cuando se resuelva.</div>
+          <div class="grid2">
+            <div class="field"><label>Motivo</label><div class="input val select"><span>Sin stock físico</span><svg width="14" height="14"><use href="#i-down"/></svg></div></div>
+            <div class="field"><label>Enviado a</label><div class="input val select"><span>Soporte Falabella</span><svg width="14" height="14"><use href="#i-down"/></svg></div></div>
+          </div>
+          <div class="field" style="margin-top:12px"><label>N.º de ticket <span class="muted" style="font-weight:400">(opcional)</span></label><div class="input val mono">FAL-558201</div></div>
+          <div class="field" style="margin-top:12px"><label>Nota</label><textarea class="input">Se pidió cancelación al seller center, cliente avisado.</textarea><div class="help">Obligatoria · 52/500</div></div>
+        </div></div>
+        <div class="sheet-f"><button class="btn">Cancelar</button><button class="btn primary"><svg width="15" height="15"><use href="#i-alert"/></svg>Registrar incidencia</button></div>
+      </aside>
+    </div>
+    <div class="screen solo" style="height:560px">
+      <aside class="sheet">
+        <div class="tabsbar"><div class="seg"><span>Mover stock</span><span>Cambiar maestro</span><span class="on">Incidencia</span><span>Historial</span></div></div>
+        <div class="sheet-b"><div class="sect">
+          <div class="row wrap"><span class="badge b-amber">Incidencia abierta</span><span class="sm">Sin stock físico · Soporte Falabella · Ticket <span class="mono">FAL-558201</span></span></div>
+          <p class="xs muted" style="margin:6px 0">Registrada por Ana P. · 05/10/2026 10:12 · 1 línea, 1 u pendiente</p>
+          <p class="sm" style="margin:0 0 16px;padding-left:10px;border-left:2px solid var(--border)">“Se pidió cancelación al seller center, cliente avisado.”</p>
+          <p class="sm fw" style="margin:0 0 8px">Cerrar incidencia</p>
+          <label class="check" style="margin-bottom:8px"><span class="radio on"></span><span><b class="fw">Se resolvió: reintentar el descuento</b><br><span class="xs muted">Vuelve a la cola con 0 intentos.</span></span></label>
+          <label class="check"><span class="radio"></span><span><b class="fw">Reabrir: volver a Requiere atención</b><br><span class="xs muted">Deshace la incidencia sin reintentar; podrás mover stock o cambiar el maestro.</span></span></label>
+          <div class="field" style="margin-top:12px"><label>Nota de cierre</label><div class="input val">Stock repuesto por conteo del almacén</div></div>
+        </div></div>
+        <div class="sheet-f"><button class="btn">Cancelar</button><button class="btn primary">Cerrar incidencia</button></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================== 7. HISTORIAL + PRODUCTOS -->
+<section class="frame">
+  <p class="label">7 · Auditoría: Historial del job (izq.) y movimientos del producto en Productos › Inventario (der.)</p>
+  <div class="side-by-side">
+    <div class="screen solo" style="height:380px">
+      <aside class="sheet">
+        <div class="tabsbar"><div class="seg"><span>Mover stock</span><span>Cambiar maestro</span><span>Incidencia</span><span class="on">Historial</span></div></div>
+        <div class="sheet-b"><div class="sect">
+          <ul class="timeline">
+            <li><span class="num muted">12:42</span><span class="muted">Sistema</span><span><span class="dot" style="background:#10b981"></span>Descontado · 1 u de <span class="mono">G1H0JAS</span></span></li>
+            <li><span class="num muted">12:41</span><span>Ana P.</span><span><span class="dot" style="background:#3b82f6"></span>Stock movido · <span class="mono">TRF-8F2K</span> · 1 u desde <span class="mono">G1H0JAS-B</span> · Duplicado de importación</span></li>
+            <li><span class="num muted">12:41</span><span>Ana P.</span><span><span class="dot" style="background:#94a3b8"></span>Incidencia cerrada · resuelta por transferencia</span></li>
+            <li><span class="num muted">10:12</span><span>Ana P.</span><span><span class="dot" style="background:#f59e0b"></span>Incidencia registrada · Sin stock físico · <span class="mono">FAL-558201</span></span></li>
+            <li><span class="num muted">09:30</span><span class="muted">Cron</span><span><span class="dot" style="background:#ef4444"></span>Intento 3 de 3 · 1 línea sin stock disponible</span></li>
+          </ul>
+        </div></div>
+      </aside>
+    </div>
+    <div class="screen" style="height:380px;background:#fff">
+      <div class="sect">
+        <div class="row between" style="margin-bottom:10px"><div><span class="fw">Movimientos</span> <span class="xs muted">· SKU interno <span class="mono">G1H0JAS</span></span></div><div class="seg"><span>Resumen</span><span>Publicaciones</span><span class="on">Inventario</span><span>Ventas</span></div></div>
+        <div class="panel"><table>
+          <thead><tr><th>Fecha</th><th>Tipo</th><th class="r">Δ</th><th class="r">Saldo</th><th>Detalle</th></tr></thead>
+          <tbody>
+            <tr><td class="xs num muted">05/10 12:42</td><td><span class="badge b-slate">Venta</span></td><td class="r num delta-n">−1</td><td class="r num">0</td><td class="xs">Orden <span class="mono">3254021996</span> · LIMBO</td></tr>
+            <tr><td class="xs num muted">05/10 12:41</td><td><span class="badge b-blue">Transferencia recibida</span></td><td class="r num delta-p">+1</td><td class="r num">1</td><td class="xs">desde <span class="mono">G1H0JAS-B</span> · <a class="mono" style="color:var(--blue)">TRF-8F2K</a> · Duplicado de importación · Ana P.</td></tr>
+            <tr><td class="xs num muted">02/10 16:05</td><td><span class="badge b-slate">Ajuste −</span></td><td class="r num delta-n">−2</td><td class="r num">0</td><td class="xs">Conteo físico · Luis R.</td></tr>
+          </tbody>
+        </table></div>
+        <p class="xs muted" style="margin:8px 0 0">En <span class="mono">G1H0JAS-B</span> aparece la contraparte: <span class="badge b-blue" style="height:18px">Transferencia enviada</span> −1 · hacia <span class="mono">G1H0JAS</span> · <span class="mono">TRF-8F2K</span>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div style="height:40px"></div>
+</body>
+</html>
