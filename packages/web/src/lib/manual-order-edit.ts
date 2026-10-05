@@ -32,8 +32,11 @@ function digits(value: string) {
   return String(value || '').replace(DIGITS_ONLY, '');
 }
 
-export function validateManualOrderEdit(draft: ManualOrderEditDraft) {
-  if (!String(draft.deliveryDate || '').trim()) return 'Indica la fecha de entrega.';
+export function validateManualOrderEdit(
+  draft: ManualOrderEditDraft,
+  { requireDeliveryDate = true }: { requireDeliveryDate?: boolean } = {},
+) {
+  if (requireDeliveryDate && !String(draft.deliveryDate || '').trim()) return 'Indica la fecha de entrega.';
   if (draft.deliveryType === 'envio' && !String(draft.carrier || '').trim()) {
     return 'Elige el repartidor del envío.';
   }
