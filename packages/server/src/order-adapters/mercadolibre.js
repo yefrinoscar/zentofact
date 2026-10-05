@@ -148,6 +148,7 @@ export function mapMercadoLibreShipping(shipment) {
     city: text(address.city?.name || address.city),
     region: text(address.state?.name || address.state),
     trackingCode: text(shipment?.trackingNumber || raw.tracking_number),
+    carrier: text(raw.tracking_method),
   };
 }
 

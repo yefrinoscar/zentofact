@@ -17,7 +17,10 @@ const connectionString = process.env.DATABASE_PUBLIC_URL || process.env.DATABASE
 if (!connectionString) throw new Error('Falta DATABASE_PUBLIC_URL o DATABASE_URL_POSTGRES.');
 
 const { mercadoLibreClientForCompany } = await import('../packages/server/src/mercado-libre-tokens.js');
-const { mapMercadoLibrePromisedShippingAt } = await import('../packages/server/src/order-adapters/mercadolibre.js');
+const {
+  mapMercadoLibrePromisedShippingAt,
+  mapMercadoLibreShipping,
+} = await import('../packages/server/src/order-adapters/mercadolibre.js');
 
 const LIMA_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' });
 function limaDate(value) {
@@ -41,7 +44,10 @@ const { rows: orders } = await client.query(`
          o.metadata->>'shippingId' as shipping_id,
          o.metadata->>'shippingMode' as shipping_mode,
          o.metadata->>'logisticType' as logistic_type,
-         o.metadata->>'shippingSubstatus' as shipping_substatus
+         o.metadata->>'shippingSubstatus' as shipping_substatus,
+         o.shipping->>'carrier' as shipping_carrier,
+         o.shipping->>'type' as shipping_type,
+         o.shipping->>'trackingCode' as shipping_tracking
     from orders o
     join order_channel_accounts account on account.id = o.channel_account_id
     join order_channels channel on channel.id = account.channel_id
@@ -106,10 +112,15 @@ for (const order of orders) {
     const currentPromised = order.promised_shipping_at
       ? new Date(order.promised_shipping_at).toISOString()
       : null;
+    // El JSON de envío quedó sin tipo ni transportista por el mismo motivo.
+    const nextShipping = mapMercadoLibreShipping(shipment);
     const changed = (order.shipping_mode || null) !== next.shippingMode
       || (order.logistic_type || null) !== next.logisticType
       || (order.shipping_substatus || null) !== next.shippingSubstatus
-      || currentPromised !== promisedShippingAt;
+      || currentPromised !== promisedShippingAt
+      || (order.shipping_carrier || null) !== (nextShipping.carrier || null)
+      || (order.shipping_type || null) !== (nextShipping.type || null)
+      || (order.shipping_tracking || null) !== (nextShipping.trackingCode || null);
     const detail = [
       `pedido ${order.id}`,
       order.fulfillment_status,
@@ -117,6 +128,7 @@ for (const order of orders) {
       `logistic ${order.logistic_type || '—'} → ${next.logisticType || '—'}`,
       `substatus ${order.shipping_substatus || '—'} → ${next.shippingSubstatus || '—'}`,
       `prometido ${limaDate(order.promised_shipping_at)} → ${limaDate(promisedShippingAt)}`,
+      `transportista ${order.shipping_carrier || '—'} → ${nextShipping.carrier || '—'}`,
     ].join(' · ');
     if (!changed) {
       unchanged += 1;
@@ -125,8 +137,12 @@ for (const order of orders) {
     }
     if (values.apply) {
       await client.query(
-        'update orders set metadata = metadata || $2::jsonb, promised_shipping_at = $3 where id = $1',
-        [order.id, JSON.stringify(next), promisedShippingAt],
+        `update orders
+            set metadata = metadata || $2::jsonb,
+                promised_shipping_at = $3,
+                shipping = coalesce(shipping, '{}'::jsonb) || jsonb_strip_nulls($4::jsonb)
+          where id = $1`,
+        [order.id, JSON.stringify(next), promisedShippingAt, JSON.stringify(nextShipping)],
       );
     }
     updated += 1;

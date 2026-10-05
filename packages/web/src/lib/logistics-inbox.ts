@@ -194,8 +194,31 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
   return false;
 }
 
-export function canMarkLogisticsReady(order: LogisticsOrderLike) {
-  const channel = String(order.channelCode || '');
+const MERCADO_LIBRE_SELLER_DISPATCH_TYPES = new Set(['drop_off', 'xd_drop_off', 'self_service', 'cross_docking']);
+
+/** ME2: el vendedor lleva el paquete al punto de entrega (drop off / cross docking). */
+export function sellerDispatchesMercadoLibre(logisticType?: string | null) {
+  return MERCADO_LIBRE_SELLER_DISPATCH_TYPES.has(String(logisticType || '').trim().toLowerCase());
+}
+
+export function mercadoLibreDispatchCopy(logisticType?: string | null) {
+  const type = String(logisticType || '').trim().toLowerCase();
+  if (type === 'cross_docking') return 'Tú despachas: deja el paquete en el punto de Mercado Envíos.';
+  if (MERCADO_LIBRE_SELLER_DISPATCH_TYPES.has(type)) return 'Tú despachas: lleva el paquete al punto de entrega.';
+  return 'Despacho por Mercado Envíos.';
+}
+
+/** Línea corta de entrega para filas: distrito/ciudad · región. */
+export function logisticsAddressSummary(
+  shipping?: { district?: string | null; city?: string | null; region?: string | null } | null,
+) {
+  return [shipping?.district || shipping?.city, shipping?.region]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' · ');
+}
+
+export function canMarkLogisticsReady(order: LogisticsOrderLike) {  const channel = String(order.channelCode || '');
   if (channel !== 'falabella' && channel !== 'ripley') return false;
   return order.companyId != null
     && Boolean(order.externalOrderId)

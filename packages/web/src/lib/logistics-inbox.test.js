@@ -6,6 +6,7 @@ import {
   canMarkLogisticsDelivered,
   canMarkLogisticsReady,
   canPrintLogisticsLabel,
+  logisticsAddressSummary,
   logisticsItemSku,
   logisticsReadyConfirmCopy,
   logisticsReadyActionLabel,
@@ -13,6 +14,8 @@ import {
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
   RIPLEY_LABEL_SOON_COPY,
+  mercadoLibreDispatchCopy,
+  sellerDispatchesMercadoLibre,
   groupLogisticsByUrgency,
   labelWasPrinted,
   logisticsBulkReadyConfirmCopy,
@@ -474,4 +477,29 @@ test('conserva la foto del SKU como alternativa cuando falla la URL del pedido',
       '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2FABC123_1',
     ],
   );
+});
+
+test('el despacho ME2 lo hace el vendedor (drop off y cross docking)', () => {
+  assert.equal(sellerDispatchesMercadoLibre('drop_off'), true);
+  assert.equal(sellerDispatchesMercadoLibre('xd_drop_off'), true);
+  assert.equal(sellerDispatchesMercadoLibre('self_service'), true);
+  assert.equal(sellerDispatchesMercadoLibre('cross_docking'), true);
+  assert.equal(sellerDispatchesMercadoLibre('fulfillment'), false);
+  assert.equal(sellerDispatchesMercadoLibre(null), false);
+  assert.match(mercadoLibreDispatchCopy('drop_off'), /Tú despachas/);
+  assert.match(mercadoLibreDispatchCopy('cross_docking'), /punto de Mercado Envíos/);
+  assert.match(mercadoLibreDispatchCopy('fulfillment'), /Mercado Envíos/);
+});
+
+test('resume la dirección de entrega para la fila de la bandeja', () => {
+  assert.equal(
+    logisticsAddressSummary({ city: 'Chorrillos', region: 'Lima Metropolitana' }),
+    'Chorrillos · Lima Metropolitana',
+  );
+  assert.equal(
+    logisticsAddressSummary({ district: 'Villa El Salvador', city: 'Lima', region: 'Lima' }),
+    'Villa El Salvador · Lima',
+  );
+  assert.equal(logisticsAddressSummary({}), '');
+  assert.equal(logisticsAddressSummary(null), '');
 });
