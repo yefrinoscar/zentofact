@@ -204,6 +204,28 @@ test('la conciliación y el sync no reencolan un pedido con incidencia reconocid
   assert.equal(inserts, 0);
 });
 
+test('un pedido sin seller no crea stock job ni rompe la entrega', async () => {
+  const db = {
+    query: async (sql) => {
+      if (sql.includes('from orders')) {
+        return {
+          rows: [{
+            id: 90,
+            company_id: null,
+            external_order_id: 'QNC-90',
+            external_order_number: 'QNC-90',
+            ordered_at: INVENTORY_LISTEN_FROM_AT,
+            metadata: {},
+          }],
+        };
+      }
+      throw new Error(`No debe consultar: ${sql}`);
+    },
+  };
+  const result = await enqueueStockJob({ orderId: 90, source: 'user' }, db);
+  assert.deepEqual(result, { enqueued: false, ignored: 'pedido sin seller' });
+});
+
 test('encolar el mismo pedido dos veces no duplica el job', async () => {
   const db = new JobDb();
   const first = await enqueueStockJob({
