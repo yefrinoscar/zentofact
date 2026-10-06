@@ -43,6 +43,14 @@ test('Devoluciones queda oculto en cualquier ambiente', () => {
   assert.equal(isNavItemVisible(item, can, false), false);
 });
 
+test('Mis ventas se oculta al superadministrador pero no al resto', () => {
+  const item = { to: '/mis-ventas', permission: 'salesperson', hideForSuperadmin: true };
+  const can = () => true;
+  assert.equal(isNavItemVisible(item, can, false, { isSuperadmin: true }), false);
+  assert.equal(isNavItemVisible(item, can, false, { isAdmin: true }), true);
+  assert.equal(isNavItemVisible(item, can, false), true);
+});
+
 test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   const can = () => true;
   const settings = { to: '/settings', permission: 'settings' };

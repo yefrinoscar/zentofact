@@ -37,6 +37,8 @@ export type NavItem = {
   description?: string;
   adminOnly?: boolean;
   superadminOnly?: boolean;
+  /** Oculta el módulo a los superadministradores (p. ej. vistas personales). */
+  hideForSuperadmin?: boolean;
   /** Oculta el módulo del menú en cualquier ambiente mientras se reactiva. */
   hidden?: boolean;
   hiddenInProduction?: boolean;
@@ -72,7 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'orders',
     label: 'Pedidos',
     items: [
-      { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
+      { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson', hideForSuperadmin: true },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       // Devoluciones vuelven solas al stock; se oculta hasta que el seguimiento
