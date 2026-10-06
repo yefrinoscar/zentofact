@@ -43,8 +43,8 @@ export function BuyerConversation({
   variant?: 'sheet' | 'embedded';
 }) {
   const queryClient = useQueryClient();
-  const { role, loading: permissionsLoading } = usePermissions();
-  const canReply = !permissionsLoading && role !== 'viewer';
+  const { canWrite, loading: permissionsLoading } = usePermissions();
+  const canReply = !permissionsLoading && (canWrite('orders_inbox') || canWrite('order_management'));
   const [pending, setPending] = useState<PendingBuyerMessage[]>([]);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const [scrollSignal, setScrollSignal] = useState(0);

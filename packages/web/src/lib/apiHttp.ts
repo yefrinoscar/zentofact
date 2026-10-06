@@ -370,8 +370,10 @@ const apiHttp = {
     name: string;
     email: string;
     password: string;
-    role: string;
+    role?: string;
+    roles?: string[];
     permissions: string[];
+    rolePermissions?: Record<string, string[] | string | null>;
     active: boolean;
     commissionPercent: number;
   }) => req<{ id: string; name: string; email: string }>('/users', { method: 'POST', body: JSON.stringify(data) }),
@@ -534,7 +536,7 @@ const apiHttp = {
     sortDir?: 'asc' | 'desc';
   } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
-  listActiveSalespeople: () => req<Array<{ id: string; name: string }>>('/order-management/salespeople'),
+  listActiveSalespeople: () => req<Array<{ id: string; name: string; roles?: string[] }>>('/order-management/salespeople'),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
   listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
