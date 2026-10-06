@@ -1,5 +1,15 @@
 // Tablas que Better Auth administra, definidas aquí para consultas Drizzle del servidor.
-import { bigserial, boolean, jsonb, numeric, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { bigserial, boolean, jsonb, numeric, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
+
+export const userRoles = pgTable('user_roles', {
+  userId: text('user_id').notNull(),
+  role: text('role').notNull(),
+  /** Lista JSON de permisos de la asignación; NULL significa preset del perfil. */
+  permissions: text('permissions'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.userId, table.role] }),
+}));
 
 export const authUsers = pgTable('user', {
   id: text('id').primaryKey(),

@@ -4,10 +4,14 @@ import api from '../lib/api';
 import {
   type AppUser,
   type PermissionKey,
-  isAdminRole,
-  isSuperadminRole,
+  isAdminUser,
+  isReadOnlyUser,
+  isSuperadminUser,
   parsePermissions,
+  permissionsForUser,
+  userCanWritePermission,
   userHasPermission,
+  userRoleList,
 } from '../lib/permissions';
 
 export function usePermissions() {
@@ -42,20 +46,27 @@ export function usePermissions() {
 
   const user = profile || (session?.user as AppUser | undefined) || null;
   const role = String(user?.role || 'operator');
-  const permissions = useMemo(
+  const roles = userRoleList(user);
+  const permissions = useMemo(() => permissionsForUser(user), [user]);
+  const legacyPermissions = useMemo(
     () => parsePermissions(user?.permissions, role),
     [user?.permissions, role],
   );
 
   const can = (key: PermissionKey) => userHasPermission(user, key);
+  const canWrite = (key: PermissionKey) => userCanWritePermission(user, key);
 
   return {
     user,
     role,
+    roles,
     permissions,
+    legacyPermissions,
     can,
-    isAdmin: isAdminRole(role),
-    isSuperadmin: isSuperadminRole(role),
+    canWrite,
+    isAdmin: isAdminUser(user),
+    isSuperadmin: isSuperadminUser(user),
+    readOnly: isReadOnlyUser(user),
     loading: isPending || loadingProfile,
   };
 }

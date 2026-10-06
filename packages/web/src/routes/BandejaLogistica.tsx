@@ -126,8 +126,8 @@ export default function BandejaLogistica() {
   const layout = operationalLayout(variant);
   const visualVariant = VISUAL_VARIANTS.find((entry) => entry.key === variant);
   const filtro = params.get('filtro') === '2' || params.get('filtro') === '3' ? params.get('filtro')! : '1';
-  const { role, can, loading: permissionsLoading } = usePermissions();
-  const canDispatch = !permissionsLoading && role !== 'viewer';
+  const { can, canWrite, loading: permissionsLoading } = usePermissions();
+  const canDispatch = !permissionsLoading && (canWrite('orders_inbox') || canWrite('order_management'));
   const canSync = !permissionsLoading && can('order_management');
 
   const [stage, setStage] = useState<LogisticsStage>('pending');

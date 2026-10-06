@@ -106,10 +106,10 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const setActiveId = useAppStore((s) => s.setActiveCompanyId);
-  const { can, role, loading: permissionsLoading } = usePermissions();
+  const { canWrite, loading: permissionsLoading } = usePermissions();
   const meta = META[kind];
-  const canMutate = !permissionsLoading && role !== 'viewer';
-  const canIssueCreditNote = canMutate && can('credit_notes_manage');
+  const canMutate = !permissionsLoading && canWrite(kind);
+  const canIssueCreditNote = !permissionsLoading && canWrite('credit_notes_manage');
 
   const [companies, setCompanies] = useState<any[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);

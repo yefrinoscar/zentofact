@@ -81,7 +81,7 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
   const fromOrderState = (location.state || {}) as FromOrderState;
   const fromOrderId = Number(fromOrderState.fromOrderId) || 0;
   const appliedOrderRef = useRef<number | null>(null);
-  const { role, loading: permissionsLoading } = usePermissions();
+  const { canWrite, loading: permissionsLoading } = usePermissions();
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 
@@ -113,6 +113,7 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
   const docType = fixedDocType;
   const isFactura = docType === '01';
   const listPath = isFactura ? '/facturas' : '/boletas';
+  const canEmit = !permissionsLoading && canWrite(isFactura ? 'facturas' : 'boletas');
 
   useEffect(() => {
     if (!fromOrderId || appliedOrderRef.current === fromOrderId) return;
@@ -144,12 +145,12 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
   }, [fromOrderId]);
 
   useEffect(() => {
-    if (permissionsLoading || role === 'viewer') return;
+    if (!canEmit) return;
     api.listCompanies()
       .then((list: any[]) => setCompanies(Array.isArray(list) ? list : []))
       .catch((e: any) => setLoadError(e?.message || 'No se pudieron cargar las empresas.'))
       .finally(() => setLoading(false));
-  }, [permissionsLoading, role]);
+  }, [canEmit]);
 
   useEffect(() => {
     if (!companyId) { setBranches([]); setBranchId(''); setCorrelatives([]); return; }
@@ -266,7 +267,7 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
     finally { setEmitting(false); }
   }
 
-  if (!permissionsLoading && role === 'viewer') return <Navigate to={listPath} replace />;
+  if (!permissionsLoading && !canEmit) return <Navigate to={listPath} replace />;
   if (loading || permissionsLoading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (loadError) return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mr-2 inline h-4 w-4" />{loadError}</div>;
 

@@ -1146,8 +1146,8 @@ function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
 
 export default function Pedidos() {
   const navigate = useNavigate();
-  const { role, loading: permissionsLoading } = usePermissions();
-  const canDispatch = !permissionsLoading && role !== 'viewer';
+  const { canWrite, loading: permissionsLoading } = usePermissions();
+  const canDispatch = !permissionsLoading && (canWrite('orders_inbox') || canWrite('falabella_sellers'));
   const setActiveCompanyId = useAppStore((state) => state.setActiveCompanyId);
   const [data, setData] = useState<InboxResponse | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);

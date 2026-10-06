@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Banknote, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { usePermissions } from '../hooks/usePermissions';
+import { isSalespersonOnly } from '../lib/permissions';
 import {
   SALE_STEPS,
   saleReturnPath,
@@ -66,7 +67,7 @@ export default function RegistrarVenta() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
-  const { can, isAdmin, role, user } = usePermissions();
+  const { can, isAdmin, user } = usePermissions();
   const [searchParams] = useSearchParams();
   const afterSavePath = saleReturnPath(searchParams.get('from'), can('order_management'));
 
@@ -135,7 +136,7 @@ export default function RegistrarVenta() {
     staleTime: 30_000,
   });
   const fleetConfig = fleetQuery.data;
-  const salespersonOnly = role === 'vendedor';
+  const salespersonOnly = isSalespersonOnly(user);
   const salespeopleQuery = useQuery({
     queryKey: ['active-salespeople'],
     queryFn: api.listActiveSalespeople,

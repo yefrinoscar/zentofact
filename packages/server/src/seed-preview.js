@@ -590,6 +590,12 @@ async function ensureRoleUser({ email, name, role, commissionPercent = 0 }, pass
         WHERE id = $1`,
       [existing.id, name, role, JSON.stringify(permissionsForRole(role)), commissionPercent],
     );
+    await pool.query('DELETE FROM user_roles WHERE user_id = $1', [existing.id]);
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role, permissions, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [existing.id, role, JSON.stringify(permissionsForRole(role))],
+    );
     return { user: await users.getUserById(existing.id), created: false };
   }
   try {
@@ -619,6 +625,12 @@ async function ensureRoleUser({ email, name, role, commissionPercent = 0 }, pass
     );
     const row = (await pool.query('SELECT id FROM "user" WHERE lower(email)=lower($1) LIMIT 1', [email])).rows[0];
     const resolvedId = row?.id || userId;
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role, permissions, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, role) DO NOTHING`,
+      [resolvedId, role, JSON.stringify(permissionsForRole(role))],
+    );
     await pool.query(
       `INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt")
        VALUES ($1,$2,'credential',$3,$4,$5,$5)
