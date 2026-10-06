@@ -668,6 +668,57 @@ test('un propio se marca entregado sin pasar por marketplace', async () => {
   );
 });
 
+test('un pedido de tienda sin seller se entrega sin job de stock ni error de company_id', async () => {
+  const queries = [];
+  const result = await markLogisticsOrderDelivered({ orderId: 46 }, {
+    db: {
+      async query(sql) {
+        queries.push(sql.replace(/\s+/g, ' ').trim());
+        if (sql.includes('from orders o')) {
+          return {
+            rows: [{
+              id: 46,
+              company_id: null,
+              external_order_id: 'QNC-46',
+              external_order_number: 'QNC-46',
+              fulfillment_status: 'ready_to_ship',
+              ordered_at: '2026-09-08T12:00:00.000Z',
+              channel_code: 'manual',
+            }],
+          };
+        }
+        if (sql.includes('update orders')) {
+          return {
+            rows: [{
+              id: 46,
+              company_id: null,
+              external_order_id: 'QNC-46',
+              external_order_number: 'QNC-46',
+              fulfillment_status: 'delivered',
+              ordered_at: '2026-09-08T12:00:00.000Z',
+            }],
+          };
+        }
+        if (sql.includes('from orders where id=$1')) {
+          return {
+            rows: [{
+              id: 46,
+              company_id: null,
+              external_order_id: 'QNC-46',
+              external_order_number: 'QNC-46',
+              ordered_at: '2026-09-08T12:00:00.000Z',
+              metadata: {},
+            }],
+          };
+        }
+        throw new Error(`Consulta no esperada: ${sql}`);
+      },
+    },
+  });
+  assert.deepEqual(result, { ok: true, alreadyDelivered: false, orderId: 46 });
+  assert.equal(queries.some((sql) => sql.startsWith('insert into inventory_stock_jobs')), false);
+});
+
 test('un propio ya entregado no se vuelve a marcar', async () => {
   const result = await markLogisticsOrderDelivered({ orderId: 45 }, {
     db: {
