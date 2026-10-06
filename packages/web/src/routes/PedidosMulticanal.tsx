@@ -1,6 +1,6 @@
 import { OrderDateDialog, orderDateKey, formatRegistrationDate } from '../components/OrderDateDialog';
 import OrderDocumentPanel from '../components/OrderDocumentPanel';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -828,10 +828,6 @@ export default function PedidosMulticanal() {
     window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   };
 
-  const goToGenerateDocument = (order: ManagedOrder) => {
-    setDetailTab('summary');
-    void openDetail(order, 'summary');
-  };
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
@@ -920,7 +916,10 @@ export default function PedidosMulticanal() {
     staleTime: 15_000,
   });
 
-  const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
+  const companies = useMemo(
+    () => (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[],
+    [companiesQuery.data],
+  );
   const channels = (Array.isArray(channelsQuery.data) ? channelsQuery.data : []) as Channel[];
   const orders = managedOrderListRows<ManagedOrder>(ordersQuery.data?.orders);
   const totalCount = Number(ordersQuery.data?.totalCount || 0);
@@ -948,7 +947,7 @@ export default function PedidosMulticanal() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, queryClient]);
 
-  const loadRipleyLogistics = async (order: ManagedOrder, sandbox: boolean) => {
+  const loadRipleyLogistics = useCallback(async (order: ManagedOrder, sandbox: boolean) => {
     if (order.companyId == null) {
       const overview: RipleyLogisticsOverview = {
         labels: null,
@@ -1003,9 +1002,9 @@ export default function PedidosMulticanal() {
       setRipleyLogistics(overview);
       return overview;
     }
-  };
+  }, []);
 
-  const openDetail = async (order: ManagedOrder, tab = 'products') => {
+  const openDetail = useCallback(async (order: ManagedOrder, tab = 'products') => {
     setDetailTab(tab);
     setDetailOpen(true);
     setDetail(null);
@@ -1031,7 +1030,12 @@ export default function PedidosMulticanal() {
     } finally {
       setDetailLoading(false);
     }
-  };
+  }, [companies, loadRipleyLogistics]);
+
+  const goToGenerateDocument = useCallback((order: ManagedOrder) => {
+    setDetailTab('summary');
+    void openDetail(order, 'summary');
+  }, [openDetail]);
 
   const canEditSale = (order: ManagedOrder) => isAdmin && order.channelCode === 'manual';
 
