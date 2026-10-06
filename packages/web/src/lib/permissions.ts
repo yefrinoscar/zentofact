@@ -177,6 +177,8 @@ export type AppUser = {
   email: string;
   role?: string;
   permissions?: string[] | string;
+  roles?: string[];
+  rolePermissions?: Record<string, string[] | string | null>;
   active?: boolean;
   commissionPercent?: number;
 };
@@ -227,10 +229,215 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
 export function userHasPermission(user: AppUser | null | undefined, key: PermissionKey): boolean {
   if (!user) return false;
   if (user.active === false) return false;
-  const role = normalizeRole(user.role);
-  if (key === 'users' || key === 'dashboard' || key === 'pagos') return isAdminRole(role);
-  if (isAdminRole(role)) return true;
-  return parsePermissions(user.permissions, role).includes(key);
+  const admin = isAdminUser(user);
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return admin;
+  if (admin) return true;
+  return permissionsForUser(user).includes(key);
+}
+
+// ── Multi-perfil ─────────────────────────────────────────────────────────────
+// Un usuario puede pertenecer a varios perfiles; `role` es el perfil principal
+// legacy. Los permisos se calculan como unión de pertenencias y permisos
+// personalizados de cada asignación (`rolePermissions`).
+
+function parsePermissionInput(input: unknown): string[] {
+  if (Array.isArray(input)) return input.map((key) => String(key || '').trim()).filter(Boolean);
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      if (Array.isArray(parsed)) return parsed.map((key) => String(key || '').trim()).filter(Boolean);
+    } catch {
+      // Sigue como lista separada por comas.
+    }
+    return input.split(',').map((key) => key.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+const NON_ADMIN_PERMISSION_KEYS = new Set<PermissionKey>(
+  ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'pagos' && key !== 'users' && key !== 'salesperson'),
+);
+
+/** Permisos explícitos de una asignación: un vacío explícito no restaura presets. */
+export function explicitPermissions(input: unknown, role = 'operator'): PermissionKey[] {
+  const normalizedRole = normalizeRole(role);
+  if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
+  const expanded = parsePermissionInput(input).flatMap((key) => LEGACY_PERMISSION_MAP[key] || [key]);
+  return [...new Set(expanded.filter((key): key is PermissionKey => NON_ADMIN_PERMISSION_KEYS.has(key as PermissionKey)))];
+}
+
+export function userRoleList(user: AppUser | null | undefined): AppRole[] {
+  const raw = Array.isArray(user?.roles) ? user.roles : [];
+  const valid = [...new Set(raw.map((value) => String(value || '').trim()).filter((value) => value in ROLE_PRESETS))];
+  if (valid.length) return valid as AppRole[];
+  return [normalizeRole(user?.role)];
+}
+
+export function userHasRole(user: AppUser | null | undefined, role: unknown) {
+  return userRoleList(user).includes(normalizeRole(role));
+}
+
+export function isAdminUser(user: AppUser | null | undefined) {
+  return userRoleList(user).some((role) => isAdminRole(role));
+}
+
+export function isSuperadminUser(user: AppUser | null | undefined) {
+  return userRoleList(user).some((role) => normalizeRole(role) === 'superadmin');
+}
+
+/** Vendedor por pertenencia al perfil, no por el permiso (que admin también incluye). */
+export function isSalespersonUser(user: AppUser | null | undefined) {
+  return userRoleList(user).includes('vendedor');
+}
+
+/** Solo lectura si todas sus pertenencias son el perfil anterior `viewer`. */
+export function isReadOnlyUser(user: AppUser | null | undefined) {
+  const memberships = userRoleList(user);
+  return memberships.length > 0 && memberships.every((role) => role === 'viewer');
+}
+
+function membershipGrants(user: AppUser | null | undefined) {
+  const hasRoles = Array.isArray(user?.roles) && user.roles.length > 0;
+  const memberships = userRoleList(user);
+  const perRole = user?.rolePermissions && typeof user.rolePermissions === 'object' ? user.rolePermissions : null;
+  const legacySingle = !hasRoles
+    || (memberships.length === 1 && (!perRole || !Object.prototype.hasOwnProperty.call(perRole, memberships[0])));
+  return memberships.map((role) => {
+    if (isAdminRole(role)) return { role, readOnly: false, grants: [...ALL_PERMISSION_KEYS] };
+    if (role === 'vendedor') return { role, readOnly: false, grants: [...ROLE_PRESETS.vendedor.permissions] };
+    let grants: PermissionKey[];
+    if (perRole && Object.prototype.hasOwnProperty.call(perRole, role)) {
+      grants = explicitPermissions(perRole[role], role);
+    } else if (legacySingle) {
+      grants = parsePermissions(user?.permissions, role);
+    } else {
+      grants = [...ROLE_PRESETS[role].permissions];
+    }
+    return { role, readOnly: role === 'viewer', grants };
+  });
+}
+
+/** Unión de los accesos de todas las pertenencias (lectura). */
+export function permissionsForUser(user: AppUser | null | undefined): PermissionKey[] {
+  const grants = new Set<PermissionKey>();
+  for (const membership of membershipGrants(user)) {
+    for (const key of membership.grants) grants.add(key);
+  }
+  return [...grants];
+}
+
+/** Unión de los accesos de las pertenencias que sí permiten escritura. */
+export function writablePermissionsForUser(user: AppUser | null | undefined): PermissionKey[] {
+  const grants = new Set<PermissionKey>();
+  for (const membership of membershipGrants(user)) {
+    if (membership.readOnly) continue;
+    for (const key of membership.grants) grants.add(key);
+  }
+  return [...grants];
+}
+
+export function userCanWritePermission(user: AppUser | null | undefined, key: PermissionKey): boolean {
+  if (!user) return false;
+  if (user.active === false) return false;
+  if (isAdminUser(user)) return true;
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return false;
+  return writablePermissionsForUser(user).includes(key);
+}
+
+/** Criterio compartido con el servidor: vendedor puro, sin gestión de pedidos. */
+export function isSalespersonOnly(user: AppUser | null | undefined) {
+  return userHasPermission(user, 'salesperson') && !userHasPermission(user, 'order_management');
+}
+
+// ── Formulario multi-perfil ──────────────────────────────────────────────────
+// El editor de usuarios conserva un mapa de permisos por cada perfil asignado
+// para que cambiar el perfil principal (o des/marcar un perfil) nunca pierda
+// los accesos personalizados de otro perfil.
+
+export type RolePermissionMap = Partial<Record<AppRole, PermissionKey[]>>;
+
+/** Preset inicial de un perfil (admin siempre completo). */
+export function presetPermissionsForRole(role: AppRole): PermissionKey[] {
+  if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
+  return [...ROLE_PRESETS[role].permissions];
+}
+
+/**
+ * Accesos mostrados para un perfil. Un mapa explícito (incluido uno vacío)
+ * manda; sin entrada se usa el preset del perfil.
+ */
+export function grantsForRole(rolePermissions: RolePermissionMap, role: AppRole): PermissionKey[] {
+  if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
+  if (role === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
+  const explicit = rolePermissions[role];
+  return explicit ? [...explicit] : presetPermissionsForRole(role);
+}
+
+/** Perfil cuyos accesos se personalizan: el preferido si es editable, o el primero. */
+export function pickPermissionEditingRole(roles: AppRole[], preferred?: AppRole): AppRole {
+  const editable = roles.filter((role) => !isPermissionsLocked(role));
+  if (preferred && editable.includes(preferred)) return preferred;
+  return editable[0] ?? primaryRoleOf(roles);
+}
+
+type RoleFormState = {
+  roles: AppRole[];
+  rolePermissions: RolePermissionMap;
+  editingRole: AppRole;
+};
+
+/**
+ * Marca o desmarca un perfil. Añadir un perfil nuevo estrena su preset; los
+ * grants personalizados se conservan aunque el perfil se retire (para
+ * recuperarlos si se vuelve a marcar antes de guardar).
+ */
+export function toggleRoleAssignment(state: RoleFormState, role: AppRole): RoleFormState {
+  const has = state.roles.includes(role);
+  const roles = has ? state.roles.filter((item) => item !== role) : [...state.roles, role];
+  if (roles.length === 0) return state;
+  const rolePermissions = { ...state.rolePermissions };
+  if (!has && !Object.prototype.hasOwnProperty.call(rolePermissions, role)) {
+    rolePermissions[role] = presetPermissionsForRole(role);
+  }
+  return {
+    roles,
+    rolePermissions,
+    editingRole: pickPermissionEditingRole(roles, state.editingRole),
+  };
+}
+
+/** Mapa listo para el API: solo perfiles asignados, con sus grants efectivos. */
+export function rolePermissionsPayload(
+  roles: AppRole[],
+  rolePermissions: RolePermissionMap,
+): RolePermissionMap {
+  const payload: RolePermissionMap = {};
+  for (const role of roles) payload[role] = grantsForRole(rolePermissions, role);
+  return payload;
+}
+
+/** Perfil principal determinista: mayor rango; empates según SELECTABLE_ROLES. */
+export function primaryRoleOf(roles: readonly string[] | string | undefined): AppRole {
+  const list = (Array.isArray(roles) ? roles : [roles]).filter((value): value is string => Boolean(value));
+  const valid = [...new Set(list.map((value) => String(value).trim()).filter((value) => value in ROLE_PRESETS))];
+  if (!valid.length) return 'operator';
+  let best = valid[0];
+  for (const role of valid) {
+    const rank = roleRankOf(role as AppRole);
+    const bestRank = roleRankOf(best as AppRole);
+    if (rank > bestRank) best = role;
+    else if (rank === bestRank) {
+      const roleIndex = SELECTABLE_ROLES.indexOf(role as AppRole);
+      const bestIndex = SELECTABLE_ROLES.indexOf(best as AppRole);
+      if (roleIndex >= 0 && (bestIndex < 0 || roleIndex < bestIndex)) best = role;
+    }
+  }
+  return best as AppRole;
+}
+
+function roleRankOf(role: AppRole) {
+  return ROLE_RANK[role] ?? ROLE_RANK.operator;
 }
 
 export function pathPermission(pathname: string): PermissionKey | null {

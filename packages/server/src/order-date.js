@@ -1,4 +1,11 @@
-import { isAdminRole } from './permissions.js';
+import { isAdminRole, isAdminUser } from './permissions.js';
+
+// Acepta tanto el perfil (compatibilidad con llamadas antiguas) como el usuario
+// completo con múltiples pertenencias.
+function actorIsAdmin(actor) {
+  if (actor && typeof actor === 'object') return isAdminUser(actor);
+  return isAdminRole(actor);
+}
 
 export function orderDateTimestamp(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -18,9 +25,9 @@ export function requireOrderDateConfirmations(input) {
   }
 }
 
-export function manualOrderTimestamp(input, role) {
+export function manualOrderTimestamp(input, actor) {
   if (input.orderDate != null || input.orderedAt != null) {
-    if (!isAdminRole(role)) {
+    if (!actorIsAdmin(actor)) {
       const error = new Error('Solo un administrador puede cambiar la fecha del pedido.');
       error.status = 403;
       throw error;

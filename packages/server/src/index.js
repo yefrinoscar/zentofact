@@ -31,7 +31,7 @@ if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { allowCorsOrigin, resolveWebOrigins } = await import('./web-origins.js');
 const users = await import('./users.js');
-const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
+const { PERMISSIONS, ROLE_PRESETS, isSalespersonOnly, isSalespersonUser, userHasPermission } = await import('./permissions.js');
 const insumos = await import('./insumos.js');
 const insumoLowStockAlert = await import('./insumo-low-stock-alert.js');
 const { sendEmail } = await import('./mailer.js');
@@ -280,7 +280,7 @@ const fail = (c, e, status = 500, extra = {}) => c.json(operationalErrorBody(e, 
 function salespersonOnlyUserId(c) {
   const user = c.get('user');
   if (!user?.id) return null;
-  if (userHasPermission(user, 'salesperson') && !userHasPermission(user, 'order_management')) {
+  if (isSalespersonOnly(user)) {
     return String(user.id);
   }
   return null;
@@ -738,7 +738,7 @@ app.post('/order-management/orders/ingest', requirePermission('order_management'
 app.post('/order-management/orders/manual', async (c) => {
   try {
     const body = await c.req.json();
-    const orderedAt = manualOrderTimestamp(body, c.get('user')?.role);
+    const orderedAt = manualOrderTimestamp(body, c.get('user'));
     const { orderDateOverride: _ignoredOverride, ...metadata } = body.metadata || {};
     const actorUserId = c.get('user')?.id;
     const selfSalespersonId = salespersonOnlyUserId(c);
@@ -748,7 +748,7 @@ app.post('/order-management/orders/manual', async (c) => {
       const salesperson = requestedSalespersonId
         ? await users.getUserById(requestedSalespersonId)
         : null;
-      if (!salesperson?.active || salesperson.role !== 'vendedor') {
+      if (!salesperson?.active || !isSalespersonUser(salesperson)) {
         return c.json({ error: 'Elige una vendedora activa.' }, 400);
       }
       createdByUserId = salesperson.id;

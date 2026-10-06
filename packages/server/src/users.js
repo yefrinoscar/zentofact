@@ -1,46 +1,86 @@
 // Administración de usuarios de Better Auth con Drizzle, jerarquía y auditoría.
 import { randomBytes } from 'crypto';
 import { db, pool } from '@zentofact/core';
-import { asc, and, count, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { asc, and, eq, ilike, sql } from 'drizzle-orm';
 import { hashPassword } from 'better-auth/crypto';
 import {
   ALL_PERMISSION_KEYS,
   ROLE_PRESETS,
+  explicitPermissions,
   isAdminRole,
+  isAdminUser,
   isSuperadminRole,
+  isSuperadminUser,
   normalizePermissions,
   normalizeRole,
+  parsePermissionInput,
   permissionsForRole,
+  permissionsForUser,
+  primaryRoleOf,
   roleRank,
   userHasPermission,
 } from './permissions.js';
-import { authAccounts, authSessions, authUsers, LOCAL_CREDENTIAL_ISSUER, userAuditLog } from './db-schema.js';
+import { authAccounts, authSessions, authUsers, LOCAL_CREDENTIAL_ISSUER, userAuditLog, userRoles } from './db-schema.js';
 import { toPublicUserError } from './user-errors.js';
 
 const PASSWORD_MIN_LENGTH = 12;
-const USER_ADMIN_LOCK = 917204;
+/** Advisory lock de administración de usuarios; compartido por el mantenimiento de consolidación. */
+export const USER_ADMIN_LOCK = 917204;
 
 function newId() {
   return randomBytes(24).toString('base64url');
-}
-
-function parsePermissions(raw, role) {
-  return normalizePermissions(raw, role);
 }
 
 function isActive(value) {
   return value !== false && value !== 'f' && value !== 0 && value !== 'false';
 }
 
-function serializeUser(row) {
+function validRole(value) {
+  const clean = String(value || '').trim();
+  return ROLE_PRESETS[clean] ? clean : null;
+}
+
+function groupRoleRows(rows) {
+  const byUser = new Map();
+  for (const row of rows || []) {
+    if (!row?.userId) continue;
+    if (!byUser.has(row.userId)) byUser.set(row.userId, []);
+    byUser.get(row.userId).push(row);
+  }
+  return byUser;
+}
+
+/**
+ * Serializa un usuario con sus pertenencias. `role` y `permissions` se
+ * conservan como compatibilidad; `roles`/`rolePermissions` describen cada
+ * asignación y `permissions` queda como la unión efectiva.
+ */
+function serializeUser(row, roleRows = []) {
   if (!row) return null;
   const role = normalizeRole(row.role);
+  const roles = [];
+  const rolePermissions = {};
+  for (const entry of roleRows || []) {
+    const key = validRole(entry?.role);
+    if (!key || roles.includes(key)) continue;
+    roles.push(key);
+    if (entry.permissions != null) {
+      rolePermissions[key] = parsePermissionInput(entry.permissions);
+    }
+  }
+  if (!roles.length) roles.push(role);
+  if (!Object.prototype.hasOwnProperty.call(rolePermissions, role)) {
+    rolePermissions[role] = normalizePermissions(row.permissions, role);
+  }
+  const access = { role, permissions: row.permissions, roles, rolePermissions };
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     role,
-    permissions: parsePermissions(row.permissions, role),
+    roles,
+    rolePermissions,
+    permissions: permissionsForUser(access),
     active: isActive(row.active),
     commissionPercent: Number(row.commissionPercent ?? 0) || 0,
     createdAt: row.createdAt,
@@ -48,18 +88,55 @@ function serializeUser(row) {
   };
 }
 
-function normalizeRequestedRole(role, fallback = 'operator') {
-  if (role == null) return normalizeRole(fallback);
-  const value = String(role).trim();
-  if (!ROLE_PRESETS[value]) throw new Error('Rol inválido');
-  return value;
+function normalizeRequestedRoles(roles, fallbackRole, fallbackList) {
+  const source = roles != null
+    ? (Array.isArray(roles) ? roles : [roles])
+    : (fallbackRole != null ? [fallbackRole] : (fallbackList || []));
+  const list = [];
+  for (const value of source) {
+    const role = validRole(value);
+    if (!role) throw new Error('Rol inválido');
+    if (!list.includes(role)) list.push(role);
+  }
+  if (!list.length) throw new Error('Elige al menos un perfil');
+  return list;
 }
 
-function normalizeRequestedPermissions(input, role, fallback) {
-  if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
-  if (normalizeRole(role) === 'vendedor') return permissionsForRole(role);
-  return normalizePermissions(input != null ? input : fallback, role)
-    .filter((key) => key !== 'users' && key !== 'dashboard' && key !== 'pagos');
+function resolveAssignmentPermissions(role, provided) {
+  const normalizedRole = normalizeRole(role);
+  if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
+  if (provided === undefined || provided === null) return permissionsForRole(normalizedRole);
+  return explicitPermissions(provided, normalizedRole);
+}
+
+/**
+ * Deriva la lista de pertenencias, el perfil principal y los permisos de cada
+ * asignación. `role` sigue siendo el alias legacy del perfil principal y
+ * `permissions` aplica solo a ese perfil principal.
+ */
+function buildRoleAssignments(input = {}, current = null) {
+  const requestedRole = validRole(input.role);
+  const list = normalizeRequestedRoles(input.roles, input.role, current?.roles);
+  const primary = requestedRole && list.includes(requestedRole)
+    ? requestedRole
+    : (current && list.includes(current.role) ? current.role : primaryRoleOf(list));
+  const rolePermissions = input.rolePermissions && typeof input.rolePermissions === 'object'
+    ? input.rolePermissions
+    : null;
+  const map = {};
+  for (const role of list) {
+    let provided;
+    if (rolePermissions && Object.prototype.hasOwnProperty.call(rolePermissions, role)) {
+      provided = rolePermissions[role];
+    } else if (role === primary && input.permissions !== undefined) {
+      provided = input.permissions;
+    } else if (current?.rolePermissions && Object.prototype.hasOwnProperty.call(current.rolePermissions, role)) {
+      provided = current.rolePermissions[role];
+    }
+    map[role] = resolveAssignmentPermissions(role, provided);
+  }
+  return { roles: list, primary, map };
 }
 
 function normalizeCommissionPercent(value, fallback = 0) {
@@ -84,28 +161,49 @@ function validateEmail(email) {
 }
 
 function requireAdminActor(actor) {
-  if (!actor || !actor.active || !isAdminRole(actor.role)) {
+  if (!actor || !actor.active || !isAdminUser(actor)) {
     throw new Error('Solo un administrador puede gestionar usuarios');
   }
 }
 
 function assertCanAssignRole(actor, targetRole) {
   requireAdminActor(actor);
-  if (!isSuperadminRole(actor.role) && roleRank(targetRole) >= roleRank('admin')) {
+  if (!isSuperadminUser(actor) && roleRank(targetRole) >= roleRank('admin')) {
     throw new Error('Solo un superadministrador puede crear o promover administradores');
   }
 }
 
-function assertCanManageTarget(actor, target, nextRole, patch) {
+function assertCanManageTarget(actor, target, nextPrimary, patch) {
   requireAdminActor(actor);
   if (actor.id === target.id) {
     const keys = Object.keys(patch || {});
     if (keys.every((key) => key === 'name')) return;
     throw new Error('No puedes cambiar tus propios privilegios, estado o contraseña desde esta pantalla');
   }
-  if (isSuperadminRole(actor.role)) return;
-  if (roleRank(target.role) >= roleRank('admin') || roleRank(nextRole) >= roleRank('admin')) {
+  if (isSuperadminUser(actor)) return;
+  if (isAdminUser(target) || isAdminRole(nextPrimary)) {
     throw new Error('Solo un superadministrador puede administrar cuentas administrativas');
+  }
+}
+
+async function listRoleRows(database, userId = null) {
+  if (userId != null) {
+    const rows = await database.select().from(userRoles).where(eq(userRoles.userId, userId));
+    return { byUser: groupRoleRows(rows), rows };
+  }
+  const rows = await database.select().from(userRoles);
+  return { byUser: groupRoleRows(rows), rows };
+}
+
+async function replaceUserRoles(tx, userId, roles, map, now = new Date()) {
+  await tx.delete(userRoles).where(eq(userRoles.userId, userId));
+  for (const role of roles) {
+    await tx.insert(userRoles).values({
+      userId,
+      role,
+      permissions: JSON.stringify(map[role] || []),
+      createdAt: now,
+    });
   }
 }
 
@@ -115,7 +213,9 @@ async function getUserByIdWith(database, id) {
     .from(authUsers)
     .where(eq(authUsers.id, id))
     .limit(1);
-  return serializeUser(rows[0]);
+  if (!rows[0]) return null;
+  const { rows: roleRows } = await listRoleRows(database, id);
+  return serializeUser(rows[0], roleRows);
 }
 
 async function addAudit(tx, { actorId = null, targetId = null, action, details = {} }) {
@@ -133,23 +233,42 @@ async function lockAdministration(tx) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(${USER_ADMIN_LOCK})`);
 }
 
-async function assertAdminInvariants(tx, current, nextRole, nextActive) {
-  const losesSuperadmin = isSuperadminRole(current.role) && (!isSuperadminRole(nextRole) || !nextActive);
+async function countActiveAdministrators(tx, superadminOnly = false) {
+  // Cuenta usuarios distintos con pertenencia admin/superadmin; el rol legacy
+  // de `user` solo cuenta para usuarios todavía no migrados a user_roles.
+  const rolesSql = superadminOnly ? "'superadmin'" : "'admin', 'superadmin'";
+  const result = await tx.execute(sql.raw(`
+    SELECT count(*)::int AS n
+      FROM "user" u
+     WHERE u.active = true
+       AND (
+         EXISTS (
+           SELECT 1 FROM user_roles r
+           WHERE r.user_id = u.id AND r.role IN (${rolesSql})
+         )
+         OR (
+           u.role IN (${rolesSql})
+           AND NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id)
+         )
+       )
+  `));
+  const rows = result?.rows || result || [];
+  return Number(rows[0]?.n || 0);
+}
+
+async function assertAdminInvariants(tx, current, nextRoles, nextActive) {
+  const nextAdmin = nextRoles.some((role) => isAdminRole(role));
+  const nextSuperadmin = nextRoles.some((role) => isSuperadminRole(role));
+  const losesSuperadmin = isSuperadminUser(current) && (!nextSuperadmin || !nextActive);
   if (losesSuperadmin) {
-    const [row] = await tx
-      .select({ n: count() })
-      .from(authUsers)
-      .where(and(eq(authUsers.active, true), eq(authUsers.role, 'superadmin')));
-    if (Number(row?.n || 0) < 2) throw new Error('Debe existir al menos un superadministrador activo');
+    const n = await countActiveAdministrators(tx, true);
+    if (n < 2) throw new Error('Debe existir al menos un superadministrador activo');
   }
 
-  const losesAdmin = isAdminRole(current.role) && (!isAdminRole(nextRole) || !nextActive);
+  const losesAdmin = isAdminUser(current) && (!nextAdmin || !nextActive);
   if (losesAdmin) {
-    const [row] = await tx
-      .select({ n: count() })
-      .from(authUsers)
-      .where(and(eq(authUsers.active, true), inArray(authUsers.role, ['admin', 'superadmin'])));
-    if (Number(row?.n || 0) < 2) throw new Error('Debe existir al menos un administrador activo');
+    const n = await countActiveAdministrators(tx, false);
+    if (n < 2) throw new Error('Debe existir al menos un administrador activo');
   }
 }
 
@@ -158,6 +277,57 @@ export async function ensureAuthSchema() {
   // (p. ej. Railway PR preview) rompe el boot en ensureUserColumns.
   const { ensureAuthSchema: migrateAuthSchema } = await import('./ensure-auth-schema.js');
   await migrateAuthSchema();
+}
+
+/** Tabla de pertenencias multi-perfil (una fila por usuario y perfil). */
+export async function ensureUserRolesSchema(database) {
+  await database.query(`
+    CREATE TABLE IF NOT EXISTS user_roles (
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      permissions TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, role)
+    );
+    CREATE INDEX IF NOT EXISTS user_roles_role_idx ON user_roles (role);
+  `);
+}
+
+/**
+ * Backfill idempotente: crea la pertenencia del rol actual (con sus permisos
+ * efectivos normalizados) solo para usuarios sin ninguna fila en user_roles.
+ * Nunca reinserta perfiles retirados al reiniciar.
+ */
+export async function backfillUserRoles(database) {
+  const { rows } = await database.query(`
+    SELECT u.id, u.role, u.permissions
+      FROM "user" u
+     WHERE NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id)
+  `);
+  if (!rows.length) return { inserted: 0 };
+  const client = await database.connect();
+  let inserted = 0;
+  try {
+    await client.query('BEGIN');
+    for (const row of rows) {
+      const role = normalizeRole(row.role);
+      const permissions = normalizePermissions(row.permissions, role);
+      const result = await client.query(
+        `INSERT INTO user_roles (user_id, role, permissions, created_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id, role) DO NOTHING`,
+        [row.id, role, JSON.stringify(permissions)],
+      );
+      inserted += result.rowCount || 0;
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { inserted };
 }
 
 export async function ensureUserColumns() {
@@ -182,6 +352,8 @@ export async function ensureUserColumns() {
     );
     CREATE INDEX IF NOT EXISTS user_audit_log_target_created_idx ON user_audit_log (target_id, created_at DESC);
   `);
+  await ensureUserRolesSchema(pool);
+  await backfillUserRoles(pool);
 
   // Bootstrap explícito: nunca promocionar la cuenta más antigua ni reactivar usuarios.
   const bootstrapEmail = String(process.env.AUTH_SUPERADMIN_EMAIL || '').trim().toLowerCase();
@@ -217,19 +389,37 @@ export async function ensureBootstrapAdmin() {
 }
 
 export async function listUsers() {
-  const rows = await db.select().from(authUsers).orderBy(asc(authUsers.createdAt));
-  return rows.map(serializeUser);
+  const [rows, { rows: roleRows }] = await Promise.all([
+    db.select().from(authUsers).orderBy(asc(authUsers.createdAt)),
+    listRoleRows(db),
+  ]);
+  const byUser = groupRoleRows(roleRows);
+  return rows.map((row) => serializeUser(row, byUser.get(row.id) || []));
 }
 
-export async function listActiveSalespeople() {
-  const rows = await db
-    .select({ id: authUsers.id, name: authUsers.name })
-    .from(authUsers)
-    .where(and(eq(authUsers.role, 'vendedor'), eq(authUsers.active, true)))
-    .orderBy(asc(authUsers.name));
+export async function listActiveSalespeople(database = db) {
+  // Vendedor por pertenencia al perfil vendedor; los usuarios sin filas en
+  // user_roles conservan su rol legacy solo durante la transición.
+  // `database` acepta el cliente Drizzle (por defecto) o un Pool/Client de `pg`
+  // para reutilizar exactamente esta consulta en mantenimiento y pruebas.
+  const query = `
+    SELECT DISTINCT u.id, u.name
+      FROM "user" u
+     WHERE u.active = true
+       AND (
+         EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = 'vendedor')
+         OR (u.role = 'vendedor' AND NOT EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id))
+       )
+     ORDER BY u.name
+  `;
+  const result = typeof database.execute === 'function'
+    ? await database.execute(sql.raw(query))
+    : await database.query(query);
+  const rows = result?.rows || result || [];
   return rows.map((row) => ({
     id: row.id,
     name: String(row.name || '').trim() || 'Vendedora sin nombre',
+    roles: ['vendedor'],
   }));
 }
 
@@ -247,10 +437,37 @@ export async function promoteSuperadminByEmail(email, actorId = null) {
       .limit(1);
     const current = rows[0];
     if (!current) throw new Error('No existe un usuario activo con ese correo para promoverlo a superadministrador');
-    if (!isSuperadminRole(current.role)) {
+    const { rows: roleRows } = await listRoleRows(tx, current.id);
+    const existingRoles = roleRows.map((row) => validRole(row.role)).filter(Boolean);
+    const hasSuperadmin = existingRoles.includes('superadmin')
+      || (!existingRoles.length && isSuperadminRole(current.role));
+    if (!hasSuperadmin) {
+      const now = new Date();
+      if (existingRoles.length) {
+        await tx
+          .insert(userRoles)
+          .values({
+            userId: current.id,
+            role: 'superadmin',
+            permissions: JSON.stringify(ALL_PERMISSION_KEYS),
+            createdAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [userRoles.userId, userRoles.role],
+            set: { permissions: JSON.stringify(ALL_PERMISSION_KEYS) },
+          });
+      } else {
+        // Usuario recién creado (sin filas previas): queda como superadmin puro.
+        await tx.insert(userRoles).values({
+          userId: current.id,
+          role: 'superadmin',
+          permissions: JSON.stringify(ALL_PERMISSION_KEYS),
+          createdAt: now,
+        });
+      }
       await tx
         .update(authUsers)
-        .set({ role: 'superadmin', permissions: JSON.stringify(ALL_PERMISSION_KEYS), updatedAt: new Date() })
+        .set({ role: 'superadmin', permissions: JSON.stringify(ALL_PERMISSION_KEYS), updatedAt: now })
         .where(eq(authUsers.id, current.id));
       await addAudit(tx, {
         actorId,
@@ -259,20 +476,22 @@ export async function promoteSuperadminByEmail(email, actorId = null) {
         details: { source: actorId ? 'system' : 'seed' },
       });
     }
-    return { id: current.id, changed: !isSuperadminRole(current.role) };
+    return { id: current.id, changed: !hasSuperadmin };
   });
 }
 
-export async function createUser({ name, email, password, role = 'operator', permissions, active = true, commissionPercent }, actorId) {
+export async function createUser({
+  name, email, password, role = 'operator', roles, permissions, rolePermissions,
+  active = true, commissionPercent,
+}, actorId) {
   const actor = await getUserById(actorId);
   const cleanEmail = validateEmail(email);
   const cleanName = String(name || '').trim() || cleanEmail.split('@')[0];
   if (!cleanName) throw new Error('Nombre requerido');
   validatePassword(password);
 
-  const roleKey = normalizeRequestedRole(role);
-  assertCanAssignRole(actor, roleKey);
-  const perms = normalizeRequestedPermissions(permissions, roleKey, permissionsForRole(roleKey));
+  const { roles: roleList, primary, map } = buildRoleAssignments({ roles, role, permissions, rolePermissions });
+  for (const targetRole of roleList) assertCanAssignRole(actor, targetRole);
   const commission = normalizeCommissionPercent(commissionPercent, 0);
   const userId = newId();
   const accountId = newId();
@@ -286,8 +505,8 @@ export async function createUser({ name, email, password, role = 'operator', per
       email: cleanEmail,
       emailVerified: false,
       image: null,
-      role: roleKey,
-      permissions: JSON.stringify(perms),
+      role: primary,
+      permissions: JSON.stringify(map[primary]),
       active: !!active,
       commissionPercent: String(commission),
       createdAt: now,
@@ -303,7 +522,13 @@ export async function createUser({ name, email, password, role = 'operator', per
       createdAt: now,
       updatedAt: now,
     });
-    await addAudit(tx, { actorId, targetId: userId, action: 'user.create', details: { role: roleKey, active: !!active } });
+    await replaceUserRoles(tx, userId, roleList, map, now);
+    await addAudit(tx, {
+      actorId,
+      targetId: userId,
+      action: 'user.create',
+      details: { roles: roleList, primary, active: !!active },
+    });
   }).catch((error) => {
     throw toPublicUserError(error);
   });
@@ -318,14 +543,11 @@ export async function updateUser(id, patch = {}, actorId) {
     const actor = await getUserByIdWith(tx, actorId);
     if (!current) throw new Error('Usuario no encontrado');
 
-    const role = normalizeRequestedRole(patch.role, current.role);
-    assertCanManageTarget(actor, current, role, patch);
+    const { roles: nextRoles, primary, map } = buildRoleAssignments(patch, current);
+    for (const targetRole of nextRoles) assertCanAssignRole(actor, targetRole);
+    assertCanManageTarget(actor, current, primary, patch);
     const name = patch.name != null ? String(patch.name).trim() : current.name;
     if (!name) throw new Error('Nombre requerido');
-    const permissionFallback = patch.role != null && role !== current.role
-      ? permissionsForRole(role)
-      : current.permissions;
-    const permissions = normalizeRequestedPermissions(patch.permissions, role, permissionFallback);
     const active = patch.active != null ? !!patch.active : current.active;
     const commissionPercent = patch.commissionPercent != null
       ? normalizeCommissionPercent(patch.commissionPercent)
@@ -333,18 +555,19 @@ export async function updateUser(id, patch = {}, actorId) {
     const passwordChanged = patch.password != null && String(patch.password) !== '';
     if (passwordChanged) validatePassword(patch.password);
 
-    await assertAdminInvariants(tx, current, role, active);
+    await assertAdminInvariants(tx, current, nextRoles, active);
     await tx
       .update(authUsers)
       .set({
         name,
-        role,
-        permissions: JSON.stringify(permissions),
+        role: primary,
+        permissions: JSON.stringify(map[primary]),
         active,
         commissionPercent: String(commissionPercent),
         updatedAt: new Date(),
       })
       .where(eq(authUsers.id, id));
+    await replaceUserRoles(tx, id, nextRoles, map);
 
     if (passwordChanged) {
       await tx
@@ -353,14 +576,15 @@ export async function updateUser(id, patch = {}, actorId) {
         .where(and(eq(authAccounts.userId, id), eq(authAccounts.providerId, 'credential')));
     }
 
-    const privilegesChanged = current.role !== role || JSON.stringify(current.permissions) !== JSON.stringify(permissions);
+    const privilegesChanged = JSON.stringify(current.roles) !== JSON.stringify(nextRoles)
+      || JSON.stringify(current.rolePermissions) !== JSON.stringify(map);
     const sessionsRevoked = passwordChanged || !active || privilegesChanged;
     if (sessionsRevoked) await tx.delete(authSessions).where(eq(authSessions.userId, id));
     await addAudit(tx, {
       actorId,
       targetId: id,
       action: passwordChanged ? 'user.update_with_password_reset' : 'user.update',
-      details: { fromRole: current.role, toRole: role, active, sessionsRevoked },
+      details: { fromRoles: current.roles, toRoles: nextRoles, primary, active, sessionsRevoked },
     });
   });
   return getUserById(id);
@@ -373,12 +597,13 @@ export async function deleteUser(id, actorId) {
     const current = await getUserByIdWith(tx, id);
     const actor = await getUserByIdWith(tx, actorId);
     if (!current) throw new Error('Usuario no encontrado');
-    assertCanManageTarget(actor, current, current.role, {});
-    await assertAdminInvariants(tx, current, 'viewer', false);
+    assertCanManageTarget(actor, current, primaryRoleOf(current.roles), {});
+    await assertAdminInvariants(tx, current, [], false);
+    await tx.delete(userRoles).where(eq(userRoles.userId, id));
     await tx.delete(authSessions).where(eq(authSessions.userId, id));
     await tx.delete(authAccounts).where(eq(authAccounts.userId, id));
     await tx.delete(authUsers).where(eq(authUsers.id, id));
-    await addAudit(tx, { actorId, targetId: id, action: 'user.delete', details: { role: current.role } });
+    await addAudit(tx, { actorId, targetId: id, action: 'user.delete', details: { roles: current.roles } });
   });
   return { ok: true };
 }

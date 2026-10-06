@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  explicitPermissions,
+  isAdminUser,
   isPermissionsLocked,
+  isReadOnlyUser,
+  isSalespersonOnly,
+  isSalespersonUser,
   normalizePermissions,
   pathPermission,
   PERMISSIONS,
+  permissionsForUser,
+  primaryRoleOf,
   ROLE_PRESETS,
   SELECTABLE_ROLES,
+  userCanWritePermission,
   userHasPermission,
 } from './permissions.js';
 
@@ -200,4 +208,152 @@ test('el vendedor conserva el preset fijo y no admite permisos extra', () => {
   assert.equal(userHasPermission(vendedor, 'order_management'), false);
   assert.equal(userHasPermission(vendedor, 'dashboard'), false);
   assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['salesperson'] }, 'salesperson'), false);
+});
+
+// ── Multi-perfil ─────────────────────────────────────────────────────────────
+
+test('pertenencias múltiples unen permisos de cada perfil', () => {
+  const vendedorOperator = {
+    role: 'operator',
+    active: true,
+    roles: ['operator', 'vendedor'],
+    rolePermissions: { operator: ['order_management', 'orders_inbox', 'orders_scanner', 'insumos'], vendedor: ['salesperson'] },
+  };
+  assert.equal(userHasPermission(vendedorOperator, 'salesperson'), true);
+  assert.equal(userHasPermission(vendedorOperator, 'order_management'), true);
+  assert.equal(userHasPermission(vendedorOperator, 'boletas'), false);
+  assert.equal(isSalespersonUser(vendedorOperator), true);
+  assert.equal(isSalespersonOnly(vendedorOperator), false); // tiene order_management
+  assert.deepEqual(permissionsForUser(vendedorOperator).sort(), [
+    'insumos', 'order_management', 'orders_inbox', 'orders_scanner', 'salesperson',
+  ].sort());
+});
+
+test('el vendedor se detecta por pertenencia, no por el permiso que da admin', () => {
+  const admin = { role: 'admin', active: true, roles: ['admin'], rolePermissions: { admin: [] } };
+  assert.equal(userHasPermission(admin, 'salesperson'), true);
+  assert.equal(isSalespersonUser(admin), false);
+  assert.equal(isSalespersonOnly(admin), false);
+  const soloVendedor = { role: 'vendedor', active: true, roles: ['vendedor'], rolePermissions: { vendedor: ['salesperson'] } };
+  assert.equal(isSalespersonUser(soloVendedor), true);
+  assert.equal(isSalespersonOnly(soloVendedor), true);
+});
+
+test('un perfil que no es primario contribuye su preset a la unión', () => {
+  // Primario operator con permisos personalizados; se añade billing (preset).
+  const user = {
+    role: 'operator',
+    active: true,
+    roles: ['operator', 'billing'],
+    rolePermissions: {
+      operator: ['order_management', 'orders_inbox', 'boletas'],
+      billing: ['boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk'],
+    },
+  };
+  assert.equal(userHasPermission(user, 'order_management'), true);
+  assert.equal(userHasPermission(user, 'boletas'), true);
+  assert.equal(userHasPermission(user, 'facturas'), true);
+  assert.equal(userHasPermission(user, 'auto_emision'), true);
+  assert.equal(userHasPermission(user, 'orders_scanner'), false); // no está en operator ni billing
+  assert.equal(primaryRoleOf(['vendedor', 'operator']), 'operator');
+  assert.equal(primaryRoleOf(['admin', 'superadmin']), 'superadmin');
+});
+
+test('admin o superadmin conserva acceso total aunque no tenga grants explícitos', () => {
+  for (const role of ['admin', 'superadmin']) {
+    const user = { role, active: true, roles: [role], rolePermissions: { [role]: [] } };
+    for (const { key } of PERMISSIONS) assert.equal(userHasPermission(user, key), true);
+    assert.equal(userCanWritePermission(user, 'boletas'), true);
+  }
+});
+
+test('vacío explícito no restaura defaults del preset', () => {
+  assert.deepEqual(explicitPermissions([], 'operator'), []);
+  assert.deepEqual(explicitPermissions('[]', 'billing'), []);
+  const user = {
+    role: 'operator',
+    active: true,
+    roles: ['operator', 'vendedor'],
+    rolePermissions: { operator: [], vendedor: ['salesperson'] },
+  };
+  assert.equal(userHasPermission(user, 'order_management'), false);
+  assert.equal(userHasPermission(user, 'salesperson'), true);
+});
+
+test('la lista personalizada del perfil original se conserva al unir perfiles', () => {
+  // Operador con boletas extra (custom) + perfil vendedor: conserva boletas.
+  const user = {
+    role: 'operator',
+    active: true,
+    roles: ['operator', 'vendedor'],
+    rolePermissions: { operator: ['order_management', 'boletas'], vendedor: ['salesperson'] },
+  };
+  assert.equal(userHasPermission(user, 'boletas'), true);
+  assert.equal(userHasPermission(user, 'order_management'), true);
+  assert.equal(userHasPermission(user, 'salesperson'), true);
+});
+
+test('un viewer legacy sigue solo lectura y no se mezcla con escritura ajena', () => {
+  const viewer = { role: 'viewer', active: true, roles: ['viewer'], rolePermissions: { viewer: ['falabella_sellers', 'boletas'] } };
+  assert.equal(isReadOnlyUser(viewer), true);
+  assert.equal(userHasPermission(viewer, 'boletas'), true);
+  assert.equal(userCanWritePermission(viewer, 'boletas'), false);
+
+  // viewer + operator: operator sí escribe lo que concede; los grants viewer no.
+  const mixed = {
+    role: 'viewer',
+    active: true,
+    roles: ['viewer', 'operator'],
+    rolePermissions: {
+      viewer: ['falabella_sellers', 'boletas'],
+      operator: ['order_management', 'orders_inbox'],
+    },
+  };
+  assert.equal(isReadOnlyUser(mixed), false);
+  assert.equal(userHasPermission(mixed, 'boletas'), true);
+  assert.equal(userCanWritePermission(mixed, 'boletas'), false);
+  assert.equal(userCanWritePermission(mixed, 'order_management'), true);
+});
+
+test('viewer + vendedor no habilita escritura de facturación', () => {
+  // El viewer aporta lectura de comprobantes; el vendedor solo salesperson.
+  // Ninguno de los dos concede escritura de boletas/facturas/notas de crédito.
+  const user = {
+    role: 'viewer',
+    active: true,
+    roles: ['viewer', 'vendedor'],
+    rolePermissions: {
+      viewer: ['falabella_sellers', 'boletas', 'facturas', 'credit_notes_manage'],
+      vendedor: ['salesperson'],
+    },
+  };
+  // Lectura: la unión sí ve los módulos del viewer.
+  assert.equal(userHasPermission(user, 'boletas'), true);
+  assert.equal(userHasPermission(user, 'facturas'), true);
+  assert.equal(userHasPermission(user, 'credit_notes_manage'), true);
+  assert.equal(userHasPermission(user, 'salesperson'), true);
+  // Escritura de facturación: bloqueada (viewer es solo lectura).
+  assert.equal(userCanWritePermission(user, 'boletas'), false);
+  assert.equal(userCanWritePermission(user, 'facturas'), false);
+  assert.equal(userCanWritePermission(user, 'credit_notes_manage'), false);
+  // El vendedor sí puede escribir solo lo suyo.
+  assert.equal(userCanWritePermission(user, 'salesperson'), true);
+  assert.equal(isReadOnlyUser(user), false);
+  // RegistrarVenta: es "solo vendedor" porque no gestiona pedidos.
+  assert.equal(isSalespersonOnly(user), true);
+});
+
+test('admin multi-perfil no convierte en vendedor ni pierde acceso', () => {
+  const user = {
+    role: 'admin',
+    active: true,
+    roles: ['admin', 'vendedor'],
+    rolePermissions: { admin: [], vendedor: ['salesperson'] },
+  };
+  assert.equal(isAdminUser(user), true);
+  assert.equal(isSalespersonUser(user), true);
+  assert.equal(userHasPermission(user, 'users'), true);
+  assert.equal(userHasPermission(user, 'dashboard'), true);
+  assert.equal(userCanWritePermission(user, 'facturas'), true);
+  assert.equal(isSalespersonOnly(user), false);
 });

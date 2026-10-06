@@ -5,16 +5,23 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import {
-  ALL_PERMISSION_KEYS,
   PERMISSIONS,
   PERMISSION_SECTIONS,
   ROLE_PRESETS,
   SELECTABLE_ROLES,
   type AppRole,
   type PermissionKey,
+  type RolePermissionMap,
+  explicitPermissions,
+  grantsForRole,
   isAdminRole,
   isPermissionsLocked,
   parsePermissions,
+  pickPermissionEditingRole,
+  presetPermissionsForRole,
+  primaryRoleOf,
+  rolePermissionsPayload,
+  toggleRoleAssignment,
 } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
 import { cn } from '@/lib/utils';
@@ -69,6 +76,8 @@ type UserRow = {
   name: string;
   email: string;
   role: AppRole | string;
+  roles: AppRole[];
+  rolePermissions?: Record<string, PermissionKey[] | string[] | null>;
   permissions: PermissionKey[];
   active: boolean;
   commissionPercent?: number;
@@ -78,8 +87,11 @@ type FormState = {
   name: string;
   email: string;
   password: string;
-  role: AppRole;
-  permissions: PermissionKey[];
+  roles: AppRole[];
+  primaryRole: AppRole;
+  /** Perfil cuyos accesos se están personalizando. */
+  editingRole: AppRole;
+  rolePermissions: RolePermissionMap;
   active: boolean;
   commissionPercent: string;
 };
@@ -88,8 +100,10 @@ const emptyForm = (): FormState => ({
   name: '',
   email: '',
   password: '',
-  role: 'operator',
-  permissions: [...ROLE_PRESETS.operator.permissions],
+  roles: ['operator'],
+  primaryRole: 'operator',
+  editingRole: 'operator',
+  rolePermissions: { operator: [...ROLE_PRESETS.operator.permissions] },
   active: true,
   commissionPercent: '0',
 });
@@ -98,6 +112,26 @@ const USERS_PAGE_SIZE = 10;
 
 function roleLabel(role: string) {
   return ROLE_PRESETS[role as AppRole]?.label || role;
+}
+
+function normalizeRoles(roles: unknown): AppRole[] {
+  const list = (Array.isArray(roles) ? roles : [])
+    .map((value) => String(value || '').trim())
+    .filter((value) => value in ROLE_PRESETS);
+  if (!list.length) return ['operator'];
+  return [...new Set(list)] as AppRole[];
+}
+
+function roleGrantsOf(row: UserRow, role: AppRole): PermissionKey[] {
+  const explicit = row.rolePermissions?.[role];
+  if (explicit != null) return explicitPermissions(explicit, role);
+  return parsePermissions(row.permissions, row.role);
+}
+
+function rolePermissionMapOf(row: UserRow, roles: AppRole[]): RolePermissionMap {
+  const map: RolePermissionMap = {};
+  for (const role of roles) map[role] = roleGrantsOf(row, role);
+  return map;
 }
 
 function roleBadgeClass(role: string) {
@@ -149,10 +183,15 @@ export default function UsersPage() {
     setError('');
     return api.listUsers()
       .then((list: any[]) => {
-        setUsers((Array.isArray(list) ? list : []).map((u) => ({
-          ...u,
-          permissions: parsePermissions(u.permissions, u.role),
-        })));
+        setUsers((Array.isArray(list) ? list : []).map((u) => {
+          const roles = normalizeRoles(u.roles?.length ? u.roles : [u.role]);
+          return {
+            ...u,
+            roles,
+            role: typeof u.role === 'string' && roles.includes(u.role as AppRole) ? u.role : primaryRoleOf(roles),
+            permissions: Array.isArray(u.permissions) ? u.permissions : [],
+          };
+        }));
       })
       .catch((e: any) => setError(e?.message || 'No se pudieron cargar los usuarios'))
       .finally(() => setLoading(false));
@@ -173,13 +212,19 @@ export default function UsersPage() {
 
   const openEdit = (row: UserRow) => {
     if (!canManageRow(row)) return;
+    const roles = normalizeRoles(row.roles?.length ? row.roles : [row.role]);
+    const primary = (typeof row.role === 'string' && (ROLE_PRESETS[row.role as AppRole]) && roles.includes(row.role as AppRole))
+      ? row.role as AppRole
+      : primaryRoleOf(roles);
     setEditing(row);
     setForm({
       name: row.name || '',
       email: row.email || '',
       password: '',
-      role: (ROLE_PRESETS[row.role as AppRole] ? row.role : 'operator') as AppRole,
-      permissions: parsePermissions(row.permissions, row.role),
+      roles,
+      primaryRole: primary,
+      editingRole: pickPermissionEditingRole(roles, primary),
+      rolePermissions: rolePermissionMapOf(row, roles),
       active: row.active !== false,
       commissionPercent: String(row.commissionPercent ?? 0),
     });
@@ -196,34 +241,45 @@ export default function UsersPage() {
     setSaving(false);
   };
 
-  const setRole = (role: AppRole) => {
-    setForm((f) => ({
-      ...f,
-      role,
-      permissions: isAdminRole(role) ? [...ALL_PERMISSION_KEYS] : [...ROLE_PRESETS[role].permissions],
-    }));
+  const toggleRole = (role: AppRole) => {
+    setForm((f) => {
+      const next = toggleRoleAssignment({
+        roles: f.roles,
+        rolePermissions: f.rolePermissions,
+        editingRole: f.editingRole,
+      }, role);
+      return { ...f, ...next, primaryRole: primaryRoleOf(next.roles) };
+    });
   };
 
   const togglePermission = (key: PermissionKey) => {
-    if (isPermissionsLocked(form.role)) return;
     setForm((f) => {
-      const has = f.permissions.includes(key);
+      if (isPermissionsLocked(f.editingRole)) return f;
+      const current = grantsForRole(f.rolePermissions, f.editingRole);
+      const has = current.includes(key);
       return {
         ...f,
-        permissions: has ? f.permissions.filter((k) => k !== key) : [...f.permissions, key],
+        rolePermissions: {
+          ...f.rolePermissions,
+          [f.editingRole]: has ? current.filter((k) => k !== key) : [...current, key],
+        },
       };
     });
   };
 
   const togglePermissionSection = (keys: PermissionKey[]) => {
-    if (isPermissionsLocked(form.role)) return;
-    setForm((current) => {
-      const allChecked = keys.every((key) => current.permissions.includes(key));
+    setForm((f) => {
+      if (isPermissionsLocked(f.editingRole)) return f;
+      const current = grantsForRole(f.rolePermissions, f.editingRole);
+      const allChecked = keys.every((key) => current.includes(key));
       return {
-        ...current,
-        permissions: allChecked
-          ? current.permissions.filter((key) => !keys.includes(key))
-          : [...new Set([...current.permissions, ...keys])],
+        ...f,
+        rolePermissions: {
+          ...f.rolePermissions,
+          [f.editingRole]: allChecked
+            ? current.filter((key) => !keys.includes(key))
+            : [...new Set([...current, ...keys])],
+        },
       };
     });
   };
@@ -237,24 +293,32 @@ export default function UsersPage() {
     setSaving(true);
     setFormError('');
     try {
+      const primaryRole = primaryRoleOf(form.roles);
+      const rolePermissions = rolePermissionsPayload(form.roles, form.rolePermissions);
+      const grants = rolePermissions[primaryRole] ?? presetPermissionsForRole(primaryRole);
+      const payload = {
+        name: form.name.trim(),
+        roles: form.roles,
+        role: primaryRole,
+        permissions: grants,
+        rolePermissions,
+        active: form.active,
+        commissionPercent: Number(form.commissionPercent || 0),
+        ...(form.password ? { password: form.password } : {}),
+      };
       if (editing) {
-        await api.updateUser(editing.id, {
-          name: form.name.trim(),
-          role: form.role,
-          permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
-          active: form.active,
-          commissionPercent: Number(form.commissionPercent || 0),
-          ...(form.password ? { password: form.password } : {}),
-        });
+        await api.updateUser(editing.id, payload);
       } else {
         await api.createUser({
-          name: form.name.trim(),
+          name: payload.name,
           email: form.email.trim(),
           password: form.password,
-          role: form.role,
-          permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
-          active: form.active,
-          commissionPercent: Number(form.commissionPercent || 0),
+          roles: payload.roles,
+          role: payload.role,
+          permissions: payload.permissions,
+          rolePermissions: payload.rolePermissions,
+          active: payload.active,
+          commissionPercent: payload.commissionPercent,
         });
       }
       closeEditor();
@@ -291,14 +355,21 @@ export default function UsersPage() {
 
   const canManageRow = (row: UserRow) => {
     if (!isAdmin || row.id === me?.id) return false;
-    return isSuperadmin || !isAdminRole(row.role);
+    const rowHasAdmin = row.roles.some((role) => isAdminRole(role));
+    return isSuperadmin || !rowHasAdmin;
   };
 
   const editableRoles = SELECTABLE_ROLES
     .filter((role) => isSuperadmin || !isAdminRole(role));
+  const editablePermissionRoles = form.roles.filter((role) => !isPermissionsLocked(role));
+  const editingRole = editablePermissionRoles.includes(form.editingRole)
+    ? form.editingRole
+    : pickPermissionEditingRole(form.roles, form.primaryRole);
+  const editingGrants = grantsForRole(form.rolePermissions, editingRole);
+  const hasAdminRole = form.roles.some((role) => isAdminRole(role));
   const visiblePermissions = PERMISSIONS.filter((permission) => {
     if (import.meta.env.VITE_APP_ENV === 'production' && permission.hiddenInProduction) return false;
-    return isAdminRole(form.role) || !['dashboard', 'pagos', 'users', 'salesperson'].includes(permission.key);
+    return isAdminRole(editingRole) || !['dashboard', 'pagos', 'users', 'salesperson'].includes(permission.key);
   });
   const permissionGroups = PERMISSION_SECTIONS
     .map((section) => ({
@@ -310,8 +381,9 @@ export default function UsersPage() {
   const filteredUsers = useMemo(() => {
     const text = search.trim().toLowerCase();
     return sorted.filter((row) => {
-      const matchesText = !text || `${row.name} ${row.email} ${roleLabel(row.role)}`.toLowerCase().includes(text);
-      return matchesText && (roleFilter === 'all' || row.role === roleFilter);
+      const labels = row.roles.map((role) => roleLabel(role)).join(' ');
+      const matchesText = !text || `${row.name} ${row.email} ${labels}`.toLowerCase().includes(text);
+      return matchesText && (roleFilter === 'all' || row.roles.includes(roleFilter as AppRole));
     });
   }, [roleFilter, search, sorted]);
 
@@ -448,7 +520,11 @@ export default function UsersPage() {
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        <Badge variant="outline" className={roleBadgeClass(row.role)}>{roleLabel(row.role)}</Badge>
+                        <div className="flex flex-wrap gap-1">
+                          {row.roles.map((role) => (
+                            <Badge key={role} variant="outline" className={roleBadgeClass(role)}>{roleLabel(role)}</Badge>
+                          ))}
+                        </div>
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-muted-foreground">{row.permissions.length} accesos</TableCell>
                       <TableCell>
@@ -507,7 +583,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
             <DialogDescription>
-              Elige un rol predefinido o personaliza cada sección y subsección del menú.
+              Elige uno o más perfiles y personaliza los accesos del perfil principal.
             </DialogDescription>
           </DialogHeader>
 
@@ -559,16 +635,20 @@ export default function UsersPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label>Rol</Label>
+              <Label>Perfiles</Label>
+              <p className="text-xs text-muted-foreground">
+                Un usuario puede tener varios perfiles. Los accesos se suman.
+              </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {editableRoles.map((role) => {
                   const preset = ROLE_PRESETS[role];
-                  const active = form.role === role;
+                  const active = form.roles.includes(role);
                   return (
                     <button
                       key={role}
                       type="button"
-                      onClick={() => setRole(role)}
+                      onClick={() => toggleRole(role)}
+                      aria-pressed={active}
                       className={cn(
                         'rounded-lg border p-3 text-left transition',
                         active
@@ -576,22 +656,54 @@ export default function UsersPage() {
                           : 'border-border hover:bg-muted/50',
                       )}
                     >
-                      <div className="text-sm font-medium">{preset.label}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium">{preset.label}</div>
+                        <Checkbox checked={active} disabled className="pointer-events-none" />
+                      </div>
                       <div className="mt-1 text-xs text-muted-foreground">{preset.description}</div>
                     </button>
                   );
                 })}
               </div>
-              {!SELECTABLE_ROLES.includes(form.role) && (
+              {!form.roles.some((role) => SELECTABLE_ROLES.includes(role)) && (
                 <p className="text-xs text-muted-foreground">
-                  Esta cuenta usa un perfil anterior. Elige Operador o Facturación para actualizarla.
+                  Esta cuenta usa un perfil anterior. Elige Operador, Facturación o Vendedor para actualizarla.
+                </p>
+              )}
+              {form.roles.length > 1 && (
+                <p className="text-xs text-muted-foreground">
+                  Perfil principal: <span className="font-medium">{roleLabel(form.primaryRole)}</span>. Cada perfil conserva sus accesos y la suma aplica al usuario.
                 </p>
               )}
             </div>
 
             <div className="grid gap-2">
-              <Label>Accesos del menú</Label>
-              {form.role === 'vendedor' ? (
+              <Label>
+                Accesos del menú
+                {editablePermissionRoles.length > 1 ? ` · ${roleLabel(editingRole)}` : ''}
+              </Label>
+              {editablePermissionRoles.length > 1 && (
+                <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Perfil a personalizar">
+                  {editablePermissionRoles.map((role) => (
+                    <button
+                      key={role}
+                      type="button"
+                      role="tab"
+                      aria-selected={editingRole === role}
+                      onClick={() => setForm((f) => ({ ...f, editingRole: role }))}
+                      className={cn(
+                        'rounded-md border px-2.5 py-1 text-xs font-medium transition',
+                        editingRole === role
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:bg-muted/50',
+                      )}
+                    >
+                      {roleLabel(role)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {editingRole === 'vendedor' ? (
                 <p className="rounded-lg border border-border px-3 py-2.5 text-sm text-muted-foreground">
                   El vendedor solo accede a Mis ventas
                 </p>
@@ -601,8 +713,8 @@ export default function UsersPage() {
                   <div key={section.key} className="overflow-hidden rounded-lg border border-border">
                     {(() => {
                       const keys = section.permissions.map((permission) => permission.key);
-                      const checkedCount = keys.filter((key) => form.permissions.includes(key)).length;
-                      const locked = isPermissionsLocked(form.role);
+                      const checkedCount = keys.filter((key) => editingGrants.includes(key)).length;
+                      const locked = isPermissionsLocked(editingRole);
                       const sectionChecked = locked || checkedCount === keys.length
                         ? true
                         : checkedCount > 0 ? 'indeterminate' : false;
@@ -621,8 +733,8 @@ export default function UsersPage() {
                       );
                     })()}
                     {section.permissions.map((perm, index) => {
-                      const locked = isPermissionsLocked(form.role);
-                      const checked = locked || form.permissions.includes(perm.key);
+                      const locked = isPermissionsLocked(editingRole);
+                      const checked = locked || editingGrants.includes(perm.key);
                       return (
                         <div key={perm.key}>
                           {index > 0 && <Separator />}
@@ -650,12 +762,15 @@ export default function UsersPage() {
                 ))}
               </div>
               )}
-              {isAdminRole(form.role) && (
+              {isAdminRole(editingRole) && (
                 <p className="text-xs text-muted-foreground">El administrador siempre tiene todos los módulos.</p>
+              )}
+              {hasAdminRole && !isAdminRole(editingRole) && (
+                <p className="text-xs text-muted-foreground">Los perfiles administradores siempre tienen todos los módulos.</p>
               )}
             </div>
 
-            {form.role === 'vendedor' && (
+            {form.roles.includes('vendedor') && (
               <div className="grid gap-2">
                 <Label htmlFor="user-commission">Comisión %</Label>
                 <Input

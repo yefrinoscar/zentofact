@@ -3,7 +3,15 @@
 import { betterAuth } from 'better-auth';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
-import { isAdminRole, isSuperadminRole, userHasPermission } from './permissions.js';
+import {
+  ROLE_PRESETS,
+  isAdminUser,
+  isSuperadminUser,
+  parsePermissionInput,
+  userCanWritePermission,
+  userHasPermission,
+  userHasRole,
+} from './permissions.js';
 import { isProtectedPath } from './protected-paths.js';
 import { isLocalDevelopmentOrigin } from './local-web-origins.js';
 import { isZentolabsOrigin, resolveWebOrigins } from './web-origins.js';
@@ -191,7 +199,19 @@ export function requireAuth() {
     // Recargar autorización desde PostgreSQL para que roles y desactivaciones
     // se apliquen aunque la cookie de sesión sea anterior al cambio.
     const { rows } = await pool.query(
-      `SELECT role, permissions, active FROM "user" WHERE id = $1 LIMIT 1`,
+      `SELECT u.role,
+              u.permissions,
+              u.active,
+              COALESCE(
+                json_agg(json_build_object('role', r.role, 'permissions', r.permissions))
+                  FILTER (WHERE r.role IS NOT NULL),
+                '[]'::json
+              ) AS role_assignments
+         FROM "user" u
+         LEFT JOIN user_roles r ON r.user_id = u.id
+        WHERE u.id = $1
+        GROUP BY u.id, u.role, u.permissions, u.active
+        LIMIT 1`,
       [session.user?.id],
     );
     const currentUser = rows[0];
@@ -199,7 +219,23 @@ export function requireAuth() {
       return c.json({ error: 'Usuario desactivado' }, 403);
     }
 
-    c.set('user', { ...session.user, ...currentUser });
+    const roles = [];
+    const rolePermissions = {};
+    const assignments = Array.isArray(currentUser.role_assignments) ? currentUser.role_assignments : [];
+    for (const assignment of assignments) {
+      const key = String(assignment?.role || '').trim();
+      if (!key || !ROLE_PRESETS[key] || roles.includes(key)) continue;
+      roles.push(key);
+      if (assignment.permissions != null) rolePermissions[key] = parsePermissionInput(assignment.permissions);
+    }
+
+    c.set('user', {
+      ...session.user,
+      role: currentUser.role,
+      permissions: currentUser.permissions,
+      active: currentUser.active,
+      ...(roles.length ? { roles, rolePermissions } : {}),
+    });
     c.set('session', session.session);
     return next();
   };
@@ -242,7 +278,12 @@ export function requireAnyPermission(permissionKeys, options = {}) {
     if (!permissionKeys.some((permissionKey) => userHasPermission(user, permissionKey))) {
       return c.json({ error: 'Sin permiso' }, 403);
     }
-    if (!options.readOnly && String(user?.role || '') === 'viewer' && UNSAFE_METHODS.has(c.req.method)) {
+    if (
+      !options.readOnly
+      && UNSAFE_METHODS.has(c.req.method)
+      && userHasRole(user, 'viewer')
+      && !permissionKeys.some((permissionKey) => userCanWritePermission(user, permissionKey))
+    ) {
       return c.json({ error: 'Perfil de solo lectura' }, 403);
     }
     return next();
@@ -251,14 +292,14 @@ export function requireAnyPermission(permissionKeys, options = {}) {
 
 export function requireAdmin() {
   return async (c, next) => {
-    if (!isAdminRole(c.get('user')?.role)) return c.json({ error: 'Se requiere administrador' }, 403);
+    if (!isAdminUser(c.get('user'))) return c.json({ error: 'Se requiere administrador' }, 403);
     return next();
   };
 }
 
 export function requireSuperadmin() {
   return async (c, next) => {
-    if (!isSuperadminRole(c.get('user')?.role)) {
+    if (!isSuperadminUser(c.get('user'))) {
       return c.json({ error: 'Se requiere superadministrador' }, 403);
     }
     return next();

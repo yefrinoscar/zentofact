@@ -11,7 +11,8 @@
     "auth:migrate": "node src/migrate-auth.js",
     "auth:seed-admin": "node src/seed-admin.js",
     "seed:preview": "node src/seed-preview.js",
-    "backfill:ripley-orders": "node src/backfill-ripley-orders.js"
+    "backfill:ripley-orders": "node src/backfill-ripley-orders.js",
+    "users:merge-duplicate": "node src/merge-duplicate-user.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

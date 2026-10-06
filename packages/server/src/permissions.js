@@ -180,13 +180,173 @@ export function permissionsForRole(role) {
   return preset ? [...preset.permissions] : [...ROLE_PRESETS.operator.permissions];
 }
 
+// ── Multi-perfil ─────────────────────────────────────────────────────────────
+// Un usuario puede pertenecer a varios perfiles (user_roles). `user.role` se
+// conserva como perfil principal por compatibilidad, pero la autorización se
+// calcula sobre la unión de pertenencias y los permisos personalizados de cada
+// una. Admin/superadmin mantienen acceso total.
+
+const NON_ADMIN_PERMISSION_KEYS = new Set(
+  ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'pagos' && key !== 'users' && key !== 'salesperson'),
+);
+
+export function isSelectableRole(role) {
+  const value = String(role || '').trim();
+  return ROLE_PRESETS[value] ? value : null;
+}
+
+export function parsePermissionInput(input) {
+  if (Array.isArray(input)) return input.map((key) => String(key || '').trim()).filter(Boolean);
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      if (Array.isArray(parsed)) return parsed.map((key) => String(key || '').trim()).filter(Boolean);
+    } catch {
+      // Sigue como lista separada por comas.
+    }
+    return input.split(',').map((key) => key.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Permisos explícitos de una asignación de perfil: NO restauran el preset
+ * cuando la lista llega vacía. Así un vacío explícito se conserva y no revive
+ * accesos que el administrador quitó a propósito.
+ */
+export function explicitPermissions(input, role = 'operator') {
+  const normalizedRole = normalizeRole(role);
+  if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
+  const expanded = parsePermissionInput(input).flatMap((key) => LEGACY_PERMISSION_MAP[key] || [key]);
+  return [...new Set(expanded.filter((key) => NON_ADMIN_PERMISSION_KEYS.has(key)))];
+}
+
+function roleMembershipList(user) {
+  const raw = Array.isArray(user?.roles)
+    ? user.roles.map((entry) => (entry && typeof entry === 'object' ? entry.role : entry))
+    : [];
+  const valid = [...new Set(
+    raw.map((value) => String(value || '').trim()).filter((value) => ROLE_PRESETS[value]),
+  )];
+  if (valid.length) return valid;
+  return [normalizeRole(user?.role)];
+}
+
+export function userRoleList(user) {
+  return roleMembershipList(user);
+}
+
+export function userHasRole(user, role) {
+  return roleMembershipList(user).includes(normalizeRole(role));
+}
+
+export function isAdminUser(user) {
+  return roleMembershipList(user).some((role) => isAdminRole(role));
+}
+
+export function isSuperadminUser(user) {
+  return roleMembershipList(user).some((role) => isSuperadminRole(role));
+}
+
+/** Vendedor por pertenencia al perfil, no por el permiso `salesperson` (admin lo incluye). */
+export function isSalespersonUser(user) {
+  return roleMembershipList(user).includes('vendedor');
+}
+
+/** Solo lectura si todas sus pertenencias son el perfil anterior `viewer`. */
+export function isReadOnlyUser(user) {
+  const memberships = roleMembershipList(user);
+  return memberships.length > 0 && memberships.every((role) => role === 'viewer');
+}
+
+function membershipGrants(user) {
+  const hasRoles = Array.isArray(user?.roles) && user.roles.length > 0;
+  const memberships = roleMembershipList(user);
+  const perRole = user?.rolePermissions && typeof user.rolePermissions === 'object' ? user.rolePermissions : null;
+  // Sin user_roles (o con una sola pertenencia sin permisos explícitos) la
+  // columna legacy `permissions` sigue siendo la fuente de la asignación.
+  const legacySingle = !hasRoles
+    || (memberships.length === 1 && (!perRole || !Object.prototype.hasOwnProperty.call(perRole, memberships[0])));
+  return memberships.map((role) => {
+    if (isAdminRole(role)) return { role, readOnly: false, grants: [...ALL_PERMISSION_KEYS] };
+    if (role === 'vendedor') return { role, readOnly: false, grants: [...ROLE_PRESETS.vendedor.permissions] };
+    let grants;
+    if (perRole && Object.prototype.hasOwnProperty.call(perRole, role)) {
+      grants = explicitPermissions(perRole[role], role);
+    } else if (legacySingle) {
+      grants = normalizePermissions(user?.permissions, role);
+    } else {
+      grants = permissionsForRole(role);
+    }
+    return { role, readOnly: role === 'viewer', grants };
+  });
+}
+
+/** Unión de los accesos de todas las pertenencias (lectura). */
+export function permissionsForUser(user) {
+  const grants = new Set();
+  for (const membership of membershipGrants(user)) {
+    for (const key of membership.grants) grants.add(key);
+  }
+  return [...grants];
+}
+
+/** Unión de los accesos de las pertenencias que sí permiten escritura. */
+export function writablePermissionsForUser(user) {
+  const grants = new Set();
+  for (const membership of membershipGrants(user)) {
+    if (membership.readOnly) continue;
+    for (const key of membership.grants) grants.add(key);
+  }
+  return [...grants];
+}
+
 export function userHasPermission(user, key) {
   if (!user) return false;
   if (user.active === false || user.active === 'false') return false;
-  const role = normalizeRole(user.role);
-  if (key === 'users' || key === 'dashboard' || key === 'pagos') return isAdminRole(role);
-  if (isAdminRole(role)) return true;
-  return normalizePermissions(user.permissions, role).includes(key);
+  const admin = isAdminUser(user);
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return admin;
+  if (admin) return true;
+  return permissionsForUser(user).includes(key);
+}
+
+/**
+ * Permiso de escritura: los grants de un perfil anterior `viewer` no habilitan
+ * mutaciones, y combinar `viewer` con otro perfil no bloquea la escritura que
+ * ese otro perfil sí concede.
+ */
+export function userCanWritePermission(user, key) {
+  if (!user) return false;
+  if (user.active === false || user.active === 'false') return false;
+  if (isAdminUser(user)) return true;
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return false;
+  return writablePermissionsForUser(user).includes(key);
+}
+
+/** Criterio compartido con RegistrarVenta: vendedor puro, sin gestión de pedidos. */
+export function isSalespersonOnly(user) {
+  return userHasPermission(user, 'salesperson') && !userHasPermission(user, 'order_management');
+}
+
+/** Perfil principal determinista: mayor rango; empates según SELECTABLE_ROLES. */
+export function primaryRoleOf(roles) {
+  const list = (Array.isArray(roles) ? roles : [roles])
+    .map((value) => String(value || '').trim())
+    .filter((value) => ROLE_PRESETS[value]);
+  if (!list.length) return 'operator';
+  let best = list[0];
+  for (const role of list) {
+    const rank = roleRank(role);
+    const bestRank = roleRank(best);
+    if (rank > bestRank) best = role;
+    else if (rank === bestRank) {
+      const roleIndex = SELECTABLE_ROLES.indexOf(role);
+      const bestIndex = SELECTABLE_ROLES.indexOf(best);
+      if (roleIndex >= 0 && (bestIndex < 0 || roleIndex < bestIndex)) best = role;
+    }
+  }
+  return best;
 }
 
 export function pathPermission(pathname) {
