@@ -26,6 +26,8 @@ export type NavVisibilityItem = {
   permission?: PermissionKey;
   adminOnly?: boolean;
   superadminOnly?: boolean;
+  /** Oculta el módulo a los superadministradores (p. ej. vistas personales). */
+  hideForSuperadmin?: boolean;
   /** Oculta el módulo del menú en cualquier ambiente mientras se reactiva. */
   hidden?: boolean;
   hiddenInProduction?: boolean;
@@ -40,6 +42,7 @@ export function isNavItemVisible(
 ) {
   if (item.hidden) return false;
   if (isProd && item.hiddenInProduction) return false;
+  if (item.hideForSuperadmin && options.isSuperadmin === true) return false;
   if (item.adminOnly) return options.isAdmin === true || options.isSuperadmin === true;
   if (item.superadminOnly) return options.isSuperadmin === true;
   if (item.alwaysVisible) return true;
