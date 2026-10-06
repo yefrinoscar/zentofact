@@ -741,6 +741,12 @@ export async function enqueueStockJob(input = {}, db) {
   if (orderId && !isAfterInventoryListenFrom(identity.ordered_at)) {
     return { enqueued: false, ignored: 'fuera del período' };
   }
+  // Un job de stock siempre pertenece a un seller. Los pedidos de tienda sin
+  // seller (company_id nulo) ya aplicaron su inventario en línea al ingresar y
+  // no pueden tener job: `inventory_stock_jobs.company_id` es not null.
+  if (!(Number(identity.company_id) > 0)) {
+    return { enqueued: false, ignored: 'pedido sin seller' };
+  }
   const result = await withIdentityLock(
     db,
     Number(identity.company_id),

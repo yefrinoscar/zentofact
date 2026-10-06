@@ -26,6 +26,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Package,
+  PackageCheck,
   Pencil,
   Phone,
   Plus,
@@ -64,7 +65,13 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
 import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
-import { mercadoLibreDispatchCopy, sellerDispatchesMercadoLibre } from '../lib/logistics-inbox';
+import {
+  canMarkLogisticsDelivered,
+  logisticsDeliverConfirmCopy,
+  logisticsDeliverSuccessCopy,
+  mercadoLibreDispatchCopy,
+  sellerDispatchesMercadoLibre,
+} from '../lib/logistics-inbox';
 import {
   buildManualOrderEditPayload,
   MANUAL_EDIT_DOCUMENT_TYPES,
@@ -836,6 +843,7 @@ export default function PedidosMulticanal() {
   const [successMessage, setSuccessMessage] = useState('');
   const [syncNote, setSyncNote] = useState('');
   const [dateOrder, setDateOrder] = useState<OrderDetail | null>(null);
+  const [deliverOrder, setDeliverOrder] = useState<OrderDetail | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailTab, setDetailTab] = useState('products');
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1266,6 +1274,22 @@ export default function PedidosMulticanal() {
     },
   });
 
+  const deliverMutation = useMutation({
+    mutationFn: (order: OrderDetail) => api.markLogisticsOrderDelivered({ orderId: order.id }),
+    onSuccess: (_result, order) => {
+      setDeliverOrder(null);
+      setDetail((current) => (
+        current && current.id === order.id
+          ? { ...current, fulfillmentStatus: 'delivered', orderStatus: 'completed' }
+          : current
+      ));
+      setSuccessMessage(logisticsDeliverSuccessCopy(order));
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+      void queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
+    },
+  });
+
   const dateMutation = useMutation({
     mutationFn: (input: { id: number; date: string }) => api.updateManagedOrderDate(input.id, input.date),
     onSuccess: (updated) => {
@@ -1606,6 +1630,7 @@ export default function PedidosMulticanal() {
             const editable = canEditSale(detail);
             const draft = editable ? manualEditDraftFromOrder(detail) : null;
             const seller = sellerCellLabel(detail, companyById);
+            const canDeliver = canMarkLogisticsDelivered(detail);
             return (
             <>
               <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
@@ -1670,9 +1695,14 @@ export default function PedidosMulticanal() {
                     ]}
                   />
                 </div>
-                {canRecordPayment(detail) && (
+                {(canRecordPayment(detail) || canDeliver) && (
                   <div className="mt-5 flex flex-wrap gap-2">
-                    <Button type="button" size="sm" onClick={() => setPaymentOrder(detail)}><Banknote data-icon="inline-start" /> Registrar pago</Button>
+                    {canRecordPayment(detail) && <Button type="button" size="sm" onClick={() => setPaymentOrder(detail)}><Banknote data-icon="inline-start" /> Registrar pago</Button>}
+                    {canDeliver && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => { deliverMutation.reset(); setDeliverOrder(detail); }}>
+                        <PackageCheck data-icon="inline-start" /> Marcar entregado
+                      </Button>
+                    )}
                   </div>
                 )}
               </SheetHeader>
@@ -2088,6 +2118,50 @@ export default function PedidosMulticanal() {
           })() : null}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={Boolean(deliverOrder)}
+        onOpenChange={(open) => {
+          if (!open && !deliverMutation.isPending) {
+            deliverMutation.reset();
+            setDeliverOrder(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton={!deliverMutation.isPending}>
+          {deliverOrder && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Confirmar pedido entregado</DialogTitle>
+                <DialogDescription>
+                  Pedido {deliverOrder.externalOrderNumber}
+                  {sellerCellLabel(deliverOrder, companyById) ? ` · ${sellerCellLabel(deliverOrder, companyById)}` : ''}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex gap-3 rounded-md border border-teal-200 bg-teal-50 p-4 text-teal-950">
+                <PackageCheck className="mt-0.5 size-5 shrink-0" />
+                <div>
+                  <p className="font-semibold">El pedido de tienda ya salió</p>
+                  <p className="mt-1 text-sm text-teal-900">{logisticsDeliverConfirmCopy()}</p>
+                </div>
+              </div>
+              {deliverMutation.error ? (
+                <p role="alert" className="flex items-center gap-2 text-[13px] text-destructive">
+                  <AlertCircle className="size-3.5 shrink-0" />
+                  {(deliverMutation.error as Error).message || 'No se pudo marcar el pedido como entregado.'}
+                </p>
+              ) : null}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { deliverMutation.reset(); setDeliverOrder(null); }} disabled={deliverMutation.isPending}>Cancelar</Button>
+                <Button onClick={() => deliverMutation.mutate(deliverOrder)} disabled={deliverMutation.isPending}>
+                  {deliverMutation.isPending ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <PackageCheck />}
+                  Confirmar entregado
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <RegisterPaymentDialog
         order={paymentOrder}
