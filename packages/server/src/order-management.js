@@ -1031,8 +1031,14 @@ function orderListSort(sortBy, sortDir) {
   return `${column} ${direction} ${nulls}, o.id ${direction}`;
 }
 
-export async function listOrders(filters = {}, db) {
-  const target = db || (await loadCore()).pool;
+function fulfillmentStatusList(value) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  const statuses = [...new Set(raw.map((entry) => String(entry || '').trim()).filter(Boolean))];
+  return statuses.map((status) => enumValue(status, FULFILLMENT_STATUSES, 'fulfillmentStatuses'));
+}
+
+/** Condiciones compartidas por la lista de pedidos y su resumen por canal/estado. */
+function orderListConditions(filters, { includeChannel = true, includeFulfillment = true } = {}) {
   const values = [];
   const where = [];
   const companyId = optionalPositiveInt(filters.companyId, 'companyId');
@@ -1059,7 +1065,7 @@ export async function listOrders(filters = {}, db) {
     values.push(channelAccountId);
     where.push(`o.channel_account_id=$${values.length}`);
   }
-  if (filters.channelCode) {
+  if (includeChannel && filters.channelCode) {
     values.push(channelCode(filters.channelCode));
     where.push(`ch.code=$${values.length}`);
   }
@@ -1067,9 +1073,14 @@ export async function listOrders(filters = {}, db) {
     values.push(enumValue(filters.orderStatus, ORDER_STATUSES, 'orderStatus'));
     where.push(`o.order_status=$${values.length}`);
   }
-  if (filters.fulfillmentStatus) {
+  if (includeFulfillment && filters.fulfillmentStatus) {
     values.push(enumValue(filters.fulfillmentStatus, FULFILLMENT_STATUSES, 'fulfillmentStatus'));
     where.push(`o.fulfillment_status=$${values.length}`);
+  }
+  const fulfillmentStatuses = includeFulfillment ? fulfillmentStatusList(filters.fulfillmentStatuses) : [];
+  if (fulfillmentStatuses.length) {
+    values.push(fulfillmentStatuses);
+    where.push(`o.fulfillment_status = any($${values.length}::text[])`);
   }
   if (filters.documentStatus) {
     values.push(enumValue(filters.documentStatus, DOCUMENT_STATUSES, 'documentStatus'));
@@ -1092,9 +1103,6 @@ export async function listOrders(filters = {}, db) {
     where.push(`o.created_by=$${values.length}`);
   }
   const salesOnly = filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true';
-  const includeItems = filters.includeItems === true
-    || String(filters.includeItems || '').toLowerCase() === 'true';
-  const withItems = salesOnly || includeItems;
   if (salesOnly) {
     where.push(`o.order_status not in ('cancelled', 'failed')`);
     where.push(`o.payment_status not in ('refunded', 'failed')`);
@@ -1107,6 +1115,15 @@ export async function listOrders(filters = {}, db) {
     values.push(value);
     where.push(`(coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date ${operator} $${values.length}::date`);
   }
+  return { values, where, salesOnly };
+}
+
+export async function listOrders(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const { values, where, salesOnly } = orderListConditions(filters);
+  const includeItems = filters.includeItems === true
+    || String(filters.includeItems || '').toLowerCase() === 'true';
+  const withItems = salesOnly || includeItems;
   const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 500);
   const offset = Math.max(Number(filters.offset || 0), 0);
   const orderBy = orderListSort(filters.sortBy, filters.sortDir);
@@ -1138,6 +1155,40 @@ export async function listOrders(filters = {}, db) {
     totalCount: Number(result.rows[0]?.total_count || 0),
     limit,
     offset,
+  };
+}
+
+/**
+ * Conteos por canal y estado de despacho con los mismos filtros de la lista,
+ * sin canal ni estado: alimentan las pestañas y no cambian al elegir una.
+ * El monto excluye pedidos cancelados, devueltos o fallidos, igual que el pulso de ventas.
+ */
+export async function summarizeOrders(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const { values, where } = orderListConditions(filters, { includeChannel: false, includeFulfillment: false });
+  const result = await target.query(
+    `select ch.code as channel_code, ch.name as channel_name, o.fulfillment_status,
+       count(*)::int as orders_count,
+       coalesce(sum(o.total) filter (where o.order_status not in ('cancelled', 'failed')
+         and o.payment_status not in ('refunded', 'failed')
+         and o.fulfillment_status not in ('cancelled', 'returned', 'failed')), 0)::numeric as sales_total
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     left join companies c on c.id=o.company_id
+     ${ORDER_CREATOR_JOIN}
+     ${where.length ? `where ${where.join(' and ')}` : ''}
+     group by ch.code, ch.name, o.fulfillment_status`,
+    values,
+  );
+  return {
+    groups: result.rows.map((row) => ({
+      channelCode: row.channel_code,
+      channelName: row.channel_name,
+      fulfillmentStatus: row.fulfillment_status,
+      ordersCount: Number(row.orders_count || 0),
+      salesTotal: Number(row.sales_total || 0),
+    })),
   };
 }
 

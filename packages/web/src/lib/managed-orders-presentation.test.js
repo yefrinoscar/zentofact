@@ -5,7 +5,10 @@ import {
   MANAGED_ORDER_LIST_LIMIT,
   MANAGED_ORDER_TABLE_COLUMNS,
   buildManagedOrderListFilters,
+  buildManagedOrderSummaryFilters,
+  managedOrderChannelTabs,
   managedOrderListRows,
+  managedOrderStageCounts,
   deliveryLabel,
   deliveryShowsAsTag,
   isSalespersonOrder,
@@ -71,11 +74,50 @@ test('la bandeja avanza a hoy si permaneció abierta durante la medianoche', () 
   }), '2026-09-05');
 });
 
-test('la bandeja de pedidos no muestra columna de teléfono', () => {
+test('la bandeja de pedidos entra sin scroll: seller bajo el pedido, entrega y método en el detalle', () => {
   assert.equal(MANAGED_ORDER_TABLE_COLUMNS.includes('phone'), false);
   assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('product'));
-  assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('delivery'));
   assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('customer'));
+  assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('status'));
+  assert.ok(MANAGED_ORDER_TABLE_COLUMNS.includes('total'));
+  for (const moved of ['seller', 'origin', 'delivery', 'address', 'time', 'method']) {
+    assert.equal(MANAGED_ORDER_TABLE_COLUMNS.includes(moved), false, moved);
+  }
+});
+
+test('las pestañas de canal suman pedidos y venta, y muestran canales sin pedidos', () => {
+  const groups = [
+    { channelCode: 'falabella', fulfillmentStatus: 'pending', ordersCount: 3, salesTotal: 300 },
+    { channelCode: 'falabella', fulfillmentStatus: 'cancelled', ordersCount: 1, salesTotal: 0 },
+    { channelCode: 'manual', fulfillmentStatus: 'delivered', ordersCount: 2, salesTotal: 100 },
+    { channelCode: 'shopify', channelName: 'Shopify', fulfillmentStatus: 'pending', ordersCount: 1, salesTotal: 0 },
+  ];
+  const tabs = managedOrderChannelTabs(groups, [
+    { code: 'falabella', name: 'Falabella' },
+    { code: 'ripley', name: 'Ripley' },
+    { code: 'manual', name: 'Tienda' },
+  ]);
+  assert.deepEqual(tabs.map((tab) => [tab.code, tab.ordersCount, tab.salesTotal, tab.share]), [
+    ['all', 7, 400, 100],
+    ['falabella', 4, 300, 75],
+    ['ripley', 0, 0, 0],
+    ['manual', 2, 100, 25],
+    ['shopify', 1, 0, 0],
+  ]);
+  assert.equal(tabs.at(-1).label, 'Shopify');
+});
+
+test('las etapas cuentan pedidos del canal elegido', () => {
+  const groups = [
+    { channelCode: 'falabella', fulfillmentStatus: 'pending', ordersCount: 3, salesTotal: 0 },
+    { channelCode: 'falabella', fulfillmentStatus: 'preparing', ordersCount: 2, salesTotal: 0 },
+    { channelCode: 'falabella', fulfillmentStatus: 'returned', ordersCount: 1, salesTotal: 0 },
+    { channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', ordersCount: 4, salesTotal: 0 },
+  ];
+  assert.deepEqual(managedOrderStageCounts(groups, 'falabella'), {
+    all: 6, to_prepare: 5, ready: 0, shipped: 0, delivered: 0, issues: 1,
+  });
+  assert.equal(managedOrderStageCounts(groups, 'all').ready, 4);
 });
 
 test('deliveryLabel resume tienda, repartidor, envío y marketplace', () => {
@@ -94,12 +136,12 @@ test('regresión: entrega con valor operativo se presenta como tag', () => {
 
 test('la búsqueda de pedidos omite la fecha comercial del día', () => {
   const dayFilters = buildManagedOrderListFilters({
-    companyId: 'all',
     channelCode: 'all',
-    fulfillmentStatus: 'all',
+    stage: 'all',
     date: '2026-09-04',
     search: '',
   });
+  assert.equal(dayFilters.fulfillmentStatuses, undefined);
   assert.equal(dayFilters.from, '2026-09-04');
   assert.equal(dayFilters.to, '2026-09-04');
   assert.equal(dayFilters.search, undefined);
@@ -107,18 +149,19 @@ test('la búsqueda de pedidos omite la fecha comercial del día', () => {
   assert.equal(dayFilters.limit, MANAGED_ORDER_LIST_LIMIT);
 
   const searchFilters = buildManagedOrderListFilters({
-    companyId: '7',
     channelCode: 'falabella',
-    fulfillmentStatus: 'pending',
+    stage: 'to_prepare',
     date: '2026-09-04',
     search: '  3250666811  ',
   });
   assert.equal('from' in searchFilters, false);
   assert.equal('to' in searchFilters, false);
   assert.equal(searchFilters.search, '3250666811');
-  assert.equal(searchFilters.companyId, 7);
+  assert.equal('companyId' in searchFilters, false);
   assert.equal(searchFilters.channelCode, 'falabella');
-  assert.equal(searchFilters.fulfillmentStatus, 'pending');
+  assert.equal(searchFilters.fulfillmentStatuses, 'unmapped,pending,preparing');
+  assert.deepEqual(buildManagedOrderSummaryFilters({ date: '2026-09-04', search: ' 3250666811 ' }), { search: '3250666811' });
+  assert.deepEqual(buildManagedOrderSummaryFilters({ date: '2026-09-04', search: '' }), { from: '2026-09-04', to: '2026-09-04', search: undefined });
   assert.equal(managedOrderSearchIgnoresDate('3250666811'), true);
   assert.equal(managedOrderSearchIgnoresDate('   '), false);
   assert.equal(managedOrdersTableLabel('hoy', '3250666811'), 'Pedidos con 3250666811');

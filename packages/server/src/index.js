@@ -644,6 +644,10 @@ app.get('/order-management/orders', async (c) => {
   try { return ok(c, await orderManagement.listOrders(scopedOrderFilters(c, c.req.query()))); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/orders-summary', async (c) => {
+  try { return ok(c, await orderManagement.summarizeOrders(scopedOrderFilters(c, c.req.query()))); }
+  catch (e) { return fail(c, e, 400); }
+});
 app.get('/order-management/canceled-orders', async (c) => {
   try { return ok(c, await orderManagement.listCanceledOrders(scopedOrderFilters(c, c.req.query()))); }
   catch (e) { return fail(c, e, 400); }

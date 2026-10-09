@@ -1,18 +1,30 @@
-/** Columnas visibles de la bandeja multicanal. Sin Teléfono a propósito. */
+/**
+ * Columnas visibles de la bandeja multicanal. El seller va debajo del número de pedido;
+ * entrega, dirección y método viven en el detalle.
+ */
 export const MANAGED_ORDER_TABLE_COLUMNS = [
   'order',
   'product',
-  'seller',
   'customer',
-  'origin',
-  'delivery',
-  'address',
-  'time',
   'status',
-  'method',
   'total',
   'actions',
 ] as const;
+
+/** Etapas operativas que agrupan los estados de despacho para filtrar la bandeja. */
+export const MANAGED_ORDER_STAGES = [
+  { value: 'to_prepare', label: 'Por preparar', statuses: ['unmapped', 'pending', 'preparing'] },
+  { value: 'ready', label: 'Listos', statuses: ['ready_to_ship'] },
+  { value: 'shipped', label: 'Enviados', statuses: ['shipped'] },
+  { value: 'delivered', label: 'Entregados', statuses: ['delivered'] },
+  { value: 'issues', label: 'Incidencias', statuses: ['cancelled', 'returned', 'failed'] },
+] as const;
+
+export type ManagedOrderStage = typeof MANAGED_ORDER_STAGES[number]['value'];
+
+export function managedOrderStageStatuses(stage: string): readonly string[] {
+  return MANAGED_ORDER_STAGES.find((entry) => entry.value === stage)?.statuses || [];
+}
 
 const CARRIER_LABELS: Record<string, string> = {
   marvisuar: 'Marvisuar',
@@ -62,9 +74,8 @@ export function managedOrderListRows<T>(orders: T[] | null | undefined): T[] {
 }
 
 export type ManagedOrderListFilterInput = {
-  companyId: string;
   channelCode: string;
-  fulfillmentStatus: string;
+  stage: string;
   date: string;
   search: string;
 };
@@ -85,17 +96,84 @@ function trimmedSearch(search: string) {
 
 /** Una búsqueda localiza el pedido en cualquier día. La tira de fechas solo cubre el pulso del día. */
 export function buildManagedOrderListFilters(input: ManagedOrderListFilterInput) {
-  const search = trimmedSearch(input.search);
+  const statuses = managedOrderStageStatuses(input.stage);
   return {
-    companyId: input.companyId === 'all' ? undefined : Number(input.companyId),
     channelCode: input.channelCode === 'all' ? undefined : input.channelCode,
-    fulfillmentStatus: input.fulfillmentStatus === 'all' ? undefined : input.fulfillmentStatus,
-    ...(search ? {} : { from: input.date, to: input.date }),
-    search: search || undefined,
+    fulfillmentStatuses: statuses.length ? statuses.join(',') : undefined,
+    ...buildManagedOrderSummaryFilters(input),
     includeItems: true,
     limit: MANAGED_ORDER_LIST_LIMIT,
     offset: 0,
   };
+}
+
+/** El resumen usa la misma fecha y búsqueda que la lista, sin canal ni etapa. */
+export function buildManagedOrderSummaryFilters(input: Pick<ManagedOrderListFilterInput, 'date' | 'search'>) {
+  const search = trimmedSearch(input.search);
+  return {
+    ...(search ? {} : { from: input.date, to: input.date }),
+    search: search || undefined,
+  };
+}
+
+export type ManagedOrderSummaryGroup = {
+  channelCode: string;
+  channelName?: string | null;
+  fulfillmentStatus: string;
+  ordersCount: number;
+  salesTotal: number;
+};
+
+export type ManagedOrderChannelTab = {
+  code: string;
+  label: string;
+  ordersCount: number;
+  salesTotal: number;
+  /** Participación en el monto vendido del período, de 0 a 100. */
+  share: number;
+};
+
+/** Pestañas de canal: Todos primero y luego cada canal del catálogo, aunque no tenga pedidos. */
+export function managedOrderChannelTabs(
+  groups: ManagedOrderSummaryGroup[],
+  catalog: Array<{ code: string; name: string }>,
+): ManagedOrderChannelTab[] {
+  const totals = new Map<string, { ordersCount: number; salesTotal: number }>();
+  for (const group of groups) {
+    const current = totals.get(group.channelCode) || { ordersCount: 0, salesTotal: 0 };
+    current.ordersCount += Number(group.ordersCount) || 0;
+    current.salesTotal += Number(group.salesTotal) || 0;
+    totals.set(group.channelCode, current);
+  }
+  const allSales = [...totals.values()].reduce((sum, entry) => sum + entry.salesTotal, 0);
+  const allOrders = [...totals.values()].reduce((sum, entry) => sum + entry.ordersCount, 0);
+  const share = (sales: number) => (allSales > 0 ? Math.round((sales / allSales) * 100) : 0);
+  const known = new Set(catalog.map((channel) => channel.code));
+  const extra = groups
+    .filter((group) => !known.has(group.channelCode))
+    .map((group) => ({ code: group.channelCode, name: group.channelName || group.channelCode }))
+    .filter((channel, index, list) => list.findIndex((entry) => entry.code === channel.code) === index);
+  return [
+    { code: 'all', label: 'Todos', ordersCount: allOrders, salesTotal: allSales, share: allSales > 0 ? 100 : 0 },
+    ...[...catalog, ...extra].map((channel) => {
+      const entry = totals.get(channel.code) || { ordersCount: 0, salesTotal: 0 };
+      return { code: channel.code, label: channel.name, ...entry, share: share(entry.salesTotal) };
+    }),
+  ];
+}
+
+/** Conteo de pedidos por etapa dentro del canal elegido. */
+export function managedOrderStageCounts(groups: ManagedOrderSummaryGroup[], channelCode: string) {
+  const counts: Record<string, number> = { all: 0 };
+  for (const stage of MANAGED_ORDER_STAGES) counts[stage.value] = 0;
+  for (const group of groups) {
+    if (channelCode !== 'all' && group.channelCode !== channelCode) continue;
+    const count = Number(group.ordersCount) || 0;
+    counts.all += count;
+    const stage = MANAGED_ORDER_STAGES.find((entry) => (entry.statuses as readonly string[]).includes(group.fulfillmentStatus));
+    if (stage) counts[stage.value] += count;
+  }
+  return counts;
 }
 
 export function managedOrderSearchIgnoresDate(search: string) {

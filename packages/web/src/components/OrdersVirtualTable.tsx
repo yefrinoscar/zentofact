@@ -11,6 +11,8 @@ declare module '@tanstack/react-table' {
     headerClassName?: string;
     cellClassName?: string;
     align?: 'start' | 'end' | 'center';
+    /** La columna absorbe el ancho sobrante para que la tabla llene el panel sin scroll. */
+    grow?: boolean;
   }
 }
 
@@ -20,6 +22,7 @@ type VirtualColumnMeta = {
   headerClassName?: string;
   cellClassName?: string;
   align?: 'start' | 'end' | 'center';
+  grow?: boolean;
 };
 
 function columnMeta(column: { columnDef: { meta?: unknown } }): VirtualColumnMeta {
@@ -40,6 +43,7 @@ export function OrdersVirtualTable<TData>({
   stickyRightId = 'actions',
   rowHeight = ROW_HEIGHT,
   compact = false,
+  plain = false,
   overscan = 16,
   scrollClassName = 'h-[min(70vh,36rem)]',
   'aria-label': ariaLabel,
@@ -57,6 +61,8 @@ export function OrdersVirtualTable<TData>({
   stickyRightId?: string;
   rowHeight?: number;
   compact?: boolean;
+  /** Sin caja ni franja de cabecera: la tabla se apoya solo en separadores de fila. */
+  plain?: boolean;
   overscan?: number;
   scrollClassName?: string;
   'aria-label'?: string;
@@ -93,6 +99,9 @@ export function OrdersVirtualTable<TData>({
   const virtualRows = virtualizer.getVirtualItems();
 
   const edgeClass = (id: string, head: boolean) => {
+    if (plain && (id === stickyLeftId || id === stickyRightId)) {
+      return cn(id === stickyLeftId ? 'sticky left-0' : 'sticky right-0', head ? 'z-30 bg-background' : 'z-10 bg-background group-hover:bg-muted');
+    }
     if (id === stickyLeftId) {
       return cn(
         'sticky left-0 border-r border-border',
@@ -115,7 +124,11 @@ export function OrdersVirtualTable<TData>({
   };
 
   return (
-    <TablePanel aria-label={ariaLabel} aria-busy={loading || fetching}>
+    <TablePanel
+      aria-label={ariaLabel}
+      aria-busy={loading || fetching}
+      className={plain ? 'rounded-none border-0 bg-transparent' : undefined}
+    >
       {loading ? (
         <OrdersTableSkeleton columnCount={columns.length || 8} />
       ) : rows.length === 0 ? empty : (
@@ -126,7 +139,7 @@ export function OrdersVirtualTable<TData>({
           onScroll={onEndReached ? maybeLoadMore : undefined}
         >
           <div style={{ width: tableWidth, minWidth: '100%' }}>
-            <div className="sticky top-0 z-20 flex border-b border-border bg-muted" role="row">
+            <div className={cn('sticky top-0 z-20 flex border-b border-border', plain ? 'bg-background' : 'bg-muted')} role="row">
               {headerGroup?.headers.map((header) => {
                 const meta = columnMeta(header.column);
                 return (
@@ -142,6 +155,7 @@ export function OrdersVirtualTable<TData>({
                     edgeClass(header.column.id, true),
                     alignClass(meta.align, header.column.id),
                     header.column.id === 'actions' && 'px-1',
+                    meta.grow && 'grow',
                     meta.headerClassName,
                   )}
                 >
@@ -159,12 +173,14 @@ export function OrdersVirtualTable<TData>({
                     role="row"
                     data-index={virtualRow.index}
                     className={cn(
-                      'group absolute left-0 flex border-b border-border/70 hover:bg-muted/30',
+                      'group absolute left-0 flex',
+                      plain ? 'hover:bg-muted' : 'border-b border-border/70 hover:bg-muted/30',
                       onRowClick && 'cursor-pointer',
                     )}
                     style={{
                       top: 0,
                       width: tableWidth,
+                      minWidth: '100%',
                       height: virtualRow.size,
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
@@ -189,10 +205,12 @@ export function OrdersVirtualTable<TData>({
                         style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
                         className={cn(
                           'flex shrink-0 items-center overflow-hidden text-sm',
+                          plain && 'border-b border-border/60',
                           compact ? 'px-2.5 py-0.5' : 'px-3 py-2',
                           edgeClass(cell.column.id, false),
                           alignClass(meta.align, cell.column.id),
                           cell.column.id === 'actions' && 'px-1',
+                          meta.grow && 'grow',
                           meta.cellClassName,
                         )}
                       >
@@ -207,7 +225,7 @@ export function OrdersVirtualTable<TData>({
           </div>
         </div>
       )}
-      {!loading && footer ? <TablePanelFooter className={compact ? 'px-2.5 py-2' : undefined}>{footer}</TablePanelFooter> : null}
+      {!loading && footer ? <TablePanelFooter className={cn(compact && 'px-2.5 py-2', plain && 'border-t-0 px-3')}>{footer}</TablePanelFooter> : null}
     </TablePanel>
   );
 }

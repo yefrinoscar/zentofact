@@ -498,6 +498,7 @@ const apiHttp = {
     channelCode?: string;
     orderStatus?: string;
     fulfillmentStatus?: string;
+    fulfillmentStatuses?: string;
     documentStatus?: string;
     connectedOnly?: boolean;
     includeItems?: boolean;
@@ -507,6 +508,11 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/order-management/orders${qs(filter)}`),
+  summarizeManagedOrders: (filter: {
+    from?: string;
+    to?: string;
+    search?: string;
+  } = {}) => req(`/order-management/orders-summary${qs(filter)}`),
   listCanceledOrders: (filter: {
     companyId?: number;
     channelCode?: string;
