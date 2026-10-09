@@ -10,6 +10,7 @@ import {
   listCanceledOrders,
   listOrders,
   resolveDocumentDecision,
+  summarizeOrders,
   updateManualOrder,
   updateOrderPayment,
 } from './order-management.js';
@@ -575,6 +576,39 @@ test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () 
   const result = await listOrders({ from: '2026-08-12', to: '2026-08-12', limit: 10 }, db);
   assert.equal(result.totalCount, 0);
   assert.deepEqual(result.orders, []);
+});
+
+test('lista pedidos de varios estados de despacho a la vez', async () => {
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /o\.fulfillment_status = any\(\$2::text\[\]\)/);
+      assert.deepEqual(params.slice(0, 2), ['falabella', ['pending', 'preparing']]);
+      return { rows: [] };
+    },
+  };
+  await listOrders({ channelCode: 'falabella', fulfillmentStatuses: 'pending,preparing' }, db);
+  await assert.rejects(() => listOrders({ fulfillmentStatuses: 'pending,lost' }, db), /fulfillmentStatuses/);
+});
+
+test('el resumen agrupa por canal y estado sin aplicar esos filtros', async () => {
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /group by ch\.code, ch\.name, o\.fulfillment_status/);
+      assert.doesNotMatch(sql, /ch\.code=\$/);
+      assert.doesNotMatch(sql, /o\.fulfillment_status = any/);
+      assert.match(sql, /o\.created_by=\$1/);
+      assert.deepEqual(params, ['seller-9', '2026-08-12', '2026-08-12']);
+      return { rows: [{ channel_code: 'falabella', channel_name: 'Falabella', fulfillment_status: 'pending', orders_count: 3, sales_total: '389.90' }] };
+    },
+  };
+  const result = await summarizeOrders({
+    channelCode: 'ripley',
+    fulfillmentStatuses: 'delivered',
+    createdBy: 'seller-9',
+    from: '2026-08-12',
+    to: '2026-08-12',
+  }, db);
+  assert.deepEqual(result.groups, [{ channelCode: 'falabella', channelName: 'Falabella', fulfillmentStatus: 'pending', ordersCount: 3, salesTotal: 389.9 }]);
 });
 
 test('la vista por defecto limita marketplaces a sellers activos y conectados', async () => {
