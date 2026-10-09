@@ -1,6 +1,6 @@
 import { OrderDateDialog, orderDateKey, formatRegistrationDate } from '../components/OrderDateDialog';
 import OrderDocumentPanel from '../components/OrderDocumentPanel';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -80,6 +80,12 @@ import {
 } from '../lib/manual-order-edit';
 import {
   buildManagedOrderListFilters,
+  buildManagedOrderSummaryFilters,
+  MANAGED_ORDER_STAGES,
+  managedOrderChannelTabs,
+  managedOrderStageCounts,
+  type ManagedOrderChannelTab,
+  type ManagedOrderSummaryGroup,
   managedOrderListRows,
   deliveryLabel,
   deliveryShowsAsTag,
@@ -90,7 +96,6 @@ import {
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
   sellerCellLabel,
-  sellerCellShowsPerson,
   MANAGED_ORDER_TABLE_COLUMNS,
 } from '../lib/managed-orders-presentation';
 import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
@@ -108,13 +113,6 @@ import {
 } from '../components/ui/dropdown-menu';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../components/ui/select';
 import {
   Sheet,
   SheetContent,
@@ -349,6 +347,14 @@ const FALLBACK_CHANNELS: Channel[] = [
   { id: -4, code: 'manual', name: 'Tienda', active: true, defaultAutoCreateOrders: false },
 ];
 
+const STAGE_DOT_CLASS: Record<string, string> = {
+  to_prepare: 'bg-amber-500',
+  ready: 'bg-sky-500',
+  shipped: 'bg-indigo-500',
+  delivered: 'bg-emerald-500',
+  issues: 'bg-rose-500',
+};
+
 const FULFILLMENT_LABELS: Record<string, string> = {
   pending: 'Pendiente',
   preparing: 'Preparando',
@@ -385,6 +391,75 @@ const SOURCE_LABELS: Record<string, string> = {
   user: 'Usuario',
   system: 'Sistema',
 };
+
+function ChannelSummaryTabs({ tabs, value, onChange, loading }: {
+  tabs: ManagedOrderChannelTab[];
+  value: string;
+  onChange: (code: string) => void;
+  loading: boolean;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  // El fondo gris se mide sobre la pestaña activa y se desliza hacia la nueva.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const measure = () => {
+      const tab = tabRefs.current.get(value);
+      setBox(tab ? { left: tab.offsetLeft, top: tab.offsetTop, width: tab.offsetWidth, height: tab.offsetHeight } : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    tabRefs.current.forEach((tab) => observer.observe(tab));
+    return () => observer.disconnect();
+  }, [tabs, value]);
+
+  return (
+    <div ref={listRef} role="tablist" aria-label="Filtrar por canal" className="relative flex min-w-0 gap-1 overflow-x-auto">
+      {box && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 rounded-lg bg-muted transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none"
+          style={{ top: box.top, width: box.width, height: box.height, transform: `translateX(${box.left}px)` }}
+        />
+      )}
+      {tabs.map((tab) => {
+        const active = value === tab.code;
+        const empty = !loading && tab.ordersCount === 0;
+        return (
+          <button
+            key={tab.code}
+            ref={(node) => { if (node) tabRefs.current.set(tab.code, node); else tabRefs.current.delete(tab.code); }}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(tab.code)}
+            className={cn(
+              'relative min-w-[7.5rem] shrink-0 cursor-pointer rounded-lg px-3.5 py-2.5 text-left transition-opacity',
+              !active && 'hover:bg-muted/50',
+              empty && !active && 'opacity-50 hover:opacity-80',
+            )}
+          >
+            <span className={cn('flex items-center gap-1.5 text-[13px]', active ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+              {tab.code !== 'all' && <ChannelMark code={tab.code} name={tab.label} size="xs" />}
+              {tab.label}
+            </span>
+            <span className={cn('mt-1 block text-lg font-semibold leading-6 tabular-nums', active ? 'text-foreground' : 'text-foreground/75')}>
+              {loading ? <span className="inline-block h-5 w-20 animate-pulse rounded bg-muted align-middle" /> : formatMoney(tab.salesTotal)}
+            </span>
+            <span className="block text-[11px] text-muted-foreground tabular-nums">
+              {tab.ordersCount} {tab.ordersCount === 1 ? 'pedido' : 'pedidos'}
+              {tab.code !== 'all' && tab.salesTotal > 0 ? ` · ${tab.share}%` : ''}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function titleCaseSeller(value: string) {
   return value
@@ -483,13 +558,13 @@ function hoursAgo(hours: number) {
 
 function fulfillmentBadge(status: string) {
   const classes = status === 'delivered'
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
     : status === 'ready_to_ship' || status === 'shipped'
-      ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300'
+      ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300'
       : status === 'cancelled' || status === 'returned' || status === 'failed'
-        ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
-        : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300';
-  return <Badge variant="outline" className={cn('rounded-md', classes)}>{FULFILLMENT_LABELS[status] || status}</Badge>;
+        ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+        : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300';
+  return <Badge variant="outline" className={cn('rounded-md border-transparent', classes)}>{FULFILLMENT_LABELS[status] || status}</Badge>;
 }
 
 function documentTypeLabel(order: ManagedOrder) {
@@ -498,14 +573,14 @@ function documentTypeLabel(order: ManagedOrder) {
   return '';
 }
 
-function paymentBadge(status: string) {
+function paymentBadge(status: string, className?: string) {
   if (status === 'unknown' || !status) return null;
   const classes = status === 'paid'
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
     : status === 'refunded' || status === 'failed' || status === 'partially_refunded'
-      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
-      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300';
-  return <Badge variant="outline" className={cn('rounded-md', classes)}>{PAYMENT_LABELS[status] || status}</Badge>;
+      ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+      : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300';
+  return <Badge variant="outline" className={cn('rounded-md border-transparent', classes, className)}>{PAYMENT_LABELS[status] || status}</Badge>;
 }
 
 function canRecordPayment(order: ManagedOrder) {
@@ -518,18 +593,6 @@ function originLabel(order: ManagedOrder) {
     return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Tienda';
   }
   return order.channelName;
-}
-
-function deliveryBadge(order: ManagedOrder) {
-  const label = deliveryLabel(order);
-  if (!deliveryShowsAsTag(label)) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  return (
-    <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={label}>
-      {label}
-    </Badge>
-  );
 }
 
 function shippingAddress(shipping?: ManagedOrder['shipping']) {
@@ -554,10 +617,6 @@ function shippingAddress(shipping?: ManagedOrder['shipping']) {
     return `${shipping.lat.toFixed(5)}, ${shipping.lng.toFixed(5)}`;
   }
   return String(shipping.trackingCode || '').trim();
-}
-
-function addressText(order: ManagedOrder) {
-  return shippingAddress(order.shipping) || '—';
 }
 
 const LIMA_TIME_ZONE = 'America/Lima';
@@ -828,9 +887,8 @@ export default function PedidosMulticanal() {
     window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   };
 
-  const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
-  const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
+  const [stage, setStage] = useState('all');
   const [today, setToday] = useState(todayInLima);
   const registeredDate: unknown = location.state?.registered?.orderDate;
   const [date, setDate] = useState(() => typeof registeredDate === 'string' ? registeredDate : todayInLima());
@@ -903,16 +961,25 @@ export default function PedidosMulticanal() {
     staleTime: 5 * 60_000,
   });
   const orderFilters = useMemo(() => buildManagedOrderListFilters({
-    companyId,
     channelCode,
-    fulfillmentStatus,
+    stage,
     date,
     search: submittedSearch,
-  }), [channelCode, companyId, date, fulfillmentStatus, submittedSearch]);
+  }), [channelCode, date, stage, submittedSearch]);
+  const summaryFilters = useMemo(
+    () => buildManagedOrderSummaryFilters({ date, search: submittedSearch }),
+    [date, submittedSearch],
+  );
   const searchIgnoresDate = managedOrderSearchIgnoresDate(submittedSearch);
   const ordersQuery = useQuery({
     queryKey: ['managed-orders', orderFilters],
     queryFn: () => api.listManagedOrders(orderFilters),
+    staleTime: 15_000,
+  });
+  // Bajo la llave 'managed-orders' para que toda invalidación de pedidos refresque también los conteos.
+  const summaryQuery = useQuery({
+    queryKey: ['managed-orders', 'summary', summaryFilters],
+    queryFn: () => api.summarizeManagedOrders(summaryFilters),
     staleTime: 15_000,
   });
 
@@ -932,6 +999,16 @@ export default function PedidosMulticanal() {
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     { ...(channels.find((channel) => channel.code === fallback.code) || fallback), name: fallback.name }
   )), [channels]);
+  const summaryGroups = summaryQuery.data?.groups as ManagedOrderSummaryGroup[] | undefined;
+  const channelTabs = useMemo(
+    () => managedOrderChannelTabs(summaryGroups || [], channelCatalog),
+    [channelCatalog, summaryGroups],
+  );
+  const stageCounts = useMemo(
+    () => managedOrderStageCounts(summaryGroups || [], channelCode),
+    [channelCode, summaryGroups],
+  );
+  const summaryLoading = summaryQuery.isPending && !summaryQuery.data;
 
   const companyById = useMemo(
     () => new Map(companies.map((company) => [company.id, companyName(company)])),
@@ -1218,18 +1295,6 @@ export default function PedidosMulticanal() {
     });
   };
 
-  const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || fulfillmentStatus !== 'all' || Boolean(search.trim());
-  const selectedSellerName = companyId === 'all' ? '' : companyById.get(Number(companyId)) || '';
-  const selectedChannelName = channelCode === 'all' ? '' : channelCatalog.find((channel) => channel.code === channelCode)?.name || channelCode;
-  const selectedStatusLabel = fulfillmentStatus === 'all' ? '' : FULFILLMENT_LABELS[fulfillmentStatus] || fulfillmentStatus;
-  const clearFilters = () => {
-    setCompanyId('all');
-    setChannelCode('all');
-    setFulfillmentStatus('all');
-    setSearch('');
-    setSubmittedSearch('');
-  };
-
   const markSyncNote = (note: string) => {
     if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
     setSyncNote(note);
@@ -1313,42 +1378,41 @@ export default function PedidosMulticanal() {
     {
       id: 'order',
       header: 'Pedido',
-      size: 168,
-      cell: ({ row }) => <CopyableOrderNumber value={row.original.externalOrderNumber} />,
-    },
-    {
-      id: 'product',
-      header: 'Producto',
-      size: 224,
-      cell: ({ row }) => <OrderProductCell items={row.original.items} />,
-    },
-    {
-      id: 'seller',
-      header: 'Seller',
-      size: 156,
+      size: 196,
       cell: ({ row }) => {
         const seller = sellerCellLabel(row.original, companyById);
-        if (!seller) return null;
-        const person = sellerCellShowsPerson(row.original);
-        const Icon = person ? UserRound : Store;
+        const detailLine = [
+          searchIgnoresDate ? formatDate(row.original.orderedAt) : '',
+          seller,
+          row.original.channelCode === 'manual' ? SALE_SOURCE_LABELS[row.original.metadata?.saleSource || ''] : '',
+        ].filter(Boolean).join(' · ');
         return (
-          <span
-            className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border bg-muted/45 px-2 py-0.5 text-xs font-medium text-foreground"
-            title={seller}
-          >
-            <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{seller}</span>
-          </span>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <ChannelMark code={row.original.channelCode} name={row.original.channelName} size="sm" ripley="badge" />
+            <div className="min-w-0">
+              <CopyableOrderNumber value={row.original.externalOrderNumber} />
+              {detailLine && <p className="truncate text-[11px] leading-4 text-muted-foreground" title={detailLine}>{detailLine}</p>}
+            </div>
+          </div>
         );
       },
     },
     {
+      id: 'product',
+      header: 'Producto',
+      size: 220,
+      meta: { grow: true },
+      cell: ({ row }) => <OrderProductCell items={row.original.items} />,
+    },
+    {
       id: 'customer',
       header: 'Cliente',
-      size: 168,
+      size: 176,
       cell: ({ row }) => (
         <div className="min-w-0">
-          <p className="truncate">{row.original.customer?.name || 'Sin nombre'}</p>
+          {row.original.customer?.name
+            ? <p className="truncate">{row.original.customer.name}</p>
+            : <p className="truncate text-muted-foreground">Sin nombre</p>}
           {row.original.customer?.documentNumber ? (
             <p className="truncate font-mono text-[11px] text-muted-foreground">{row.original.customer.documentNumber}</p>
           ) : null}
@@ -1356,70 +1420,26 @@ export default function PedidosMulticanal() {
       ),
     },
     {
-      id: 'origin',
-      header: 'Origen',
-      size: 124,
-      cell: ({ row }) => (
-        <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} size="xs" ripley="wordmark" />
-          <span className="truncate">{originLabel(row.original)}</span>
-        </div>
-      ),
-    },
-    {
-      id: 'delivery',
-      header: 'Entrega',
-      size: 108,
-      cell: ({ row }) => deliveryBadge(row.original),
-    },
-    {
-      id: 'address',
-      header: 'Dirección',
-      size: 240,
-      cell: ({ row }) => (
-        <span className="line-clamp-2 whitespace-normal text-[13px] leading-5 text-muted-foreground" title={addressText(row.original)}>
-          {addressText(row.original)}
-        </span>
-      ),
-    },
-    {
-      id: 'time',
-      header: searchIgnoresDate ? 'Fecha' : 'Hora',
-      size: searchIgnoresDate ? 120 : 72,
-      cell: ({ row }) => (
-        <span className="tabular-nums text-muted-foreground">
-          {searchIgnoresDate ? formatDate(row.original.orderedAt) : formatTime(row.original.orderedAt)}
-        </span>
-      ),
-    },
-    {
       id: 'status',
       header: 'Estado',
-      size: 220,
-      cell: ({ row }) => (
-        <div className="flex flex-wrap items-center gap-1">
-          {fulfillmentBadge(row.original.fulfillmentStatus)}
-          {paymentBadge(row.original.paymentStatus)}
-        </div>
-      ),
-    },
-    {
-      id: 'method',
-      header: 'Método',
-      size: 112,
-      cell: ({ row }) => <span className="truncate text-muted-foreground">{paymentMethodLabel(row.original)}</span>,
+      size: 136,
+      cell: ({ row }) => fulfillmentBadge(row.original.fulfillmentStatus),
     },
     {
       id: 'total',
       header: () => <span className="block text-right">Total</span>,
-      size: 108,
+      size: 124,
+      meta: { align: 'end' },
       cell: ({ row }) => (
-        <span className="block truncate text-right font-medium tabular-nums">{formatMoney(row.original.total, row.original.currency)}</span>
+        <div className="flex min-w-0 flex-col items-end gap-0.5">
+          <span className="truncate font-medium tabular-nums">{formatMoney(row.original.total, row.original.currency)}</span>
+          {row.original.paymentStatus !== 'paid' && paymentBadge(row.original.paymentStatus, 'h-[18px] px-1.5 text-[10.5px]')}
+        </div>
       ),
     },
     {
       id: 'actions',
-      header: 'Acciones',
+      header: () => <span className="sr-only">Acciones</span>,
       size: 72,
       cell: ({ row }) => (
         <div
@@ -1500,83 +1520,76 @@ export default function PedidosMulticanal() {
           onConfirm={(date) => dateMutation.mutate({ id: dateOrder.id, date })}
         />
       )}
-      <DayStrip value={date} onChange={setDate} max={today} />
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
+        <DayStrip value={date} onChange={setDate} max={today} className="min-w-0 md:flex-1" />
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void syncRealData()}
+            disabled={syncing}
+            aria-live="polite"
+            aria-label={syncing ? 'Actualizando' : syncNote || 'Actualizar'}
+            title={syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
+            className={cn(
+              'h-9 cursor-pointer',
+              syncing || syncNote ? 'w-auto' : 'w-9 px-0',
+              syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
+              (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
+            )}
+          >
+            {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
+            {syncing ? 'Actualizando…' : syncNote}
+          </Button>
+          <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-9 w-auto cursor-pointer">
+            <Plus /> Registrar venta
+          </Button>
+        </div>
+      </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
+        <ChannelSummaryTabs tabs={channelTabs} value={channelCode} onChange={setChannelCode} loading={summaryLoading} />
+
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative min-w-0 flex-1">
+          <div className="relative min-w-0 sm:w-60 sm:shrink-0">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => applySearch(event.target.value)}
-              placeholder="Buscar pedido, cliente o documento"
+              placeholder="Buscar pedido, cliente o DNI"
               aria-label="Buscar pedidos"
               className="h-9 pl-9"
             />
           </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Select value={companyId} onValueChange={setCompanyId}>
-              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por seller">
-                <span className="truncate">{companyId === 'all' ? 'Seller' : selectedSellerName}</span>
-              </SelectTrigger>
-              <SelectContent className={filterMenuClass}>
-                <SelectItem value="all">Todos los sellers</SelectItem>
-                {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={channelCode} onValueChange={setChannelCode}>
-              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por origen">
-                <span className="truncate">{channelCode === 'all' ? 'Origen' : selectedChannelName}</span>
-              </SelectTrigger>
-              <SelectContent className={filterMenuClass}>
-                <SelectItem value="all">Todos los orígenes</SelectItem>
-                {channelCatalog.map((channel) => <SelectItem key={channel.code} value={channel.code}>{channel.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={fulfillmentStatus} onValueChange={setFulfillmentStatus}>
-              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por estado">
-                <span className="truncate">{fulfillmentStatus === 'all' ? 'Estado' : selectedStatusLabel}</span>
-              </SelectTrigger>
-              <SelectContent className={filterMenuClass}>
-                <SelectItem value="all">Todos los estados</SelectItem>
-                {Object.entries(FULFILLMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {hasActiveFilters && (
-              <Button type="button" variant="ghost" size="xs" className="h-9 cursor-pointer" onClick={clearFilters}>
-                Limpiar
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void syncRealData()}
-              disabled={syncing}
-              aria-live="polite"
-              className={cn(
-                'h-9 w-auto cursor-pointer',
-                syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
-                (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
-              )}
-            >
-              {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
-              {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
-            </Button>
-            <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-9 w-auto cursor-pointer">
-              <Plus /> Registrar venta
-            </Button>
+          <div role="radiogroup" aria-label="Filtrar por estado" className="flex min-w-0 flex-wrap items-center gap-1">
+            {[{ value: 'all', label: 'Todos' }, ...MANAGED_ORDER_STAGES].map((option) => {
+              const active = stage === option.value;
+              const count = stageCounts[option.value] || 0;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setStage(option.value)}
+                  className={cn(
+                    'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[13px] whitespace-nowrap transition-colors',
+                    active
+                      ? 'border-foreground bg-foreground text-background'
+                      : 'border-border text-foreground hover:bg-muted',
+                    !active && !count && 'text-muted-foreground',
+                  )}
+                >
+                  {option.value !== 'all' && <span className={cn('size-1.5 rounded-full', STAGE_DOT_CLASS[option.value])} aria-hidden="true" />}
+                  {option.label}
+                  <span className={cn('tabular-nums', active ? 'text-background/70' : 'text-muted-foreground')}>{summaryLoading ? '·' : count}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
-        {hasActiveFilters && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {search.trim() && <FilterChip label={search.trim()} onRemove={() => { setSearch(''); setSubmittedSearch(''); }} />}
-            {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => setCompanyId('all')} />}
-            {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => setChannelCode('all')} />}
-            {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
-            {managedOrdersSearchHelper(search) && (
-              <p className="self-center text-xs text-muted-foreground">{managedOrdersSearchHelper(search)}</p>
-            )}
-          </div>
+        {managedOrdersSearchHelper(search) && (
+          <p className="text-xs text-muted-foreground">{managedOrdersSearchHelper(search)}</p>
         )}
       </div>
 
@@ -1595,6 +1608,8 @@ export default function PedidosMulticanal() {
 
       <OrdersVirtualTable
         table={table}
+        rowHeight={56}
+        plain
         aria-label={managedOrdersTableLabel(dayLabel(date, today), submittedSearch)}
         loading={loading}
         fetching={fetching}
@@ -2182,19 +2197,6 @@ export default function PedidosMulticanal() {
       />
 
     </div>
-  );
-}
-
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onRemove}
-      className="inline-flex h-7 max-w-48 cursor-pointer items-center gap-1 rounded-md border border-border bg-muted/40 px-2 text-xs font-medium text-foreground hover:bg-muted"
-    >
-      <span className="truncate">{label}</span>
-      <X className="size-3 shrink-0 text-muted-foreground" />
-    </button>
   );
 }
 
