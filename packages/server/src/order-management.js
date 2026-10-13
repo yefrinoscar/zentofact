@@ -2295,6 +2295,72 @@ async function updateManualOrderWithDb(orderId, input, db) {
   });
 }
 
+export async function cancelManualOrder(orderId, input = {}, db) {
+  if (db) return cancelManualOrderWithDb(orderId, input, db);
+  const { pool } = await loadCore();
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const result = await cancelManualOrderWithDb(orderId, input, client);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function cancelManualOrderWithDb(orderId, input, db) {
+  const id = positiveInt(orderId, 'orderId');
+  const existing = (await db.query(
+    `select o.*, ch.code as channel_code, ch.name as channel_name,
+       a.display_name as channel_account_name
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.id=$1 for update of o`,
+    [id],
+  )).rows[0];
+  if (!existing) return null;
+  if (existing.channel_code !== 'manual') {
+    throw new Error('Solo se pueden cancelar pedidos de tienda.');
+  }
+  if (existing.order_status === 'cancelled' || existing.fulfillment_status === 'cancelled') {
+    return normalizeOrderRow(existing);
+  }
+  if (existing.order_status === 'failed' || ['returned', 'failed'].includes(existing.fulfillment_status)) {
+    throw new Error('No se puede cancelar un pedido devuelto o fallido.');
+  }
+  const persisted = (await db.query(
+    `update orders set order_status='cancelled', fulfillment_status='cancelled',
+       cancelled_at=coalesce(cancelled_at, now()), updated_at=now()
+     where id=$1 returning *`,
+    [id],
+  )).rows[0];
+  const actorUserId = optionalText(input.actorUserId, 300);
+  await stockPhase({
+    db, persisted, existing,
+    account: await accountWithChannel(db, existing.channel_account_id),
+    source: 'manual', actorUserId,
+  });
+  const changes = changeSet(existing, persisted);
+  await db.query(
+    `insert into order_events (
+       order_id, event_type, source, actor_user_id, idempotency_key,
+       previous_values, new_values, payload
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, 'order.cancelled', 'manual', actorUserId, `order.manual_cancel:${id}`,
+      JSON.stringify(changes.before), JSON.stringify(changes.after),
+      JSON.stringify({ reason: 'manual_cancel' })],
+  );
+  return normalizeOrderRow({
+    ...persisted, channel_code: existing.channel_code,
+    channel_name: existing.channel_name, channel_account_name: existing.channel_account_name,
+  });
+}
+
 export async function updateOrderDate(orderId, input = {}, db) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(orderId, 'orderId');

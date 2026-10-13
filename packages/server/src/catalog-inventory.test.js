@@ -8,7 +8,7 @@ import {
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
 import { stockPhase } from './catalog/stock-phase.js';
-import { approveReturnStock } from './order-management.js';
+import { approveReturnStock, cancelManualOrder } from './order-management.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
   falabellaCanonicalIdentity,
@@ -161,6 +161,94 @@ class InventoryDb {
     throw new Error(`Query no simulada: ${compact}`);
   }
 }
+
+class ManualCancelDb extends InventoryDb {
+  constructor({ channelCode = 'manual', fulfillmentStatus = 'pending', stockState = 'pending' } = {}) {
+    super(stockState === 'pending' ? 10 : 8);
+    this.reserved = stockState === 'pending' ? 2 : 0;
+    this.events = [];
+    this.order = {
+      id: 91, company_id: 7, channel_account_id: 22, channel_code: channelCode,
+      channel_name: 'Tienda', channel_account_name: 'Tienda',
+      external_order_id: 'QNC-91', external_order_number: 'QNC-91',
+      order_status: 'confirmed', fulfillment_status: fulfillmentStatus,
+      payment_status: 'paid', document_status: 'issued', items_status: 'complete',
+      metadata: {}, customer: {}, shipping: {}, total: 100,
+      ordered_at: '2026-10-13T17:00:00.000Z', cancelled_at: null,
+    };
+    this.items.set(501, {
+      id: 501, product_id: 5, quantity: 2, stock_state: stockState,
+      stock_applied_quantity: 2, stock_revision: 1,
+    });
+  }
+
+  async query(sql, params = []) {
+    const compact = sql.replace(/\s+/g, ' ').trim();
+    if (compact.startsWith('select o.*, ch.code')) return { rows: this.order ? [{ ...this.order }] : [] };
+    if (compact.startsWith('select a.*, ch.code')) return { rows: [{ id: 22, channel_code: 'manual', settings: {} }] };
+    if (compact.includes('from system_settings')) return { rows: [] };
+    if (compact.startsWith("update orders set order_status='cancelled'")) {
+      this.order = { ...this.order, order_status: 'cancelled', fulfillment_status: 'cancelled',
+        cancelled_at: this.order.cancelled_at || '2026-10-13T18:00:00.000Z' };
+      return { rows: [{ ...this.order }] };
+    }
+    if (compact.startsWith('insert into order_events')) {
+      this.events.push({ type: params[1], actor: params[3], before: JSON.parse(params[5]), after: JSON.parse(params[6]) });
+      return { rows: [] };
+    }
+    return super.query(sql, params);
+  }
+}
+
+test('cancelar un pedido de tienda libera su reserva una sola vez y registra el actor', async () => {
+  const db = new ManualCancelDb();
+  const order = await cancelManualOrder(91, { actorUserId: 'operator-1' }, db);
+  assert.equal(order.orderStatus, 'cancelled');
+  assert.equal(order.fulfillmentStatus, 'cancelled');
+  assert.equal(order.cancelledAt, '2026-10-13T18:00:00.000Z');
+  assert.equal(order.paymentStatus, 'paid');
+  assert.equal(order.documentStatus, 'issued');
+  assert.equal(db.reserved, 0);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.items.get(501).stock_applied_quantity, 0);
+  assert.equal(db.events[0].type, 'order.cancelled');
+  assert.equal(db.events[0].actor, 'operator-1');
+  assert.equal(db.events[0].before.orderStatus, 'confirmed');
+  assert.equal(db.events[0].after.orderStatus, 'cancelled');
+  await cancelManualOrder(91, { actorUserId: 'operator-1' }, db);
+  assert.equal(db.events.length, 1);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.order.cancelled_at, order.cancelledAt);
+});
+
+test('cancelar un pedido de tienda preparado reintegra su stock una sola vez', async () => {
+  const db = new ManualCancelDb({ fulfillmentStatus: 'ready_to_ship', stockState: 'applied' });
+  await cancelManualOrder(91, { actorUserId: 'operator-1' }, db);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.movements.size, 1);
+  const movement = [...db.movements.values()][0];
+  assert.equal(movement.reason, 'Cancelación del pedido QNC-91');
+  assert.equal(movement.actor_user_id, 'operator-1');
+  await cancelManualOrder(91, {}, db);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.movements.size, 1);
+});
+
+test('cancelar rechaza marketplaces, devoluciones y fallos sin modificar stock', async () => {
+  for (const channelCode of ['falabella', 'ripley', 'mercado_libre']) {
+    const db = new ManualCancelDb({ channelCode });
+    await assert.rejects(cancelManualOrder(91, {}, db), /Solo se pueden cancelar pedidos de tienda/);
+    assert.equal(db.order.order_status, 'confirmed');
+    assert.equal(db.reserved, 2);
+    assert.equal(db.events.length, 0);
+  }
+  for (const fulfillmentStatus of ['returned', 'failed']) {
+    await assert.rejects(cancelManualOrder(91, {}, new ManualCancelDb({ fulfillmentStatus })), /devuelto o fallido/);
+  }
+  const db = new ManualCancelDb();
+  db.order = null;
+  assert.equal(await cancelManualOrder(91, {}, db), null);
+});
 
 test('el historial muestra la conciliación autoritativa y los movimientos posteriores', async () => {
   let statement = '';
