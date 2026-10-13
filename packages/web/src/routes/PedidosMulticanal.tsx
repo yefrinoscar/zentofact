@@ -65,6 +65,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
 import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import { canCancelManualOrder } from '../lib/manual-order-cancellation';
 import {
   canMarkLogisticsDelivered,
   logisticsDeliverConfirmCopy,
@@ -381,6 +382,7 @@ const EVENT_LABELS: Record<string, string> = {
   'order.updated': 'Pedido actualizado',
   'order.stale_observed': 'Actualización recibida',
   'order.payment_recorded': 'Pago registrado',
+  'order.cancelled': 'Pedido cancelado',
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -880,7 +882,8 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, canWrite } = usePermissions();
+  const canCancelOrders = canWrite('order_management');
 
   const focusDetailSection = (id: string) => {
     setDetailTab('summary');
@@ -898,6 +901,7 @@ export default function PedidosMulticanal() {
   const [syncNote, setSyncNote] = useState('');
   const [dateOrder, setDateOrder] = useState<OrderDetail | null>(null);
   const [deliverOrder, setDeliverOrder] = useState<OrderDetail | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<ManagedOrder | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailTab, setDetailTab] = useState('products');
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1114,7 +1118,9 @@ export default function PedidosMulticanal() {
     void openDetail(order, 'summary');
   }, [openDetail]);
 
-  const canEditSale = (order: ManagedOrder) => isAdmin && order.channelCode === 'manual';
+  const canEditSale = (order: ManagedOrder) => isAdmin && order.channelCode === 'manual'
+    && order.orderStatus !== 'cancelled'
+    && !['cancelled', 'returned'].includes(order.fulfillmentStatus);
 
   const markDetailSaved = () => {
     setDetailSaved(true);
@@ -1359,6 +1365,23 @@ export default function PedidosMulticanal() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (order: ManagedOrder) => api.cancelManagedOrder(order.id),
+    onSuccess: async (_updated, order) => {
+      setCancelOrder(null);
+      setSuccessMessage(`Pedido ${order.externalOrderNumber} cancelado.`);
+      await Promise.all([
+        ...['managed-orders', 'managed-order-sales-pulse', 'logistics-inbox', 'canceled-orders',
+          'salesperson-home', 'dashboard', 'product-sales-report', 'catalog-products', 'catalog-summary',
+          'catalog-product-detail', 'catalog-product-movements', 'catalog-product-sales'].map((key) =>
+          queryClient.invalidateQueries({ queryKey: [key] })),
+        latestDetail.current?.id === order.id ? refreshDetailWhenIdle(order.id).catch(() => {
+          setDetailError('El pedido fue cancelado. Vuelve a abrir el detalle para actualizarlo.');
+        }) : Promise.resolve(),
+      ]);
+    },
+  });
+
   const dateMutation = useMutation({
     mutationFn: (input: { id: number; date: string }) => api.updateManagedOrderDate(input.id, input.date),
     onSuccess: (updated) => {
@@ -1473,7 +1496,7 @@ export default function PedidosMulticanal() {
                 <FileText /> Comprobante
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              {isAdmin && row.original.channelCode === 'manual' && (
+              {canEditSale(row.original) && (
                 <>
                   <DropdownMenuItem onClick={() => void openDetail(row.original, 'summary')}>
                     <Pencil /> Editar venta
@@ -1484,6 +1507,14 @@ export default function PedidosMulticanal() {
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
+              {canCancelOrders && canCancelManualOrder(row.original) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => { cancelMutation.reset(); setCancelOrder(row.original); }}>
+                    <X /> Cancelar pedido
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1495,7 +1526,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById, goToGenerateDocument, isAdmin, searchIgnoresDate]);
+  }, [companyById, goToGenerateDocument, isAdmin, searchIgnoresDate, canCancelOrders, cancelMutation.reset]);
 
   const table = useReactTable({
     data: orders,
@@ -1672,6 +1703,14 @@ export default function PedidosMulticanal() {
                       {isAdmin && <DropdownMenuItem onClick={() => { dateMutation.reset(); setDateOrder(detail); }}><CalendarDays /> Cambiar fecha de registro</DropdownMenuItem>}
                       {detail.documentRequirement !== 'disabled' && <DropdownMenuItem onClick={() => focusDetailSection('order-document')}><FileText /> Ver comprobante</DropdownMenuItem>}
                       <DropdownMenuItem onClick={() => void navigator.clipboard.writeText(detail.externalOrderNumber)}><Copy /> Copiar número</DropdownMenuItem>
+                      {canCancelOrders && canCancelManualOrder(detail) && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" disabled={detailSaving.length > 0} onClick={() => { cancelMutation.reset(); setCancelOrder(detail); }}>
+                            <X /> Cancelar pedido
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <Button type="button" variant="ghost" size="icon-sm" className="size-8 text-muted-foreground" aria-label="Cerrar" title="Cerrar" onClick={() => setDetailOpen(false)}>
@@ -2179,6 +2218,28 @@ export default function PedidosMulticanal() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(cancelOrder)} onOpenChange={(open) => {
+        if (!open && !cancelMutation.isPending) { cancelMutation.reset(); setCancelOrder(null); }
+      }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!cancelMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Cancelar pedido {cancelOrder?.externalOrderNumber}</DialogTitle>
+            <DialogDescription>
+              El pedido quedará cancelado. Se liberará su reserva o se reintegrará el stock descontado.
+              Esta acción no anula comprobantes ni devuelve pagos.
+            </DialogDescription>
+          </DialogHeader>
+          {cancelMutation.error && <p role="alert" className="text-sm text-destructive">{cancelMutation.error.message}</p>}
+          <DialogFooter>
+            <Button variant="outline" disabled={cancelMutation.isPending} onClick={() => setCancelOrder(null)}>Volver</Button>
+            <Button variant="destructive" disabled={cancelMutation.isPending} onClick={() => { if (cancelOrder) cancelMutation.mutate(cancelOrder); }}>
+              {cancelMutation.isPending && <Loader2 className="animate-spin motion-reduce:animate-none" />}
+              {cancelMutation.isPending ? 'Cancelando…' : 'Confirmar cancelación'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

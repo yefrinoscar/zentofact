@@ -831,6 +831,14 @@ for (const action of ['emit', 'refresh', 'reissue', 'pdf', 'xml']) {
     } catch (e) { return fail(c, e, 400); }
   });
 }
+app.post('/order-management/orders/:id/cancel', requirePermission('order_management'), async (c) => {
+  try {
+    const order = await orderManagement.cancelManualOrder(Number(c.req.param('id')), {
+      actorUserId: c.get('user')?.id,
+    });
+    return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
+  } catch (e) { return fail(c, e, 400); }
+});
 app.patch('/order-management/orders/:id/payment', async (c) => {
   try {
     const current = await orderManagement.getOrder(Number(c.req.param('id')));
