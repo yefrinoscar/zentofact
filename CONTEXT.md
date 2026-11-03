@@ -80,6 +80,10 @@ _Avoid_: Bitácora, kardex
 Monto fijo configurado en el Producto para calcular la ganancia al venderlo.
 _Avoid_: Margen, fee, comisión del marketplace
 
+**Ganancia del vendedor**:
+Comisión que suman los Pedidos que registró un usuario con perfil Vendedor: la Comisión de cada línea por unidad o, si ninguna línea la tiene, el % del vendedor. No descuenta costos ni cobros del canal, así que no es utilidad del negocio.
+_Avoid_: Utilidad, margen, ganancia del Seller
+
 **Precio por mayor**:
 Precio del Producto para venta al por mayor. Es distinto del precio de catálogo.
 _Avoid_: wholesale, precio mayorista

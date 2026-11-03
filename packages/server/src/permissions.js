@@ -353,6 +353,7 @@ export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/ventas')) return 'dashboard';
+  if (pathname.startsWith('/vendedores')) return 'dashboard';
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';

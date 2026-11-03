@@ -936,7 +936,8 @@ export async function ingestOrder(input, db) {
   }
 }
 
-const SALESPERSON_COMMISSION_SQL = `coalesce(
+/** Comisión de un Pedido de vendedor: la de cada línea (o la del catálogo) por unidad; si ninguna línea la tiene, el % del vendedor. */
+export const SALESPERSON_COMMISSION_SQL = `coalesce(
     (select sum(coalesce(oi.commission_amount, p.commission_amount) * oi.quantity)
      from order_items oi join products p on p.id=oi.product_id
    where oi.order_id=o.id),
@@ -1722,7 +1723,8 @@ export async function getSalesPulse(filters = {}, db) {
   };
 }
 
-const SALES_EXCLUSIONS = `
+/** Pedidos que no cuentan como venta: cancelados, fallidos, reembolsados o devueltos. */
+export const SALES_EXCLUSIONS = `
   o.order_status not in ('cancelled', 'failed')
   and o.payment_status not in ('refunded', 'failed')
   and o.fulfillment_status not in ('cancelled', 'returned', 'failed')

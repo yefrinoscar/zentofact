@@ -37,6 +37,7 @@ import { isProductionApp } from './lib/runtimeEnv';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
 const VentasProductos = lazy(() => import('./routes/VentasProductos'));
+const GananciasVendedores = lazy(() => import('./routes/GananciasVendedores'));
 const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 const SystemConfig = lazy(() => import('./routes/SystemConfig'));
@@ -53,6 +54,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/ventas': {
     title: 'Desempeño de productos',
     subtitle: 'Ventas, rotación y stock de todo tu catálogo.',
+  },
+  '/vendedores': {
+    title: 'Ganancias de vendedores',
+    subtitle: 'Comisión que ganó cada vendedor con sus ventas.',
   },
   '/pagos': {
     title: 'Pagos',
@@ -297,6 +302,7 @@ function AppLayout() {
               <Route path="/avisos" element={<Avisos />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/ventas" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><VentasProductos /></Suspense></RequirePermission>} />
+              <Route path="/vendedores" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><GananciasVendedores /></Suspense></RequirePermission>} />
               <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<PagosSkeleton />}><Pagos /></Suspense></RequirePermission>} />
               <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
               <Route path="/pedidos" element={isProductionApp() ? <Navigate to="/bandeja" replace /> : <RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
