@@ -50,6 +50,7 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.equal(pathPermission('/mis-ventas'), 'salesperson');
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/ventas'), 'dashboard');
+  assert.equal(pathPermission('/vendedores'), 'dashboard');
   assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/avisos'), null);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.path, '/bandeja');
@@ -208,4 +209,12 @@ test('grantsForRole respeta un vacío explícito y completa los bloqueados', () 
   assert.deepEqual(grantsForRole({ vendedor: ['boletas'] }, 'vendedor'), ['salesperson']);
   assert.deepEqual(grantsForRole({}, 'admin'), PERMISSIONS.map((p) => p.key));
   assert.deepEqual(presetPermissionsForRole('billing'), [...ROLE_PRESETS.billing.permissions]);
+});
+
+test('Ganancias de vendedores solo la ven administradores, no el vendedor ni el operador', () => {
+  const key = pathPermission('/vendedores');
+  assert.equal(key, 'dashboard');
+  assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, key), true);
+  assert.equal(userHasPermission({ role: 'vendedor', active: true, permissions: ['salesperson'] }, key), false);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['order_management', 'dashboard'] }, key), false);
 });

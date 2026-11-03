@@ -12,6 +12,12 @@ import type {
   BuyerMessage,
   BuyerUnreadCounts,
 } from './buyer-messages';
+import type {
+  EarningsSortBy,
+  EarningsSortDir,
+  SalespersonEarningSalesResponse,
+  SalespersonEarningsResponse,
+} from './salesperson-earnings-presentation';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -409,6 +415,17 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/dashboard/product-sales${qs(filter)}`),
+  listSalespersonEarnings: (filter: {
+    from?: string;
+    to?: string;
+    search?: string;
+    sortBy?: EarningsSortBy;
+    sortDir?: EarningsSortDir;
+    limit?: number;
+    offset?: number;
+  } = {}) => req<SalespersonEarningsResponse>(`/dashboard/salesperson-earnings${qs(filter)}`),
+  listSalespersonEarningSales: (userId: string, filter: { from?: string; to?: string; limit?: number; offset?: number } = {}) =>
+    req<SalespersonEarningSalesResponse>(`/dashboard/salesperson-earnings/${encodeURIComponent(userId)}/sales${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
   listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
     req(`/pagos/imports${qs(filter)}`),

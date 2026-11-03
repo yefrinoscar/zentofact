@@ -91,6 +91,7 @@ const marketplaceMutationJobs = await import('./catalog/marketplace-mutation-job
 await marketplaceMutationJobs.ensureMarketplaceMutationJobTables(core.pool);
 const dashboard = await import('./dashboard.js');
 const productSalesReport = await import('./catalog/product-sales-report.js');
+const salespersonEarnings = await import('./salesperson-earnings.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -348,6 +349,21 @@ app.get('/dashboard', async (c) => {
 app.get('/dashboard/product-sales', async (c) => {
   try {
     const data = await productSalesReport.listProductSalesReport(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+// Ganancias de vendedores: mismo permiso de Dashboard (solo administradores).
+app.get('/dashboard/salesperson-earnings', async (c) => {
+  try {
+    const data = await salespersonEarnings.listSalespersonEarnings(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/dashboard/salesperson-earnings/:userId/sales', async (c) => {
+  try {
+    const data = await salespersonEarnings.listSalespersonEarningSales(c.req.param('userId'), c.req.query());
     c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
