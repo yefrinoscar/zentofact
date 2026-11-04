@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ChevronsUpDown, LayoutGrid, LogOut, Settings } from 'lucide-react';
+import { ChevronsUpDown, KeyRound, LayoutGrid, LogOut, Settings } from 'lucide-react';
 import { authClient } from '../lib/authClient';
 import api from '../lib/api';
 import { broadcastForceReauth, clearClientStorageOnLogout } from '../lib/clearClientStorage';
@@ -8,6 +8,7 @@ import { isNavItemActive, mobileNavPathname, visibleNavigation } from '../lib/na
 import { ROLE_PRESETS, normalizeRole } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
 import { EnvBadge } from './ZentoFactBrand';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { NotificationBell } from './NotificationBell';
 import { isDevApp, runtimeEnvironmentLabel } from '../lib/runtimeEnv';
 import {
@@ -84,6 +85,7 @@ function MobileAccountMenu() {
   const { data: session } = authClient.useSession();
   const { role, can } = usePermissions();
   const [signingOut, setSigningOut] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const email = session?.user?.email || '';
   const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
   const roleLabel = ROLE_PRESETS[normalizeRole(role)].label;
@@ -102,6 +104,7 @@ function MobileAccountMenu() {
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button type="button" className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-semibold" aria-label="Abrir opciones de la cuenta">
@@ -122,10 +125,15 @@ function MobileAccountMenu() {
             <Link to="/settings"><Settings /> Ajustes y tema</Link>
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem onSelect={() => setPasswordOpen(true)}>
+          <KeyRound /> Cambiar contraseña
+        </DropdownMenuItem>
         <DropdownMenuItem variant="destructive" disabled={signingOut} onSelect={logout}>
           <LogOut /> {signingOut ? 'Saliendo…' : 'Cerrar sesión'}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
+    </>
   );
 }
