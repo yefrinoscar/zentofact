@@ -920,6 +920,10 @@ async function ingestOrderInTransaction(input, db) {
 }
 
 export async function ingestOrder(input, db) {
+  if (input.source === 'manual' && input.metadata?.paymentMethod === 'efectivo'
+    && !optionalText(input.metadata.receivedBy, 200)) {
+    throw new Error('Escribe el nombre de quien recibió el efectivo.');
+  }
   if (db) return ingestOrderInTransaction(input, db);
   const { pool } = await loadCore();
   const client = await pool.connect();
@@ -2000,6 +2004,9 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     throw new Error('paymentMethod inválido.');
   }
   const receivedBy = optionalText(input.receivedBy, 200);
+  if (paymentMethod === 'efectivo' && !receivedBy) {
+    throw new Error('Escribe el nombre de quien recibió el efectivo.');
+  }
   const paidTo = optionalText(input.paidTo, 50);
   if (paidTo && !PAYMENT_RECIPIENTS.includes(paidTo)) {
     throw new Error('paidTo inválido.');

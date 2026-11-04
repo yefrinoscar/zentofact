@@ -2449,8 +2449,8 @@ function RegisterPaymentDialog({
         </div>
         {paymentMethod === 'efectivo' && (
           <div className="space-y-1.5">
-            <Label htmlFor="pay-received-by">¿Quién cobró?</Label>
-            <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
+            <Label htmlFor="pay-received-by">Recibió el efectivo</Label>
+            <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Nombre de quien recibió el dinero" required maxLength={200} />
           </div>
         )}
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
@@ -2500,12 +2500,19 @@ function RegisterPaymentDialog({
             type="button"
             className="cursor-pointer"
             disabled={busy}
-            onClick={() => onSubmit({
-              paymentMethod,
-              receivedBy,
-              paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
-              paymentProof,
-            })}
+            onClick={() => {
+              if (paymentMethod === 'efectivo' && !receivedBy.trim()) {
+                setLocalError('Escribe el nombre de quien recibió el efectivo.');
+                return;
+              }
+              setLocalError('');
+              onSubmit({
+                paymentMethod,
+                receivedBy: receivedBy.trim(),
+                paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
+                paymentProof,
+              });
+            }}
           >
             {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {busy ? 'Guardando…' : 'Registrar pago'}

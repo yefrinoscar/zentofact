@@ -353,6 +353,13 @@ function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeo
   return validateSellerShipping(input);
 }
 
+function validatePayment(input: ManualSaleInput) {
+  if (input.paymentMethod === 'efectivo' && !String(input.receivedBy || '').trim()) {
+    return 'Escribe el nombre de quien recibió el efectivo.';
+  }
+  return null;
+}
+
 export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
   if (!input.channelAccountId) {
     return 'Todavía no hay un canal de venta manual habilitado.';
@@ -360,7 +367,8 @@ export function validateManualSale(input: ManualSaleInput, fleetConfig?: Paramet
   return validateCustomer(input)
     ?? validateSaleLines(input)
     ?? validateDelivery(input, fleetConfig)
-    ?? validateDocumentRequest(input);
+    ?? validateDocumentRequest(input)
+    ?? validatePayment(input);
 }
 
 /** Lo que bloquea un paso del stepper. `pago` no exige nada: el método siempre trae un valor. */
@@ -372,7 +380,7 @@ export function validateSaleStep(
   if (step === 'cliente') return validateCustomer(input) ?? validateDocumentRequest(input);
   if (step === 'productos') return validateSaleLines(input);
   if (step === 'entrega') return validateDelivery(input, fleetConfig);
-  if (step === 'pago') return null;
+  if (step === 'pago') return validatePayment(input);
   return validateManualSale(input, fleetConfig);
 }
 

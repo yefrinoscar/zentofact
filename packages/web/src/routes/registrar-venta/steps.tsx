@@ -563,12 +563,14 @@ export function PagoStep({ view }: { view: SaleFormView }) {
       </FieldRow>
 
       {view.paymentMethod === 'efectivo' && (
-        <FieldRow label="¿Quién cobró?" htmlFor="received-by">
+        <FieldRow label="Recibió el efectivo" htmlFor="received-by">
           <Input
             id="received-by"
             value={view.receivedBy}
             onChange={(event) => view.setReceivedBy(event.target.value)}
-            placeholder="Opcional"
+            placeholder="Nombre de quien recibió el dinero"
+            required
+            maxLength={200}
           />
         </FieldRow>
       )}
