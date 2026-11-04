@@ -40,7 +40,10 @@ import {
 import {
   DEFAULT_MIS_VENTAS_QUERY,
   MIS_VENTAS_QUERY_KEY,
+  currentSalesMonth,
+  misVentasQueryIncludesDate,
   misVentasHomeKey,
+  salesMonthRange,
   showsNewestSaleFirst,
   type MisVentasQuery,
 } from '../lib/mis-ventas-presentation';
@@ -318,13 +321,17 @@ export default function RegistrarVenta() {
     const previousHomes = queryClient.getQueriesData<OptimisticHome>({ queryKey: [MIS_VENTAS_QUERY_KEY] });
     const knownHome = previousHomes.find(([, data]) => data)?.[1];
     const commissionPercent = Number(knownHome?.commissionPercent) || 0;
-    const firstPageKey = misVentasHomeKey(DEFAULT_MIS_VENTAS_QUERY);
+    const currentRange = salesMonthRange(currentSalesMonth());
+    const firstPageKey = misVentasHomeKey({ ...DEFAULT_MIS_VENTAS_QUERY, from: currentRange.from, to: currentRange.to });
     const cachedKeys = new Set(previousHomes.map(([key]) => JSON.stringify(key)));
     if (!cachedKeys.has(JSON.stringify(firstPageKey))) {
       previousHomes.push([firstPageKey, undefined]);
     }
     for (const [key, data] of customDate ? [] : previousHomes) {
       const pageQuery = key[1] as Partial<MisVentasQuery> | undefined;
+      const saleTimestamp = optimisticSale.orderedAt || optimisticSale.createdAt;
+      const saleDate = limaTodayKey(saleTimestamp ? new Date(saleTimestamp) : new Date());
+      if (!misVentasQueryIncludesDate(pageQuery, saleDate)) continue;
       queryClient.setQueryData<OptimisticHome>(key, applyOptimisticSale(
         data ?? { ...knownHome, orders: [], ordersTotal: 0, limit: pageQuery?.limit },
         optimisticSale,

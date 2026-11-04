@@ -1786,7 +1786,7 @@ export async function getSalespersonHome(filters = {}, db) {
   const commissionPercent = Number(filters.commissionPercent) || 0;
   const today = limaDateKey();
   const monthStart = `${today.slice(0, 7)}-01`;
-  const from = String(filters.from || '').trim() || addCalendarDays(today, -29);
+  const from = String(filters.from || '').trim() || monthStart;
   const to = String(filters.to || '').trim() || today;
   if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('from inválido.');
   if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('to inválido.');
