@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, type SortingState, useReactTable } from '@tanstack/react-table';
 import { ImagePlus, Plus, ShoppingBag } from 'lucide-react';
 import api from '../lib/api';
@@ -8,8 +8,11 @@ import {
   DEFAULT_MIS_VENTAS_QUERY,
   MIS_VENTAS_PAGE_SIZE,
   MIS_VENTAS_QUERY_KEY,
+  currentSalesMonth,
   formatSaleMoney,
   misVentasHomeKey,
+  salesMonthLabel,
+  salesMonthRange,
   saleListRow,
   saleMoreProductsLabel,
   type MisVentasQuery,
@@ -155,12 +158,12 @@ function PaymentCell({
   );
 }
 
-function EmptySales() {
+function EmptySales({ monthLabel }: { monthLabel: string }) {
   return (
     <div className="flex flex-col items-center gap-2 py-14 text-center">
       <ShoppingBag className="size-8 text-muted-foreground/50" />
-      <p className="text-sm font-medium">Aún no hay ventas tuyas</p>
-      <p className="text-sm text-muted-foreground">Registra la primera para verla aquí.</p>
+      <p className="text-sm font-medium">Sin ventas en {monthLabel}</p>
+      <p className="text-sm text-muted-foreground">Elige otro mes o registra una venta.</p>
     </div>
   );
 }
@@ -168,11 +171,13 @@ function EmptySales() {
 function MobileSalesList({
   rows,
   loading,
+  monthLabel,
   highlightOrder,
   onOpenPayment,
 }: {
   rows: SaleRow[];
   loading: boolean;
+  monthLabel: string;
   highlightOrder: string;
   onOpenPayment: (row: SaleRow) => void;
 }) {
@@ -195,7 +200,7 @@ function MobileSalesList({
       </ul>
     );
   }
-  if (rows.length === 0) return <EmptySales />;
+  if (rows.length === 0) return <EmptySales monthLabel={monthLabel} />;
   return (
     <ul className="divide-y divide-border" aria-label="Mis ventas">
       {rows.map((row) => {
@@ -237,13 +242,18 @@ export default function MisVentas() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
+  const [selectedMonth, setSelectedMonth] = useState(() => currentSalesMonth());
   const [highlightOrder, setHighlightOrder] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'orderedAt', desc: true }]);
   const [paymentSale, setPaymentSale] = useState<SaleRow | null>(null);
   const [paymentError, setPaymentError] = useState('');
 
+  const monthRange = salesMonthRange(selectedMonth);
+  const monthLabel = salesMonthLabel(monthRange.month);
   const query: MisVentasQuery = {
+    from: monthRange.from,
+    to: monthRange.to,
     limit: MIS_VENTAS_PAGE_SIZE,
     offset: pageIndex * MIS_VENTAS_PAGE_SIZE,
     ...sortToQuery(sorting),
@@ -252,7 +262,6 @@ export default function MisVentas() {
     queryKey: misVentasHomeKey(query),
     queryFn: () => api.getSalespersonHome(query) as Promise<SalespersonHome>,
     staleTime: 15_000,
-    placeholderData: keepPreviousData,
   });
   const home = homeQuery.data;
   const commissionPercent = Number(home?.commissionPercent) || 0;
@@ -427,18 +436,33 @@ export default function MisVentas() {
       onPrefetch={prefetchPage}
     />
   ) : null;
-  const countLabel = `${integer.format(totalCount)} ${totalCount === 1 ? 'venta' : 'ventas'} en los últimos 30 días`;
+  const countLabel = `${integer.format(totalCount)} ${totalCount === 1 ? 'venta' : 'ventas'} en ${monthLabel}`;
 
   return (
     <div className="space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <div className="flex items-center justify-stretch sm:justify-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+          Mes
+          <input
+            type="month"
+            value={monthRange.month}
+            max={currentSalesMonth()}
+            className="daisy-input daisy-input-sm w-full min-w-44 bg-input/50 text-sm text-foreground sm:w-auto"
+            aria-label="Filtrar ventas por mes"
+            onChange={(event) => {
+              const next = salesMonthRange(event.target.value);
+              setSelectedMonth(next.month);
+              setPageIndex(0);
+            }}
+          />
+        </label>
         <Button type="button" className="h-11 w-full sm:h-9 sm:w-auto" onClick={() => navigate('/orders/nueva?from=mis-ventas')}>
           <Plus data-icon="inline-start" />
           Registrar venta
         </Button>
       </div>
 
-      <MisVentasCharts home={home} loading={firstLoad} />
+      <MisVentasCharts home={home} loading={firstLoad} monthLabel={monthLabel} />
 
       {loadError && (
         <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-3 text-sm text-destructive">
@@ -476,7 +500,7 @@ export default function MisVentas() {
             total: 'text-right',
             commission: 'text-right',
           }}
-          empty={<EmptySales />}
+          empty={<EmptySales monthLabel={monthLabel} />}
           footer={pagination ?? undefined}
         />
       </div>
@@ -485,7 +509,7 @@ export default function MisVentas() {
         {!firstLoad && totalCount > 0 ? (
           <p className="border-b border-border pb-2 text-xs text-muted-foreground" aria-live="polite">{countLabel}</p>
         ) : null}
-        <MobileSalesList rows={rows} loading={firstLoad} highlightOrder={highlightOrder} onOpenPayment={openPayment} />
+        <MobileSalesList rows={rows} loading={firstLoad} monthLabel={monthLabel} highlightOrder={highlightOrder} onOpenPayment={openPayment} />
         {pagination}
       </section>
 

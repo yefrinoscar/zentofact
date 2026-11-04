@@ -11,7 +11,6 @@ import {
   paymentMixSlices,
   percentLabel,
   productivityStats,
-  salespersonKpis,
   type SalespersonDay,
   type SalespersonHome,
 } from '../lib/mis-ventas-presentation';
@@ -241,15 +240,21 @@ function SkeletonStrip() {
   );
 }
 
-export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | null; loading: boolean }) {
+export function MisVentasCharts({
+  home,
+  loading,
+  monthLabel,
+}: {
+  home?: SalespersonHome | null;
+  loading: boolean;
+  monthLabel: string;
+}) {
   if (loading && !home) return <SkeletonStrip />;
 
-  const [today, month] = salespersonKpis(home);
   const days = dailySeries(home);
   const stats = productivityStats(days);
   const slices = paymentMixSlices(home?.paymentMix);
   const todayKey = limaTodayKey();
-  const windowLabel = stats.days > 0 ? `${stats.days} días` : '30 días';
   const hasWindowSales = stats.orders > 0;
 
   return (
@@ -260,20 +265,19 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
       <div className="min-w-0">
         <div className="grid grid-cols-2 gap-4">
           <Hero
-            label="Comisión hoy"
-            value={formatSaleMoney(today.commission)}
-            detail={`${pluralize(today.orders, 'venta', 'ventas')} · ${formatSaleMoney(today.total)} vendido`}
+            label="Comisión del mes"
+            value={formatSaleMoney(stats.commission)}
+            detail={`${pluralize(stats.orders, 'venta', 'ventas')} · ${formatSaleMoney(stats.total)} vendido`}
             emphasis
           />
           <Hero
-            label="Comisión del mes"
-            value={formatSaleMoney(month.commission)}
-            detail={`${pluralize(month.orders, 'venta', 'ventas')} · ${formatSaleMoney(month.total)} vendido`}
-            emphasis
+            label="Vendido"
+            value={formatSaleMoney(stats.total)}
+            detail={`${pluralize(stats.orders, 'venta', 'ventas')} · ticket ${formatSaleMoney(stats.averageTicket)}`}
           />
         </div>
         <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-          Comisión por producto vendido. Últimos {windowLabel}.
+          Comisión por producto vendido · {monthLabel}.
         </p>
         {hasWindowSales ? (
           <DailyBars
@@ -282,9 +286,9 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
             config={commissionChartConfig}
             today={todayKey}
             money
-            ariaLabel={`Comisión por día, últimos ${windowLabel}: ${formatSaleMoney(stats.commission)} en total`}
+            ariaLabel={`Comisión por día en ${monthLabel}: ${formatSaleMoney(stats.commission)} en total`}
           />
-        ) : <ChartEmpty>Sin ventas en los últimos {windowLabel}.</ChartEmpty>}
+        ) : <ChartEmpty>Sin ventas en {monthLabel}.</ChartEmpty>}
       </div>
 
       <div className="min-w-0">
@@ -293,12 +297,12 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
           value={pluralize(stats.orders, 'venta', 'ventas')}
           detail={hasWindowSales
             ? `${pluralize(stats.activeDays, 'día con venta', 'días con venta')} · ${decimal.format(stats.ordersPerActiveDay)} por día`
-            : `Ninguna en ${windowLabel}.`}
+            : `Ninguna en ${monthLabel}.`}
         />
         <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
           {stats.bestDay
             ? `Mejor día: ${dayKeyLabel(stats.bestDay.date)} · ${formatSaleMoney(stats.bestDay.total)}.`
-            : `Últimos ${windowLabel}.`}
+            : monthLabel}
         </p>
         {hasWindowSales ? (
           <DailyBars
@@ -307,9 +311,9 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
             config={ordersChartConfig}
             today={todayKey}
             money={false}
-            ariaLabel={`Ventas por día, últimos ${windowLabel}: ${integer.format(stats.orders)} ventas en ${integer.format(stats.activeDays)} días`}
+            ariaLabel={`Ventas por día en ${monthLabel}: ${integer.format(stats.orders)} ventas en ${integer.format(stats.activeDays)} días`}
           />
-        ) : <ChartEmpty>Sin ventas en los últimos {windowLabel}.</ChartEmpty>}
+        ) : <ChartEmpty>Sin ventas en {monthLabel}.</ChartEmpty>}
       </div>
 
       <div className="min-w-0">
@@ -321,9 +325,9 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
         <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
           {slices.some((slice) => slice.key === 'despues')
             ? `${percentLabel(slices.find((slice) => slice.key === 'despues')!.share)} se cobra después.`
-            : `Medios de pago, últimos ${windowLabel}.`}
+            : `Medios de pago · ${monthLabel}.`}
         </p>
-        {slices.length ? <PaymentDonut slices={slices} /> : <ChartEmpty>Sin cobros en los últimos {windowLabel}.</ChartEmpty>}
+        {slices.length ? <PaymentDonut slices={slices} /> : <ChartEmpty>Sin cobros en {monthLabel}.</ChartEmpty>}
       </div>
     </section>
   );
