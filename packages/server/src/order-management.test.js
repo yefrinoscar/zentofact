@@ -1567,3 +1567,18 @@ test('recalcula subtotal y total al corregir cantidades y precios', async () => 
   assert.equal(result.subtotal, 149.7);
   assert.equal(result.total, 149.7);
 });
+
+
+test('el efectivo exige un receptor antes de registrar la venta o el pago', async () => {
+  const db = { query: async () => { throw new Error('No debe escribir ni consultar sin receptor'); } };
+  for (const receivedBy of [undefined, '', '   ']) {
+    await assert.rejects(
+      () => updateOrderPayment(91, { paymentMethod: 'efectivo', receivedBy }, db),
+      /Escribe el nombre de quien recibió el efectivo/,
+    );
+    await assert.rejects(
+      () => ingestOrder(manualSale({ source: 'manual', metadata: { paymentMethod: 'efectivo', receivedBy } }), db),
+      /Escribe el nombre de quien recibió el efectivo/,
+    );
+  }
+});
