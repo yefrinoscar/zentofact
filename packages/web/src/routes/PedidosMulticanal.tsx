@@ -1443,6 +1443,26 @@ export default function PedidosMulticanal() {
       ),
     },
     {
+      id: 'payment',
+      header: 'Pago y entrega',
+      size: 132,
+      cell: ({ row }) => {
+        if (row.original.channelCode !== 'manual') return null;
+        const method = row.original.metadata?.paymentMethod ? paymentMethodLabel(row.original) : '';
+        const delivery = deliveryLabel(row.original);
+        return (
+          <div className="flex min-w-0 flex-col items-start gap-1">
+            <Badge variant="outline" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
+              {method || <span className="font-medium normal-case text-muted-foreground">Sin método</span>}
+            </Badge>
+            <Badge variant="secondary" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
+              {deliveryShowsAsTag(delivery) ? delivery : <span className="font-medium normal-case text-muted-foreground">Sin entrega</span>}
+            </Badge>
+          </div>
+        );
+      },
+    },
+    {
       id: 'status',
       header: 'Estado',
       size: 136,

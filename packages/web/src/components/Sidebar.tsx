@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   ChevronsUpDown,
+  KeyRound,
   LogOut,
   Settings,
 } from 'lucide-react';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
 import api from '../lib/api';
@@ -140,6 +142,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { data: session } = authClient.useSession();
   const { role, can } = usePermissions();
   const [signingOut, setSigningOut] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const email = session?.user?.email || '';
   const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
   const roleLabel = ROLE_PRESETS[normalizeRole(role)].label;
@@ -186,11 +189,15 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                 <Link to="/settings"><Settings /> Ajustes y tema</Link>
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onSelect={() => setPasswordOpen(true)}>
+              <KeyRound /> Cambiar contraseña
+            </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" disabled={signingOut} onSelect={logout}>
               <LogOut /> {signingOut ? 'Saliendo…' : 'Cerrar sesión'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
       </SidebarMenuItem>
     </SidebarMenu>
   );
