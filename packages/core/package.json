@@ -27,6 +27,7 @@
     "pg": "^8.13.0",
     "puppeteer": "25.3.0",
     "qrcode": "^1.5.4",
+    "takumi-pdf": "0.20.0",
     "xml-crypto": "^6.0.0",
     "xmlbuilder2": "4.0.3"
   },
