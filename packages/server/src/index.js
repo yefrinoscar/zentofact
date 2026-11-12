@@ -1623,7 +1623,7 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
     const companyId = Number(c.req.param('companyId'));
     const orderId = c.req.param('orderId');
     const order = (await core.pool.query(
-      'select status from falabella_orders where company_id=$1 and order_id=$2',
+      'select status, order_number from falabella_orders where company_id=$1 and order_id=$2',
       [companyId, orderId],
     )).rows[0];
     if (!order || !core.canPrintFalabellaShippingLabel(order.status)) {
@@ -1638,10 +1638,36 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
         context: { companyId, orderId, status },
       }), status);
     }
+    // Igual que en la hoja A4: guardar el tracking impreso para que el escáner
+    // de armado resuelva la etiqueta. No bloquea ni hace fallar la impresión.
+    if (result?.base64) {
+      void saveSingleLabelTrackingSnapshot({
+        companyId,
+        orderId,
+        orderNumber: order.order_number,
+        base64: result.base64,
+      });
+    }
     c.header('Cache-Control', 'private, no-store');
     return ok(c, result);
   } catch (e) { return fail(c, e); }
 });
+async function saveSingleLabelTrackingSnapshot({ companyId, orderId, orderNumber, base64 }) {
+  try {
+    const trackingCodes = await shippingLabelSheet.extractShippingLabelTrackingCodes(
+      Buffer.from(String(base64).replace(/\s+/g, ''), 'base64'),
+    );
+    const inventory = await core.falabellaGetOrderItems({ companyId, orderId });
+    if (inventory?.error || inventory?.ok === false) throw new Error(inventory?.error || 'Falabella no devolvió los productos.');
+    await pickingScanner.saveFalabellaTicketSnapshot(
+      core.pool,
+      { companyId, orderId, orderNumber },
+      pickingScanner.attachShippingLabelTrackingCodes(inventory, trackingCodes),
+    );
+  } catch (error) {
+    console.warn('[SHIPPING LABEL TRACKING]', orderId, error?.message || error);
+  }
+}
 app.post('/falabella/shipping-labels/a4', async (c) => {
   try {
     const { orders } = await c.req.json();

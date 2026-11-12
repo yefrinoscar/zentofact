@@ -67,6 +67,79 @@ test('recupera una etiqueta pendiente ya impresa leyendo el tracking de su PDF',
   assert.equal(result.packages[0].trackingCode, '240121000011894785');
 });
 
+test('resuelve una etiqueta impresa fuera de la app buscando entre pedidos abiertos', async () => {
+  const code = '240121000014992520';
+  const stored = {
+    company_id: 1, company_name: 'LIMBO', order_id: '5005999001',
+    order_number: '3261381802', status: 'pending', raw_data: {},
+  };
+  const saved = [];
+  const db = {
+    async query(sql, params) {
+      if (sql.includes('where fo.order_number=$1')) return { rows: [] };
+      if (sql.includes('from falabella_ticket_items') && sql.includes('match_type')) return { rows: [] };
+      if (sql.includes('from falabella_label_prints')) {
+        assert.match(sql, /pending\|ready_to_ship/);
+        return { rows: [
+          { company_id: 1, order_id: '5005999000', order_number: '3261381800' },
+          { company_id: 1, order_id: stored.order_id, order_number: stored.order_number },
+        ] };
+      }
+      if (sql.includes('from orders o')) return { rows: [] };
+      if (sql.includes('where fo.company_id=$1')) return { rows: [stored] };
+      if (sql.includes('from falabella_product_variants')) return { rows: [] };
+      if (sql.includes('insert into falabella_product_variants')) return { rows: [] };
+      if (sql.includes('insert into falabella_ticket_items')) { saved.push(params); return { rows: [] }; }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  };
+  const labels = [];
+  const result = await lookupPickingScan({
+    db,
+    input: code,
+    getOrderItems: async ({ orderId }) => ({
+      ok: true,
+      orderItems: [{ OrderItemId: `${orderId}-1`, PackageId: `PKG-${orderId}`, Name: 'Camiseta' }],
+      items: [],
+    }),
+    getShippingLabel: async ({ orderId, recordPrint }) => {
+      assert.equal(recordPrint, false);
+      labels.push(orderId);
+      const pdf = await PDFDocument.create();
+      pdf.addPage([300, 400]).drawText(orderId === stored.order_id ? code : '240121000014990000');
+      return { ok: true, base64: Buffer.from(await pdf.save()).toString('base64') };
+    },
+  });
+
+  assert.equal(result.order.orderNumber, '3261381802');
+  assert.equal(result.scan.matchType, 'tracking');
+  assert.equal(result.packages[0].trackingCode, code);
+  assert.deepEqual(labels.sort(), ['5005999000', stored.order_id]);
+  assert.ok(saved.some((params) => params[4] === code), 'debe guardar el tracking para el siguiente escaneo');
+});
+
+test('no descarga la etiqueta cuando Falabella ya trae el tracking de todos los artículos', async () => {
+  const db = {
+    async query(sql) {
+      if (sql.includes('from falabella_label_prints')) {
+        return { rows: [{ company_id: 1, order_id: '5005999002', order_number: '3261381803' }] };
+      }
+      if (sql.includes('from falabella_ticket_items') && sql.includes('match_type')) return { rows: [] };
+      if (sql.includes('insert into') || sql.includes('from falabella_product_variants')) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+  await assert.rejects(
+    lookupPickingScan({
+      db,
+      input: '240121000014992520',
+      getOrderItems: async () => ({ ok: true, orderItems: [{ OrderItemId: '1', TrackingCode: '240121000014991111' }], items: [] }),
+      getShippingLabel: async () => assert.fail('No debe descargar el PDF'),
+    }),
+    /número de orden/,
+  );
+});
+
 test('resuelve el tracking sincronizado sin impresión ni snapshot y sin conexión a Falabella', async () => {
   const code = '240111000012662439';
   const stored = {
