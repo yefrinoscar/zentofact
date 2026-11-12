@@ -267,22 +267,51 @@ function itemMatchesCode(item, code) {
   return item.trackingCode === code || item.packageId === code;
 }
 
-async function findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, code }) {
-  if (!/^\d{15,30}$/.test(code)) return null;
+const LABEL_SEARCH_LIMIT = 120;
+const LABEL_SEARCH_CONCURRENCY = 4;
+const LABEL_SEARCH_BUDGET_MS = 25_000;
+
+// Candidatos para resolver un tracking que todavía no está guardado:
+// etiquetas impresas desde la app y pedidos abiertos recientes, aunque su
+// etiqueta se haya impreso fuera de la app (por ejemplo, en Seller Center).
+// Los pedidos con tracking ya guardado van al final: snapshotMatch ya los comparó.
+async function labelSearchCandidates(db) {
   const result = await db.query(
-    `select company_id, order_id, order_number, last_printed_at
-     from (
+    `with printed as (
        select distinct on (prints.company_id, prints.order_id)
-         prints.company_id, prints.order_id, prints.order_number, prints.last_printed_at
+         prints.company_id, prints.order_id, prints.last_printed_at
        from falabella_label_prints prints
        order by prints.company_id, prints.order_id, prints.last_printed_at desc
-     ) recent
-     order by last_printed_at desc
-     limit 120`,
+     )
+     select fo.company_id, fo.order_id, fo.order_number
+     from falabella_orders fo
+     left join printed on printed.company_id=fo.company_id and printed.order_id=fo.order_id
+     where printed.order_id is not null
+       or (
+         lower(coalesce(fo.status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)'
+         and fo.falabella_created_at >= now() - interval '21 days'
+       )
+     order by
+       exists (
+         select 1 from falabella_ticket_items t
+         where t.company_id=fo.company_id and t.order_id=fo.order_id
+           and coalesce(t.tracking_code, '') <> ''
+       ),
+       printed.last_printed_at desc nulls last,
+       fo.falabella_created_at desc nulls last
+     limit $1`,
+    [LABEL_SEARCH_LIMIT],
   );
-  const candidates = result.rows;
-  for (let offset = 0; offset < candidates.length; offset += 4) {
-    const batch = candidates.slice(offset, offset + 4);
+  return result.rows;
+}
+
+async function findTicketByLabelTracking({ db, getOrderItems, getShippingLabel, code, budgetMs = LABEL_SEARCH_BUDGET_MS }) {
+  if (!/^\d{15,30}$/.test(code) || typeof getOrderItems !== 'function') return null;
+  const deadline = Date.now() + budgetMs;
+  const candidates = await labelSearchCandidates(db);
+  for (let offset = 0; offset < candidates.length; offset += LABEL_SEARCH_CONCURRENCY) {
+    if (Date.now() > deadline) break;
+    const batch = candidates.slice(offset, offset + LABEL_SEARCH_CONCURRENCY);
     const loaded = await Promise.all(batch.map(async (candidate) => {
       try {
         let inventory = await getOrderItems({
@@ -290,7 +319,10 @@ async function findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, co
           orderId: candidate.order_id,
         });
         if (inventory?.error || inventory?.ok === false) return null;
-        if (getShippingLabel && !normalizedItems(inventory).some((item) => itemMatchesCode(item, code))) {
+        const items = normalizedItems(inventory);
+        const matched = items.some((item) => itemMatchesCode(item, code));
+        // La etiqueta solo aporta tracking a los artículos que Falabella aún no trae con uno.
+        if (!matched && getShippingLabel && items.some((item) => !item.trackingCode)) {
           const label = await getShippingLabel({
             companyId: Number(candidate.company_id),
             orderId: candidate.order_id,
@@ -303,13 +335,15 @@ async function findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, co
             inventory = attachShippingLabelTrackingCodes(inventory, trackingCodes);
           }
         }
+        // Guardar el snapshot deja resueltos los siguientes escaneos sin llamar a Falabella.
         await saveFalabellaTicketSnapshot(db, {
           companyId: candidate.company_id,
           orderId: candidate.order_id,
           orderNumber: candidate.order_number,
         }, inventory);
         return { candidate, inventory, items: normalizedItems(inventory) };
-      } catch {
+      } catch (error) {
+        console.warn('[PICKING LABEL SEARCH]', candidate.order_id, error?.message || error);
         return null;
       }
     }));
@@ -420,16 +454,16 @@ export async function lookupPickingScan({ db, getOrderItems, getShippingLabel, i
   }
 
   if (!stored) {
-    const legacy = await findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, code });
-    if (legacy) {
-      stored = await orderRow(db, legacy.candidate.company_id, legacy.candidate.order_id);
-      inventory = legacy.inventory;
+    const labelMatch = await findTicketByLabelTracking({ db, getOrderItems, getShippingLabel, code });
+    if (labelMatch) {
+      stored = await orderRow(db, labelMatch.candidate.company_id, labelMatch.candidate.order_id);
+      inventory = labelMatch.inventory;
       matchType = 'tracking';
     }
   }
 
   if (!stored) {
-    const error = new Error(`No encontramos una etiqueta u orden asociada a ${code}.`);
+    const error = new Error(`No encontramos una etiqueta u orden asociada a ${code}. Prueba buscando el número de orden que aparece bajo el código de barras horizontal.`);
     error.status = 404;
     throw error;
   }
