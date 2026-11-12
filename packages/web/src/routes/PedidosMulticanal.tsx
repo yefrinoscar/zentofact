@@ -641,6 +641,13 @@ function paymentMethodLabel(order: ManagedOrder) {
   return PAYMENT_METHOD_LABELS[method] || '—';
 }
 
+/** Método de pago para la cabecera; en efectivo añade quién recibió el dinero. */
+function paymentMethodHint(order: ManagedOrder) {
+  const receivedBy = String(order.metadata?.receivedBy || '').trim();
+  const label = paymentMethodLabel(order);
+  return order.metadata?.paymentMethod === 'efectivo' && receivedBy ? `${label} · recibió ${receivedBy}` : label;
+}
+
 function fulfillmentTone(status: string): StatusTone {
   if (status === 'delivered') return 'success';
   if (status === 'ready_to_ship' || status === 'shipped') return 'info';
@@ -1760,7 +1767,7 @@ export default function PedidosMulticanal() {
                         label: 'Pago',
                         value: PAYMENT_LABELS[detail.paymentStatus] || 'Sin dato',
                         tone: paymentTone(detail.paymentStatus),
-                        hint: detail.channelCode === 'manual' && detail.metadata?.paymentMethod ? paymentMethodLabel(detail) : undefined,
+                        hint: detail.channelCode === 'manual' && detail.metadata?.paymentMethod ? paymentMethodHint(detail) : undefined,
                         onSelect: canRecordPayment(detail) ? () => setPaymentOrder(detail) : undefined,
                       },
                       {
