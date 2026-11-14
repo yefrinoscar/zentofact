@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { saveBase64File } from "../lib/download-file";
 import { Download, FileText, Loader2, RefreshCw } from "lucide-react";
 import api from "../lib/api";
 import { usePermissions } from "../hooks/usePermissions";
@@ -46,17 +47,11 @@ const STATUS_DOT: Record<string, string> = {
   REEMPLAZADO: "bg-muted-foreground/50",
 };
 function download(base64: string, filename: string, format: "pdf" | "xml") {
-  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const url = URL.createObjectURL(
-    new Blob([bytes], {
-      type: format === "pdf" ? "application/pdf" : "application/xml",
-    }),
+  return saveBase64File(
+    base64,
+    filename,
+    format === "pdf" ? "application/pdf" : "application/xml",
   );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export default function OrderDocumentPanel({
   order,

@@ -65,6 +65,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
 import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import { saveBase64File } from '../lib/download-file';
 import { canCancelManualOrder } from '../lib/manual-order-cancellation';
 import {
   canMarkLogisticsDelivered,
@@ -538,12 +539,7 @@ function svcResultIsSandbox(value: unknown) {
 
 function downloadPdf(base64: unknown, filename: string) {
   if (typeof base64 !== 'string' || !base64.trim()) throw new Error('Ripley no devolvió el PDF esperado.');
-  const link = document.createElement('a');
-  link.href = `data:application/pdf;base64,${base64}`;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  return saveBase64File(base64, filename, 'application/pdf');
 }
 
 function svcPdf(value: unknown, keys: string[]): string | null {
