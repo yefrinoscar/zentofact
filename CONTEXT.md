@@ -72,6 +72,10 @@ _Avoid_: stock aplicado, descontado
 Estado de entrega en el que el pedido ya está preparado y sale del almacén. Ahí se confirma la reserva: el stock del Producto deja de estar Reservado y se descuenta del almacén.
 _Avoid_: confirmed, pending
 
+**Descuento de stock**:
+Salida del Almacén que se registra cuando un Pedido pasa a Listo para enviar, enviado o entregado. Se aplica siempre: todo lo que se descontó estaba en stock, menos la devolución. Si el conteo no tenía esas unidades, primero se agregan con un ajuste de entrada de regularización ligado a la línea del Pedido, así el stock nunca queda negativo ni el pedido sin descontar. Solo la devolución o la cancelación reintegran las unidades.
+_Avoid_: sin stock, descuento pendiente por falta de stock
+
 **Movimiento de inventario**:
 Registro auditable de una entrada o salida del stock de un Producto. Si sale por un Pedido listo para enviar, queda ligado a ese pedido.
 _Avoid_: Bitácora, kardex

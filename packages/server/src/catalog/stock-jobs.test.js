@@ -12,6 +12,7 @@ import {
   listStockJobs,
   runStockReconciliation,
   reopenReservedStockJobsForCommit,
+  requeueShippedStockShortages,
   setPaused,
   reportStockIncident,
   retryJob,
@@ -635,14 +636,19 @@ test('el cron reconcilia pedidos elegibles sin depender del webhook', async () =
       return { orders: 2, enqueued: 2, already: 0 };
     },
     reopen: async () => ({ reopened: 1 }),
+    requeueShortages: async (input) => {
+      calls.push(input);
+      return { requeued: 3, enqueued: 0 };
+    },
     record: async (value) => { records.push(value); },
   });
 
-  assert.deepEqual(calls, [{ source: 'cron' }]);
+  assert.deepEqual(calls, [{ source: 'cron' }, { source: 'cron' }]);
   assert.deepEqual(result, {
     paused: false,
     listened: { orders: 2, enqueued: 2, already: 0 },
     reopened: { reopened: 1 },
+    shortages: { requeued: 3, enqueued: 0 },
   });
   assert.deepEqual(records, [result]);
 });
@@ -769,6 +775,119 @@ test('reabre un job done cuando la reserva debe confirmarse', async () => {
   assert.match(sql, /ready_to_ship/i);
   assert.match(sql, /job\.status='done'/i);
   assert.match(sql, /attempts=0/i);
+});
+
+// Evalúa en memoria las condiciones del SQL de requeueShippedStockShortages
+// para comprobar qué jobs vuelven a la cola con la regla "lo enviado siempre
+// descuenta".
+class ShortageDb {
+  constructor({ orders, jobs, items }) {
+    this.orders = orders;
+    this.jobs = jobs;
+    this.items = items;
+    this.sql = [];
+  }
+
+  eligible(order, since) {
+    return !['cancelled', 'failed'].includes(order.order_status)
+      && ['ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillment_status)
+      && order.items_status === 'complete'
+      && Date.parse(order.ordered_at) >= Date.parse(since)
+      && order.metadata?.stockIncident?.status !== 'reported'
+      && this.items.some((item) => item.order_id === order.id
+        && ['skipped_insufficient', 'pending'].includes(item.stock_state));
+  }
+
+  async query(sql, params = []) {
+    const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+    this.sql.push(compact);
+    if (compact.startsWith('update inventory_stock_jobs job')) {
+      const [since, max] = params;
+      const rows = [];
+      for (const job of this.jobs) {
+        const order = this.orders.find((row) => row.id === job.order_id);
+        if (!order || !this.eligible(order, since)) continue;
+        const exhausted = job.status === 'failed' || (job.status === 'pending' && job.attempts >= max);
+        const stockError = job.last_error == null || /stock disponible/i.test(job.last_error);
+        if (!(job.status === 'done' || (exhausted && stockError))) continue;
+        Object.assign(job, { status: 'pending', attempts: 0, last_error: null });
+        rows.push({ id: job.id });
+      }
+      return { rows };
+    }
+    if (compact.startsWith('select o.id as order_id')) {
+      const [since] = params;
+      return {
+        rows: this.orders
+          .filter((order) => this.eligible(order, since))
+          .filter((order) => !this.jobs.some((job) => job.order_id === order.id))
+          .map((order) => ({
+            order_id: order.id, company_id: 1, external_order_id: String(order.id), external_order_number: String(order.id),
+          })),
+      };
+    }
+    throw new Error(`Query no esperada: ${compact}`);
+  }
+}
+
+test('la conciliación reencola descuentos sin stock de pedidos enviados, no incidencias ni devoluciones', async () => {
+  const at = INVENTORY_LISTEN_FROM_AT;
+  const shortError = '1 línea sin stock disponible. Repón stock y reintenta.';
+  const order = (id, overrides = {}) => ({
+    id, order_status: 'confirmed', fulfillment_status: 'shipped', items_status: 'complete', ordered_at: at, metadata: {}, ...overrides,
+  });
+  const db = new ShortageDb({
+    orders: [
+      order(1),
+      order(2, { metadata: { stockIncident: { status: 'reported' } } }),
+      order(3, { fulfillment_status: 'returned' }),
+      order(4, { order_status: 'cancelled' }),
+      order(5, { fulfillment_status: 'pending' }),
+      order(6),
+      order(7, { ordered_at: new Date(Date.parse(at) - 1000).toISOString() }),
+      order(8),
+      order(9),
+      order(10),
+    ],
+    jobs: [
+      { id: 11, order_id: 1, status: 'failed', attempts: 3, last_error: shortError },
+      { id: 12, order_id: 2, status: 'warning', attempts: 3, last_error: null },
+      { id: 13, order_id: 3, status: 'failed', attempts: 3, last_error: shortError },
+      { id: 14, order_id: 4, status: 'failed', attempts: 3, last_error: shortError },
+      { id: 15, order_id: 5, status: 'failed', attempts: 3, last_error: shortError },
+      { id: 16, order_id: 6, status: 'failed', attempts: 3, last_error: 'timeout de base de datos' },
+      { id: 17, order_id: 7, status: 'failed', attempts: 3, last_error: shortError },
+      { id: 18, order_id: 8, status: 'done', attempts: 1, last_error: null },
+    ],
+    items: [1, 2, 3, 4, 5, 6, 7, 8, 10].map((id) => ({ order_id: id, stock_state: 'skipped_insufficient' }))
+      .concat([{ order_id: 9, stock_state: 'skipped_unmapped' }]),
+  });
+  const enqueued = [];
+  const result = await requeueShippedStockShortages({}, db, {
+    enqueue: async (input) => { enqueued.push(input); return { enqueued: true }; },
+  });
+
+  assert.equal(result.requeued, 2);
+  assert.deepEqual(
+    db.jobs.filter((job) => job.status === 'pending').map((job) => job.id),
+    [11, 18],
+  );
+  assert.equal(db.jobs.find((job) => job.id === 11).attempts, 0);
+  assert.equal(db.jobs.find((job) => job.id === 11).last_error, null);
+  assert.equal(db.jobs.find((job) => job.id === 12).status, 'warning');
+  assert.equal(db.jobs.find((job) => job.id === 13).status, 'failed');
+  assert.equal(db.jobs.find((job) => job.id === 16).status, 'failed');
+  // El pedido 10 no tenía job y se encola; el 9 solo tiene líneas sin producto
+  // maestro y sigue bloqueado.
+  assert.deepEqual(enqueued.map((input) => input.orderId), [10]);
+  assert.equal(enqueued[0].resetAttempts, true);
+  assert.equal(result.enqueued, 1);
+  const [updateSql] = db.sql;
+  assert.match(updateSql, /fulfillment_status in \('ready_to_ship','shipped','delivered'\)/);
+  assert.match(updateSql, /order_status not in \('cancelled','failed'\)/);
+  assert.match(updateSql, /stockincident/);
+  assert.doesNotMatch(updateSql, /'warning'/);
+  assert.doesNotMatch(updateSql, /skipped_unmapped/);
 });
 
 test('el listado de la cola filtra por estado y pagina en el servidor', async () => {

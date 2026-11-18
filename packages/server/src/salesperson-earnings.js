@@ -110,7 +110,7 @@ const ORDER_DATE_SQL = `(coalesce(o.ordered_at, o.created_at) at time zone 'Amer
 // partial = algunas líneas no la tienen y suman 0; percent = ninguna la tiene y se
 // usa el % del vendedor; missing = no hay ninguna comisión y el Pedido suma 0.
 // Una fila por Pedido vendido en soles dentro del periodo. `lines` cuenta las
-// líneas que SALESPERSON_COMMISSION_SQL sí suma (Producto enlazado con comisión).
+// líneas que SALESPERSON_COMMISSION_SQL sí suma (con comisión en la línea o en su Producto).
 function salesCte({ fromParam, toParam, userParam = null }) {
   return `
   salespeople as (${SALESPEOPLE_SQL}),
@@ -131,7 +131,7 @@ function salesCte({ fromParam, toParam, userParam = null }) {
     cross join lateral (
       select count(*)::int as lines_count,
         count(*) filter (
-          where p.id is not null and coalesce(oi.commission_amount, p.commission_amount) is not null
+          where coalesce(oi.commission_amount, p.commission_amount) is not null
         )::int as priced_lines,
         coalesce(sum(oi.quantity), 0)::numeric as units
       from order_items oi
@@ -306,8 +306,7 @@ export async function listSalespersonEarningSales(userId, input = {}, db) {
          'name', coalesce(nullif(trim(p.name), ''), nullif(trim(oi.description), '')),
          'sku', coalesce(nullif(trim(p.main_sku), ''), nullif(trim(oi.main_sku), ''), nullif(trim(oi.sku), '')),
          'quantity', oi.quantity,
-         'unitCommission', case when p.id is null then null
-           else coalesce(oi.commission_amount, p.commission_amount) end
+         'unitCommission', coalesce(oi.commission_amount, p.commission_amount)
        ) order by oi.id), '[]'::json) as items
        from order_items oi
        left join products p on p.id = oi.product_id

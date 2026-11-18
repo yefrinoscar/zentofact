@@ -132,3 +132,31 @@ test('el detalle exige un usuario vendedor y devuelve la regla de cada pedido', 
   assert.equal(result.sales[0].linesWithoutCommission, 1);
   assert.equal(result.sales[0].items[1].unitCommission, null);
 });
+
+test('la regla y la comisión por línea no exigen Producto enlazado', async () => {
+  const calls = [];
+  const db = {
+    query: async (sql, params) => {
+      calls.push(compact(sql));
+      if (calls.length === 1) return { rows: [{ id: 'u1', name: 'Ana', email: null, active: true, commission_percent: '0' }] };
+      return {
+        rows: [{
+          id: '8', sold_at: '2026-10-12T15:00:00Z', total: '50', commission: '12', commission_rule: 'catalog',
+          lines_count: 1, priced_lines: 1, units: '2',
+          items: [{ name: 'Servicio', sku: null, quantity: 2, unitCommission: 6 }], total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listSalespersonEarningSales('u1', { from: '2026-10-01', to: '2026-10-31' }, db);
+  const sql = calls[1];
+  assert.equal(sql.includes('p.id is not null'), false);
+  assert.equal(sql.includes('from order_items oi join products'), false);
+  assert.ok(sql.includes('from order_items oi left join products p on p.id=oi.product_id'));
+  assert.ok(sql.includes('where coalesce(oi.commission_amount, p.commission_amount) is not null'));
+  assert.ok(sql.includes("'unitcommission', coalesce(oi.commission_amount, p.commission_amount)"));
+  assert.equal(sql.includes('case when p.id is null'), false);
+  assert.equal(result.sales[0].commissionRule, 'catalog');
+  assert.equal(result.sales[0].linesWithoutCommission, 0);
+  assert.equal(result.sales[0].items[0].unitCommission, 6);
+});

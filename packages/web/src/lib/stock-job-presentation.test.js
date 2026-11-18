@@ -29,6 +29,26 @@ test('la incidencia reportada es warning y conserva las unidades sin stock sin m
   assert.equal(visibleStockJobStatus({ ...job, order_status: 'cancelled' }), 'cancelled');
 });
 
+test('un pedido enviado nunca aparece sin stock: se agrega el stock faltante y se descuenta', () => {
+  const job = {
+    status: 'done', ordered_at: LISTEN_FROM, insufficient_items: 1,
+    order_status: 'confirmed', fulfillment_status: 'shipped',
+  };
+  assert.equal(visibleStockJobStatus(job, LISTEN_FROM), 'pending');
+  assert.equal(stockJobDetail(job, LISTEN_FROM), 'Se agrega el stock faltante y se descuenta');
+  assert.equal(
+    stockItemReason({ stockState: 'skipped_insufficient', productId: 5 }, { fulfillmentStatus: 'delivered' }),
+    'Se agrega el stock faltante y se descuenta.',
+  );
+  const reserving = { ...job, fulfillment_status: 'pending' };
+  assert.equal(visibleStockJobStatus(reserving, LISTEN_FROM), 'insufficient');
+  assert.equal(stockJobDetail(reserving, LISTEN_FROM), '1 línea sin stock disponible');
+  assert.equal(
+    stockItemReason({ stockState: 'skipped_insufficient', productId: 5 }, { fulfillmentStatus: 'pending' }),
+    'El producto maestro no tiene stock disponible.',
+  );
+});
+
 test('una venta anterior al corte no aparece como descontada', () => {
   const job = {
     status: 'done',
