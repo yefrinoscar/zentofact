@@ -13,6 +13,7 @@ import {
   summarizeOrders,
   updateManualOrder,
   updateOrderPayment,
+  SALESPERSON_COMMISSION_SQL,
 } from './order-management.js';
 import {
   alignFalabellaHeaderWithClosedFulfillment,
@@ -1581,4 +1582,12 @@ test('el efectivo exige un receptor antes de registrar la venta o el pago', asyn
       /Escribe el nombre de quien recibió el efectivo/,
     );
   }
+});
+
+test('la comisión del vendedor cuenta las líneas sin Producto enlazado', () => {
+  const sql = SALESPERSON_COMMISSION_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /sum\(coalesce\(oi\.commission_amount, p\.commission_amount\) \* oi\.quantity\)/);
+  assert.match(sql, /from order_items oi left join products p on p\.id=oi\.product_id/);
+  assert.doesNotMatch(sql, /from order_items oi join products/);
+  assert.match(sql, /u\.commission_percent/);
 });

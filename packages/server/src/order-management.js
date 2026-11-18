@@ -940,10 +940,13 @@ export async function ingestOrder(input, db) {
   }
 }
 
-/** Comisión de un Pedido de vendedor: la de cada línea (o la del catálogo) por unidad; si ninguna línea la tiene, el % del vendedor. */
+/**
+ * Comisión de un Pedido de vendedor: la de cada línea (corregida en la línea o, si no, la del
+ * catálogo) por unidad, tenga o no Producto enlazado; si ninguna línea la tiene, el % del vendedor.
+ */
 export const SALESPERSON_COMMISSION_SQL = `coalesce(
     (select sum(coalesce(oi.commission_amount, p.commission_amount) * oi.quantity)
-     from order_items oi join products p on p.id=oi.product_id
+     from order_items oi left join products p on p.id=oi.product_id
    where oi.order_id=o.id),
   round(coalesce(o.total, 0) * coalesce(
     (select u.commission_percent from "user" u where u.id=o.created_by), 0
