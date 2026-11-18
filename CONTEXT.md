@@ -73,7 +73,7 @@ Estado de entrega en el que el pedido ya está preparado y sale del almacén. Ah
 _Avoid_: confirmed, pending
 
 **Descuento de stock**:
-Salida del Almacén que se registra cuando un Pedido pasa a Listo para enviar, enviado o entregado. Se aplica siempre: todo lo que se descontó estaba en stock, menos la devolución. Si el conteo no tenía esas unidades, primero se agregan con un ajuste de entrada de regularización ligado a la línea del Pedido, así el stock nunca queda negativo ni el pedido sin descontar. Solo la devolución o la cancelación reintegran las unidades.
+Salida del Almacén que se registra cuando un Pedido pasa a Listo para enviar, enviado o entregado. Se aplica siempre: todo lo que se descontó estaba en stock, menos la devolución. Si el conteo no tenía esas unidades, primero se agregan con un ajuste de entrada de regularización ligado a la línea del Pedido, así el stock nunca queda negativo ni el pedido sin descontar. Lo mismo aplica al reservar un Pedido de canal: nunca queda "sin stock". Solo la devolución o la cancelación reintegran las unidades.
 _Avoid_: sin stock, descuento pendiente por falta de stock
 
 **Movimiento de inventario**:

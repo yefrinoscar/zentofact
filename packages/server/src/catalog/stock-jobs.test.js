@@ -790,12 +790,14 @@ class ShortageDb {
 
   eligible(order, since) {
     return !['cancelled', 'failed'].includes(order.order_status)
-      && ['ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillment_status)
+      && !['cancelled', 'returned', 'failed'].includes(order.fulfillment_status)
       && order.items_status === 'complete'
       && Date.parse(order.ordered_at) >= Date.parse(since)
       && order.metadata?.stockIncident?.status !== 'reported'
       && this.items.some((item) => item.order_id === order.id
-        && ['skipped_insufficient', 'pending'].includes(item.stock_state));
+        && (item.stock_state === 'skipped_insufficient'
+          || (item.stock_state === 'pending'
+            && ['ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillment_status))));
   }
 
   async query(sql, params = []) {
@@ -830,7 +832,7 @@ class ShortageDb {
   }
 }
 
-test('la conciliación reencola descuentos sin stock de pedidos enviados, no incidencias ni devoluciones', async () => {
+test('la conciliación reencola descuentos sin stock de pedidos activos, no incidencias ni devoluciones', async () => {
   const at = INVENTORY_LISTEN_FROM_AT;
   const shortError = '1 línea sin stock disponible. Repón stock y reintenta.';
   const order = (id, overrides = {}) => ({
@@ -867,10 +869,10 @@ test('la conciliación reencola descuentos sin stock de pedidos enviados, no inc
     enqueue: async (input) => { enqueued.push(input); return { enqueued: true }; },
   });
 
-  assert.equal(result.requeued, 2);
+  assert.equal(result.requeued, 3);
   assert.deepEqual(
     db.jobs.filter((job) => job.status === 'pending').map((job) => job.id),
-    [11, 18],
+    [11, 15, 18],
   );
   assert.equal(db.jobs.find((job) => job.id === 11).attempts, 0);
   assert.equal(db.jobs.find((job) => job.id === 11).last_error, null);

@@ -1006,14 +1006,17 @@ export async function requeueShippedStockShortages(input = {}, db, dependencies 
   const client = await target(db);
   const eligibleOrderSql = `
        o.order_status not in ('cancelled','failed')
-       and o.fulfillment_status in (${READY_FULFILLMENT_SQL})
+       and o.fulfillment_status not in ('cancelled','returned','failed')
        and o.items_status='complete'
        and o.ordered_at >= $1::timestamptz
        and coalesce(o.metadata->'stockIncident'->>'status', '') <> 'reported'
        and exists (
          select 1 from order_items oi
          where oi.order_id=o.id
-           and oi.stock_state in ('skipped_insufficient','pending')
+           and (
+             oi.stock_state='skipped_insufficient'
+             or (oi.stock_state='pending' and o.fulfillment_status in (${READY_FULFILLMENT_SQL}))
+           )
        )`;
   const requeued = await client.query(
     `update inventory_stock_jobs job
