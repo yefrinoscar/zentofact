@@ -121,15 +121,20 @@ function movementReason(orderNumber) {
 // Antes de descontar un Pedido que ya salió del Almacén, completa con un
 // ajuste de entrada las unidades que el conteo no tenía. Así el descuento
 // nunca deja el stock negativo y la regularización queda auditada.
-async function regularizeShortage(db, item, units, input, revision) {
+async function regularizeShortage(db, item, units, input, revision, mode = 'commit') {
   const { context, source, orderId } = input;
   if (!(units > 0)) return;
   const row = (await db.query(
-    'select quantity_on_hand, quantity_reserved from product_inventory where product_id=$1',
+    'select quantity_on_hand, quantity_reserved, quantity_pending_return from product_inventory where product_id=$1',
     [item.product_id],
   )).rows[0];
   const onHand = Number(row?.quantity_on_hand ?? 0);
-  const missing = units - onHand;
+  // Al reservar cuenta lo disponible (sin lo ya reservado ni lo pendiente de
+  // devolución); al confirmar, lo que hay físicamente en el Almacén.
+  const basis = mode === 'reserve'
+    ? onHand - Number(row?.quantity_reserved ?? 0) - Number(row?.quantity_pending_return ?? 0)
+    : onHand;
+  const missing = units - basis;
   if (!(missing > 0)) return;
   await applyInventoryMovement(db, {
     productId: item.product_id,
@@ -138,7 +143,9 @@ async function regularizeShortage(db, item, units, input, revision) {
     reason: context.orderNumber
       ? `Regularización: salió del almacén con el Pedido ${context.orderNumber}`
       : 'Regularización: salió del almacén con un Pedido',
-    idempotencyKey: `regularize:order_item:${item.id}:rev:${revision}`,
+    idempotencyKey: mode === 'reserve'
+      ? `regularize_reserve:order_item:${item.id}:qty:${revision}`
+      : `regularize:order_item:${item.id}:rev:${revision}`,
     allowNegative: true,
     orderId,
     orderItemId: item.id,
@@ -280,6 +287,11 @@ async function reserveItem(db, item, input) {
   if (already === quantity && item.stock_state === 'pending') return;
   const deltaUnits = quantity - already;
   if (deltaUnits === 0) return;
+  // Un Pedido de canal ya es una venta real: si el conteo no alcanza, se
+  // agrega el faltante antes de reservar, igual que al confirmar.
+  if (isMarketplace && deltaUnits > 0) {
+    await regularizeShortage(db, item, deltaUnits, input, quantity, 'reserve');
+  }
   try {
     await applyInventoryReservation(db, {
       productId: item.product_id,

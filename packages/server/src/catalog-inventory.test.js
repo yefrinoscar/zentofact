@@ -711,7 +711,7 @@ test('cancelar un pedido reservado suelta la reserva sin movimiento de almacén'
   assert.equal(db.items.get(101).stock_state, 'reversed');
 });
 
-test('reservar más que el disponible marketplace marca la línea y no toca el almacén', async () => {
+test('reservar más que el disponible marketplace agrega solo el faltante y reserva', async () => {
   const db = new InventoryDb(1);
   db.listings.push(listing({ quantity_on_hand: 1 }));
   db.items.set(101, item());
@@ -721,10 +721,12 @@ test('reservar más que el disponible marketplace marca la línea y no toca el a
       ordered_at: '2026-09-04T18:00:00.000Z',
     },
   }));
-  assert.equal(result.skipped, 1);
-  assert.equal(db.quantity, 1);
-  assert.equal(db.reserved, 0);
-  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
+  assert.equal(result.skipped, 0);
+  assert.equal(result.reserved, 1);
+  assert.equal(db.quantity, 2);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.movements.get('regularize_reserve:order_item:101:qty:2').quantity_delta, 1);
+  assert.equal(db.items.get(101).stock_state, 'pending');
 });
 
 test('applyInventoryReservation baja el disponible y no el almacén', async () => {
@@ -921,20 +923,25 @@ test('confirmar una reserva sin stock suficiente descuenta y no la deja pendient
   assert.equal(db.items.get(101).stock_applied_quantity, 3);
 });
 
-test('reservar sin stock en marketplace sigue marcando la línea sin descontar', async () => {
+test('reservar sin stock en marketplace agrega el stock y nunca queda sin stock', async () => {
   const db = new InventoryDb(0);
   db.listings.push(listing({ quantity_on_hand: 0 }));
   db.items.set(101, item());
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: { fulfillment_status: 'pending' },
   }));
-  assert.equal(result.skipped, 1);
-  assert.equal(result.insufficient, 1);
+  assert.equal(result.insufficient, 0);
+  assert.equal(db.quantity, 2);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.items.get(101).stock_state, 'pending');
+  // Al pasar a listo para enviar descuenta sin otro ajuste.
+  const shipped = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(shipped.committed, 1);
   assert.equal(db.quantity, 0);
   assert.equal(db.reserved, 0);
-  assert.equal(db.movements.size, 0);
-  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
-  assert.equal(db.items.get(101).stock_applied_quantity, 0);
+  assert.equal(db.movements.has('regularize:order_item:101:rev:1'), false);
 });
 
 test('cancelación y devolución revierten cantidades aplicadas una sola vez', async () => {
