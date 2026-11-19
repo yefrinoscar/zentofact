@@ -788,13 +788,20 @@ class ShortageDb {
     this.sql = [];
   }
 
-  eligible(order, since) {
+  active(order, since) {
     return !['cancelled', 'failed'].includes(order.order_status)
       && !['cancelled', 'returned', 'failed'].includes(order.fulfillment_status)
       && order.items_status === 'complete'
       && Date.parse(order.ordered_at) >= Date.parse(since)
-      && order.metadata?.stockIncident?.status !== 'reported'
-      && this.items.some((item) => item.order_id === order.id
+      && order.metadata?.stockIncident?.status !== 'reported';
+  }
+
+  eligible(order, since) {
+    return this.active(order, since) && this.shortageLine(order);
+  }
+
+  shortageLine(order) {
+    return this.items.some((item) => item.order_id === order.id
         && (item.stock_state === 'skipped_insufficient'
           || (item.stock_state === 'pending'
             && ['ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillment_status))));
@@ -808,10 +815,15 @@ class ShortageDb {
       const rows = [];
       for (const job of this.jobs) {
         const order = this.orders.find((row) => row.id === job.order_id);
-        if (!order || !this.eligible(order, since)) continue;
+        if (!order || !this.active(order, since)) continue;
         const exhausted = job.status === 'failed' || (job.status === 'pending' && job.attempts >= max);
         const stockError = job.last_error == null || /stock disponible/i.test(job.last_error);
-        if (!(job.status === 'done' || (exhausted && stockError))) continue;
+        const unmapped = Number(job.result?.unmapped || 0) > 0;
+        const insufficient = Number(job.result?.insufficient || 0) > 0;
+        const done = job.status === 'done' && this.shortageLine(order);
+        const blocked = exhausted && !unmapped
+          && (insufficient || (stockError && this.shortageLine(order)));
+        if (!(done || blocked)) continue;
         Object.assign(job, { status: 'pending', attempts: 0, last_error: null });
         rows.push({ id: job.id });
       }
@@ -890,6 +902,33 @@ test('la conciliación reencola descuentos sin stock de pedidos activos, no inci
   assert.match(updateSql, /stockincident/);
   assert.doesNotMatch(updateSql, /'warning'/);
   assert.doesNotMatch(updateSql, /skipped_unmapped/);
+});
+
+test('la conciliación reencola un fallo por stock aunque la línea siga histórica, pero no uno sin producto maestro', async () => {
+  const at = INVENTORY_LISTEN_FROM_AT;
+  const order = (id) => ({
+    id, order_status: 'confirmed', fulfillment_status: 'pending', items_status: 'complete', ordered_at: at, metadata: {},
+  });
+  const shortError = '1 línea sin stock disponible. Repón stock y reintenta.';
+  const db = new ShortageDb({
+    orders: [order(1), order(2), order(3)],
+    jobs: [
+      { id: 11, order_id: 1, status: 'failed', attempts: 3, last_error: shortError, result: { insufficient: 1 } },
+      { id: 12, order_id: 2, status: 'failed', attempts: 3, last_error: 'timeout de procesamiento', result: { insufficient: 1 } },
+      { id: 13, order_id: 3, status: 'failed', attempts: 3, last_error: '1 línea sin producto maestro.', result: { unmapped: 1, insufficient: 1 } },
+    ],
+    items: [
+      { order_id: 1, stock_state: 'skipped_policy' },
+      { order_id: 2, stock_state: 'none' },
+      { order_id: 3, stock_state: 'skipped_unmapped' },
+    ],
+  });
+  const result = await requeueShippedStockShortages({}, db, { enqueue: async () => ({ enqueued: false }) });
+  assert.equal(result.requeued, 2);
+  assert.deepEqual(db.jobs.filter((job) => job.status === 'pending').map((job) => job.id), [11, 12]);
+  assert.equal(db.jobs.find((job) => job.id === 13).status, 'failed');
+  assert.match(db.sql[0], /result->>'insufficient'/);
+  assert.match(db.sql[0], /result->>'unmapped'/);
 });
 
 test('el listado de la cola filtra por estado y pagina en el servidor', async () => {

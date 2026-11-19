@@ -309,7 +309,9 @@ async function reserveItem(db, item, input) {
     stats.reserved += 1;
   } catch (error) {
     if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
-    if (item.stock_state === 'none') {
+    // Una línea histórica (skipped_policy) que falla por stock también queda
+    // marcada: así la conciliación la reconoce como faltante y la reintenta.
+    if (item.stock_state === 'none' || item.stock_state === 'skipped_policy') {
       await writeResolution(db, item, {
         productId: item.product_id,
         listingId: item.listing_id,
