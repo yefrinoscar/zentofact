@@ -998,19 +998,21 @@ export async function reopenReservedStockJobsForCommit(db) {
 // ya salió del Almacén siempre descuenta: primero se agrega el stock faltante. Las
 // líneas que quedaron sin descontar con la regla anterior (skipped_insufficient
 // o reservas atascadas) vuelven a la cola para que el worker las confirme.
-// No toca incidencias reportadas (warning), devoluciones ni cancelaciones, ni
-// líneas sin producto maestro (skipped_unmapped).
+// Un job fallido por falta de stock también vuelve aunque su línea siga en
+// none/skipped_policy: la señal es result.insufficient, la misma que usa el
+// aviso. No toca incidencias reportadas (warning), devoluciones ni
+// cancelaciones, ni jobs bloqueados por líneas sin producto maestro.
 export async function requeueShippedStockShortages(input = {}, db, dependencies = {}) {
   const since = input.since || INVENTORY_LISTEN_FROM_AT;
   const enqueue = dependencies.enqueue || enqueueStockJob;
   const client = await target(db);
-  const eligibleOrderSql = `
+  const activeOrderSql = `
        o.order_status not in ('cancelled','failed')
        and o.fulfillment_status not in ('cancelled','returned','failed')
        and o.items_status='complete'
        and o.ordered_at >= $1::timestamptz
-       and coalesce(o.metadata->'stockIncident'->>'status', '') <> 'reported'
-       and exists (
+       and coalesce(o.metadata->'stockIncident'->>'status', '') <> 'reported'`;
+  const shortageLineSql = `exists (
          select 1 from order_items oi
          where oi.order_id=o.id
            and (
@@ -1018,22 +1020,32 @@ export async function requeueShippedStockShortages(input = {}, db, dependencies 
              or (oi.stock_state='pending' and o.fulfillment_status in (${READY_FULFILLMENT_SQL}))
            )
        )`;
+  const eligibleOrderSql = `${activeOrderSql}
+       and ${shortageLineSql}`;
   const requeued = await client.query(
     `update inventory_stock_jobs job
         set status='pending', attempts=0, last_error=null,
             next_attempt_at=null, updated_at=now()
        from orders o
       where job.order_id=o.id
+        and ${activeOrderSql}
         and (
-          job.status='done'
+          (job.status='done' and ${shortageLineSql})
           or (
             (job.status='failed' or (job.status='pending' and job.attempts >= $2))
-            -- Solo reintenta fallos por falta de stock; un error distinto no
-            -- se resuelve con la regla y entraría en un bucle de reintentos.
-            and (job.last_error is null or job.last_error ilike '%stock disponible%')
+            -- Solo reintenta fallos por falta de stock; un error distinto o una
+            -- línea sin producto maestro no se resuelve con la regla y entraría
+            -- en un bucle de reintentos.
+            and coalesce((job.result->>'unmapped')::int, 0) = 0
+            and (
+              coalesce((job.result->>'insufficient')::int, 0) > 0
+              or (
+                (job.last_error is null or job.last_error ilike '%stock disponible%')
+                and ${shortageLineSql}
+              )
+            )
           )
         )
-        and ${eligibleOrderSql}
       returning job.id`,
     [since, MAX_ATTEMPTS],
   );
