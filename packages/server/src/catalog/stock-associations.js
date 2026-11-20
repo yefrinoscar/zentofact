@@ -2,6 +2,7 @@ import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import { enqueueStockJob } from './stock-jobs.js';
 import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { upsertListing } from './listing-service.js';
+import { detectOrderItemVariant } from './order-item-variant.js';
 import { httpError, inTransaction, loadCore, positiveInt } from './utils.js';
 
 async function target(db) {
@@ -13,6 +14,12 @@ function normalized(value) {
 }
 
 function mapUnmatched(row) {
+  const variant = detectOrderItemVariant({
+    raw: row.variant_raw || [],
+    cached: row.cached_size || row.cached_color ? { color: row.cached_color, size: row.cached_size } : null,
+    listingMetadata: row.listing_size || row.listing_color ? { color: row.listing_color, size: row.listing_size } : null,
+    title: row.title,
+  });
   return {
     orderItemId: Number(row.order_item_id),
     companyId: Number(row.company_id),
@@ -26,6 +33,10 @@ function mapUnmatched(row) {
     lineCount: Number(row.line_count || 0),
     quantity: Number(row.quantity || 0),
     orderNumbers: row.order_numbers || [],
+    color: variant.color || null,
+    size: variant.size || null,
+    variantLabel: variant.label || null,
+    sizeSource: variant.source || null,
   };
 }
 
@@ -53,6 +64,12 @@ export async function listUnmatchedStockItems(db) {
                 || coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) || '_01'
               end
             )) as image_url,
+            (array_agg(oi.raw_data order by oi.id desc)
+              filter (where oi.raw_data is not null))[1:3] as variant_raw,
+            max(nullif(trim(cached_variant.size), '')) as cached_size,
+            max(nullif(trim(cached_variant.color), '')) as cached_color,
+            max(nullif(trim(listing.metadata->>'size'), '')) as listing_size,
+            max(nullif(trim(listing.metadata->>'color'), '')) as listing_color,
             count(*)::int as line_count,
             coalesce(sum(oi.quantity), 0) as quantity,
             array_agg(distinct o.external_order_number order by o.external_order_number) as order_numbers
@@ -64,6 +81,17 @@ export async function listUnmatchedStockItems(db) {
        left join product_listings listing on listing.id=oi.listing_id
        left join products psku
          on psku.main_sku = coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''))
+       left join lateral (
+         select variant.color, variant.size
+           from falabella_product_variants variant
+          where channel.code='falabella'
+            and variant.company_id=o.company_id
+            and (variant.seller_sku=nullif(trim(oi.sku), '')
+              or variant.shop_sku=nullif(trim(oi.provider_sku), ''))
+            and (variant.size <> '' or variant.color <> '')
+          order by variant.updated_at desc
+          limit 1
+       ) cached_variant on true
       where oi.product_id is null
         and o.order_status not in ('cancelled','failed')
         and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
