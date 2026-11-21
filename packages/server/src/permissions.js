@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'return_stock_approve', label: 'Aprobar devoluciones', description: 'Revisar devoluciones y pasarlas al stock vendible', path: '/cancelados', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
+  { key: 'carros', label: 'Carros', description: 'Ver los vehículos y registrar mantenimientos, cambios de aceite y gastos', path: '/carros', section: 'operation' },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/bandeja', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'orders' },
@@ -367,6 +368,7 @@ export function pathPermission(pathname) {
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella_sellers';
   if (pathname.startsWith('/productos')) return 'productos';
   if (pathname.startsWith('/insumos')) return 'insumos';
+  if (pathname.startsWith('/carros') || pathname.startsWith('/cars')) return 'carros';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';
   if (pathname.startsWith('/credit-notes/bulk')) return 'credit_notes_bulk';
   if (pathname.startsWith('/credit-notes')) return 'credit_notes_manage';

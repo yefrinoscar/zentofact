@@ -24,6 +24,7 @@ export const PROTECTED_PATHS = [
   '/users',
   '/me',
   '/insumos',
+  '/cars',
   '/notifications',
 ];
 

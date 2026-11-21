@@ -8,6 +8,14 @@ Operación de catálogo, pedidos, comprobantes e inventario de una bodega multi-
 Material de empaque que se consume al operar: fill grande, fill pequeño o cinta scotch. Tiene cantidad propia y no se vende.
 _Avoid_: Producto, SKU, listing, stock de catálogo
 
+**Carro**:
+Vehículo propio del negocio, como el Suzuki Grand Vitara 3 puertas. Guarda su kilometraje actual y cada cuántos kilómetros toca cambiar el aceite. No se vende ni pertenece a un Seller. Incluye la ficha técnica de la TIVE de SUNARP: motor, combustible, cilindrada, potencia, tracción, carrocería, asientos, placa anterior y categoría.
+_Avoid_: Vehículo de envío propio, flota de reparto
+
+**Gasto de carro**:
+Registro de un Carro en una fecha: kilometraje, combustible, gas natural, llantas, refrigerante, aceite, frenos u otro. El registro de kilometraje es una lectura del odómetro: exige el kilometraje y su monto puede ser 0. Las demás categorías exigen monto y pueden anotar el kilometraje y el próximo servicio.
+_Avoid_: Insumo, pago de Falabella
+
 **Producto**:
 Artículo vendible del catálogo canónico, identificado por SKU interno.
 _Avoid_: Insumo

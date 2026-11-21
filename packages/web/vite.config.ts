@@ -20,6 +20,7 @@ const apiPrefixes = [
   '/catalog',
   '/users',
   '/insumos',
+  '/cars',
   '/notifications',
   '/companies',
   '/branches',

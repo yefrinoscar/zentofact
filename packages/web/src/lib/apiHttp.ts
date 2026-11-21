@@ -13,6 +13,15 @@ import type {
   BuyerUnreadCounts,
 } from './buyer-messages';
 import type {
+  Car,
+  CarExpense,
+  CarExpenseFilter,
+  CarExpenseInput,
+  CarExpensesResponse,
+  CarInput,
+  CarsResponse,
+} from './carros-presentation';
+import type {
   EarningsSortBy,
   EarningsSortDir,
   SalespersonEarningSalesResponse,
@@ -740,6 +749,16 @@ const apiHttp = {
     method: 'PUT',
     body: JSON.stringify({ emails }),
   }),
+
+  // Carros
+  listCars: (filter: { status?: 'active' | 'archived' | 'all' } = {}) => req<CarsResponse>(`/cars${qs(filter)}`),
+  getCar: (id: number) => req<Car>(`/cars/${id}`),
+  createCar: (data: CarInput) => req<Car>('/cars', { method: 'POST', body: JSON.stringify(data) }),
+  updateCar: (id: number, data: Partial<CarInput>) => req<Car>(`/cars/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  listCarExpenses: (carId: number, filter: CarExpenseFilter = {}) => req<CarExpensesResponse>(`/cars/${carId}/expenses${qs(filter)}`),
+  createCarExpense: (carId: number, data: CarExpenseInput) => req<CarExpense>(`/cars/${carId}/expenses`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCarExpense: (carId: number, expenseId: number, data: Partial<CarExpenseInput>) => req<CarExpense>(`/cars/${carId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteCarExpense: (carId: number, expenseId: number) => req<{ ok: true }>(`/cars/${carId}/expenses/${expenseId}`, { method: 'DELETE' }),
 
   // Empresas
   listCompanies: () => req('/companies'),

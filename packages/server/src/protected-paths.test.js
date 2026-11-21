@@ -17,6 +17,11 @@ test('insumos exige sesión para lectura y ajustes', () => {
   assert.equal(isProtectedPath('/insumos/3/adjust'), true);
 });
 
+test('carros exige sesión para vehículos y gastos', () => {
+  assert.equal(isProtectedPath('/cars'), true);
+  assert.equal(isProtectedPath('/cars/1/expenses/7'), true);
+});
+
 test('los avisos operativos exigen sesión', () => {
   assert.equal(isProtectedPath('/notifications'), true);
   assert.equal(isProtectedPath('/notifications/read'), true);

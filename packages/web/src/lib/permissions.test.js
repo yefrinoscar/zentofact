@@ -41,6 +41,16 @@ test('insumos pertenece a Pedidos junto a preparación y escaneo', () => {
   assert.equal(pathPermission('/insumos'), 'insumos');
 });
 
+test('carros es un módulo de Operación con su propio permiso', () => {
+  const carros = PERMISSIONS.find(({ key }) => key === 'carros');
+  assert.equal(carros?.label, 'Carros');
+  assert.equal(carros?.path, '/carros');
+  assert.equal(carros?.section, 'operation');
+  assert.equal(pathPermission('/carros'), 'carros');
+  assert.ok(ROLE_PRESETS.admin.permissions.includes('carros'));
+  assert.equal(ROLE_PRESETS.operator.permissions.includes('carros'), false);
+});
+
 test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () => {
   const salespersonIndex = PERMISSIONS.findIndex(({ key }) => key === 'salesperson');
   const ordersIndex = PERMISSIONS.findIndex(({ key }) => key === 'order_management');
