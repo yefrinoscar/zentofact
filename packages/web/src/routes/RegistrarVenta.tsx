@@ -49,6 +49,7 @@ import {
 } from '../lib/mis-ventas-presentation';
 import { readPaymentProof } from '../lib/payment-proof';
 import { isSellerPricedShipping, type ShippingCarrier } from '../lib/shipping-carrier';
+import { DINSIDES_CARRIER, dinsidesAmountInput, quoteDinsidesShipping } from '../lib/dinsides-coverage';
 import type { MapPlace } from '../components/PlacePicker';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
@@ -93,6 +94,8 @@ export default function RegistrarVenta() {
   const [deliveryDate, setDeliveryDate] = useState(limaTodayKey);
   const [shippingCarrier, setShippingCarrier] = useState<ShippingCarrier | ''>('');
   const [sellerShippingInput, setSellerShippingInput] = useState('');
+  /** Último precio que puso la tarifa de Dinsides. Si el vendedor lo cambió, ya no se pisa. */
+  const [autoShippingInput, setAutoShippingInput] = useState('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
   const [shippingNote, setShippingNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
@@ -157,6 +160,9 @@ export default function RegistrarVenta() {
   const sellerShippingAmount = parseSellerShippingAmount(sellerShippingInput);
   const shippingQuote = delivery === 'envio' && shippingCarrier === OWN_FLEET_CARRIER
     ? quoteOwnFleetShipping(dropoffPlace, fleetConfig)
+    : null;
+  const dinsidesQuote = delivery === 'envio' && shippingCarrier === DINSIDES_CARRIER
+    ? quoteDinsidesShipping(dropoffPlace)
     : null;
   const totals = saleTotals(
     saleLinesTotal(lines),
@@ -380,6 +386,15 @@ export default function RegistrarVenta() {
     showSnackbar({ message: `${salesperson.name} ya está disponible.`, tone: 'success' });
   };
 
+  /** Pone la tarifa de Dinsides mientras el vendedor no haya escrito otro precio. */
+  function syncDinsidesPrice(carrier: ShippingCarrier | '', place: MapPlace | null) {
+    if (sellerShippingInput !== '' && sellerShippingInput !== autoShippingInput) return;
+    const quote = carrier === DINSIDES_CARRIER ? quoteDinsidesShipping(place) : null;
+    const next = quote?.covered ? dinsidesAmountInput(quote.amount) : '';
+    setSellerShippingInput(next);
+    setAutoShippingInput(next);
+  }
+
   const view: SaleFormView = {
     isAdmin,
     orderDate,
@@ -441,6 +456,7 @@ export default function RegistrarVenta() {
     shippingCarrier,
     setShippingCarrier: (value) => {
       setShippingCarrier(value);
+      syncDinsidesPrice(value, dropoffPlace);
       setStepError('');
     },
     sellerShippingInput,
@@ -451,6 +467,14 @@ export default function RegistrarVenta() {
     dropoffPlace,
     setDropoffPlace: (place) => {
       setDropoffPlace(place);
+      syncDinsidesPrice(shippingCarrier, place);
+      setStepError('');
+    },
+    dinsidesQuote,
+    useDinsidesPrice: (amount) => {
+      const next = dinsidesAmountInput(amount);
+      setSellerShippingInput(next);
+      setAutoShippingInput(next);
       setStepError('');
     },
     shippingNote,

@@ -10,6 +10,7 @@ import {
   FileText,
   HandCoins,
   Inbox,
+  MapPinned,
   ListOrdered,
   PackageOpen,
   PackageSearch,
@@ -84,6 +85,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management', hidden: true },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
+      {
+        to: '/cobertura',
+        icon: MapPinned,
+        label: 'Cobertura',
+        alwaysVisible: true,
+        description: 'Cuánto cobra Dinsides por distrito. Visible para todos los usuarios.',
+      },
     ],
   },
   {
