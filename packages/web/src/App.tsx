@@ -10,6 +10,7 @@ import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
+import Carros from './routes/Carros';
 import Avisos from './routes/Avisos';
 import { NotificationBell } from './components/NotificationBell';
 import { OperationalAlertBanner } from './components/OperationalAlertBanner';
@@ -126,6 +127,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/insumos': {
     title: 'Insumos',
     subtitle: 'Cuánto comprar para la semana y el mes.',
+  },
+  '/carros': {
+    title: 'Carros',
+    subtitle: 'Mantenimientos, cambios de aceite y gastos.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -326,6 +331,7 @@ function AppLayout() {
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
               <Route path="/salidas" element={<Navigate to="/orders" replace />} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
+              <Route path="/carros" element={<RequirePermission permission="carros" {...permissionState}><Carros /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
               <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />
