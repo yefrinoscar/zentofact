@@ -9,6 +9,7 @@ import type {
 } from '../../lib/registrar-venta';
 import type { ShippingCarrier } from '../../lib/shipping-carrier';
 import type { MapPlace } from '../../components/PlacePicker';
+import type { DinsidesQuote } from '../../lib/dinsides-coverage';
 import type { OwnFleetOrigin, OwnFleetQuote } from '../../lib/own-fleet-shipping';
 import type { SaleTotals } from '../../lib/sale-summary';
 
@@ -56,6 +57,9 @@ export type SaleFormView = {
   setSellerShippingInput: (value: string) => void;
   dropoffPlace: MapPlace | null;
   setDropoffPlace: (place: MapPlace | null) => void;
+  /** Tarifa regular de Dinsides para la dirección. Solo con reparto Dinsides. */
+  dinsidesQuote: DinsidesQuote | null;
+  useDinsidesPrice: (amount: number) => void;
   shippingNote: string;
   setShippingNote: (value: string) => void;
   paymentMethod: PaymentMethod;

@@ -24,6 +24,7 @@ import PedidosMulticanal from './routes/PedidosMulticanal';
 import Cancelados from './routes/Cancelados';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
+import Cobertura from './routes/Cobertura';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
@@ -90,6 +91,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/mis-ventas': {
     title: 'Mis ventas',
     subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
+  },
+  '/cobertura': {
+    title: 'Cobertura',
+    subtitle: 'Cuánto cobra Dinsides por enviar a cada distrito de Lima y Callao.',
   },
   '/orders/nueva': {
     title: 'Nueva venta',
@@ -313,6 +318,7 @@ function AppLayout() {
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/cancelados" element={<RequirePermission permission="order_management" {...permissionState}><Cancelados /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
+              <Route path="/cobertura" element={<Cobertura />} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies/nueva" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
