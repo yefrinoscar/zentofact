@@ -63,9 +63,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/ventas', icon: BarChart3, label: 'Ventas', permission: 'dashboard' },
       { to: '/vendedores', icon: HandCoins, label: 'Vendedores', permission: 'dashboard' },
       { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
-      { to: '/carros', icon: Car, label: 'Carros', permission: 'carros' },
-      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
-      { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },
     ],
   },
   {
@@ -74,13 +71,13 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson', hideForSuperadmin: true },
       { to: '/catalogo', icon: Tags, label: 'Productos', permission: 'salesperson', hideForSuperadmin: true },
+      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       // Devoluciones vuelven solas al stock; se oculta hasta que el seguimiento
       // de devoluciones no recibidas o dañadas viva en Productos.
       { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management', hidden: true },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
-      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
       {
         to: '/cobertura',
         icon: MapPinned,
@@ -88,6 +85,15 @@ export const NAV_GROUPS: NavGroup[] = [
         alwaysVisible: true,
         description: 'Cuánto cobra Dinsides por distrito. Visible para todos los usuarios.',
       },
+      { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },
+    ],
+  },
+  {
+    id: 'logistics',
+    label: 'Logística',
+    items: [
+      { to: '/carros', icon: Car, label: 'Carros', permission: 'carros' },
+      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
   },
   {
