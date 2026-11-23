@@ -43,6 +43,7 @@ const GananciasVendedores = lazy(() => import('./routes/GananciasVendedores'));
 const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 const SystemConfig = lazy(() => import('./routes/SystemConfig'));
+const CatalogoVendedor = lazy(() => import('./routes/CatalogoVendedor'));
 
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
@@ -92,6 +93,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/mis-ventas': {
     title: 'Mis ventas',
     subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
+  },
+  '/catalogo': {
+    title: 'Catálogo',
+    subtitle: 'Stock, precio y lo que ganas por cada unidad.',
   },
   '/cobertura': {
     title: 'Cobertura',
@@ -323,6 +328,7 @@ function AppLayout() {
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/cancelados" element={<RequirePermission permission="order_management" {...permissionState}><Cancelados /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
+              <Route path="/catalogo" element={<RequirePermission permission="salesperson" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><CatalogoVendedor /></Suspense></RequirePermission>} />
               <Route path="/cobertura" element={<Cobertura />} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />

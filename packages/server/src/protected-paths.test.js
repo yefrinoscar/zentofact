@@ -59,6 +59,11 @@ test('el chat posventa de Mercado Libre exige sesión como la bandeja', () => {
   assert.equal(isProtectedPath('/mercado-libre/conversations/44/attachments'), true);
 });
 
+test('protege el catálogo del vendedor', () => {
+  assert.equal(isProtectedPath('/salesperson/products'), true);
+  assert.equal(isProtectedPath('/salesperson-public'), false);
+});
+
 test('no protege rutas públicas con prefijos parecidos', () => {
   assert.equal(isProtectedPath('/orders-inbox-public'), false);
   assert.equal(isProtectedPath('/health'), false);

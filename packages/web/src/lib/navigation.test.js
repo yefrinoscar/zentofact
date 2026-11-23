@@ -68,3 +68,12 @@ test('Cobertura se ve para cualquier usuario, sin permisos', () => {
   assert.equal(isNavItemVisible(cobertura, none, true, { isAdmin: true }), true);
   assert.equal(isNavItemVisible(cobertura, none, true, { isSuperadmin: true }), true);
 });
+
+test('Catálogo del vendedor se comporta como Mis ventas en el menú', () => {
+  const item = { to: '/catalogo', permission: 'salesperson', hideForSuperadmin: true };
+  assert.equal(isNavItemVisible(item, (key) => key === 'salesperson', false), true);
+  assert.equal(isNavItemVisible(item, (key) => key === 'order_management', false), false);
+  assert.equal(isNavItemVisible(item, () => true, false, { isSuperadmin: true }), false);
+  assert.equal(isNavItemActive('/catalogo', '/catalogo'), true);
+  assert.equal(isNavItemActive('/catalog', '/catalogo'), false);
+});
