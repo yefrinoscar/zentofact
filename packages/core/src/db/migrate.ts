@@ -1828,6 +1828,8 @@ const DDL = `
     CHECK (status IN ('pending', 'running', 'success', 'partial', 'error')),
     CHECK (sync_interval_minutes > 0)
   );
+  -- Who caused last_error: 'falabella' (marketplace outage/bad response) or 'zentofact'.
+  ALTER TABLE order_sync_state ADD COLUMN IF NOT EXISTS last_error_source TEXT;
 
   CREATE TABLE IF NOT EXISTS settlement_imports (
     id BIGSERIAL PRIMARY KEY,

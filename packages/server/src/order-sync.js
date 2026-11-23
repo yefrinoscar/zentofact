@@ -133,6 +133,20 @@ async function ensureState(db, accountId) {
   )).rows[0];
 }
 
+export function partialAccountSyncMessage(failed, lastError, summary = null) {
+  const split = summary?.falabellaFailed && summary?.zentofactFailed
+    ? ` (${summary.falabellaFailed} por Falabella, ${summary.zentofactFailed} por Zentofact)`
+    : '';
+  const base = `${failed} pedido(s) fallaron${split}; se reintentará la ventana.`;
+  return lastError ? `${base} Último error: ${String(lastError).slice(0, 1500)}` : base;
+}
+
+/** 'falabella' when the marketplace failed, 'zentofact' for our own errors, null when unknown. */
+export function errorSourceFor(error, channelCode) {
+  if (error?.details?.source) return String(error.details.source);
+  return channelCode === 'falabella' ? 'zentofact' : null;
+}
+
 function mapSyncStatus(row) {
   return {
     channelAccountId: Number(row.channel_account_id),
@@ -147,6 +161,7 @@ function mapSyncStatus(row) {
     lastFinishedAt: row.last_finished_at || null,
     lastSuccessfulSyncAt: row.last_successful_sync_at || null,
     lastError: row.last_error || null,
+    lastErrorSource: row.last_error ? row.last_error_source || null : null,
     pagesProcessed: Number(row.last_pages_processed || 0),
     ordersReceived: Number(row.last_orders_received || 0),
     ordersUpserted: Number(row.last_orders_upserted || 0),
@@ -195,7 +210,7 @@ export async function listOrderSyncStatuses(filters = {}, db) {
     `select a.id as channel_account_id, a.company_id, a.display_name, a.auto_create_orders,
        ch.code as channel_code, state.status, state.cursor_updated_at,
        state.last_attempt_at, state.last_started_at, state.last_finished_at,
-       state.last_successful_sync_at, state.last_error, state.last_log_id,
+       state.last_successful_sync_at, state.last_error, state.last_error_source, state.last_log_id,
        state.last_run_id, state.last_pages_processed, state.last_orders_received,
        state.last_orders_upserted, state.last_orders_failed, state.sync_interval_minutes
      from order_channel_accounts a
@@ -477,6 +492,9 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
       upserted: Number(result.upserted || 0),
       failed: Number(result.failed || 0),
       lastLogId: result.lastLogId || null,
+      lastError: result.lastError || null,
+      lastErrorSource: result.lastErrorSource || null,
+      failureSummary: result.failureSummary || null,
     };
   }
   throw new Error(`El canal ${account.channelCode} no admite sincronización de pedidos.`);
@@ -586,13 +604,15 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
        last_successful_sync_at=case when $2='success' then now() else last_successful_sync_at end,
        cursor_updated_at=case when $2='success' and $3='incremental' then $4::timestamptz else cursor_updated_at end,
        last_error=case when $2='partial' then $5 else null end,
+       last_error_source=case when $2='partial' then $11 else null end,
        last_log_id=$6, last_pages_processed=$7, last_orders_received=$8,
        last_orders_upserted=$9, last_orders_failed=$10, updated_at=now()
        where channel_account_id=$1`,
       [
         accountId, status, mode, window.to,
-        status === 'partial' ? `${stats.failed} pedido(s) fallaron; se reintentará la ventana.` : null,
+        status === 'partial' ? partialAccountSyncMessage(stats.failed, stats.lastError, stats.failureSummary) : null,
         stats.lastLogId, stats.pages, stats.received, stats.upserted, stats.failed,
+        stats.lastErrorSource || null,
       ],
     );
     return withAccount(account, {
@@ -600,6 +620,10 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       status,
       runId,
       logId: stats.lastLogId,
+      ...(status === 'partial' ? {
+        error: partialAccountSyncMessage(stats.failed, stats.lastError, stats.failureSummary),
+        errorSource: stats.lastErrorSource || null,
+      } : {}),
       pages: stats.pages,
       received: stats.received,
       upserted: stats.upserted,
@@ -615,6 +639,7 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
         channelAccountId: accountId,
         channelCode: account?.channelCode,
         runId,
+        source: errorSourceFor(error, account?.channelCode) || undefined,
       },
     });
     if (runId) {
@@ -625,9 +650,9 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
     }
     await db.query(
       `update order_sync_state set status='error', last_finished_at=now(), last_error=$2,
-       last_log_id=$3, last_run_id=coalesce($4,last_run_id), updated_at=now()
+       last_error_source=$5, last_log_id=$3, last_run_id=coalesce($4,last_run_id), updated_at=now()
        where channel_account_id=$1`,
-      [accountId, logged.error, logged.logId, runId],
+      [accountId, logged.error, logged.logId, runId, errorSourceFor(error, account?.channelCode)],
     ).catch(() => {});
     return withAccount(account, {
       channelAccountId: accountId,
@@ -635,6 +660,7 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       runId,
       logId: logged.logId,
       error: logged.error,
+      errorSource: errorSourceFor(error, account?.channelCode),
     });
   } finally {
     if (locked) await db.query('select pg_advisory_unlock($1,$2)', [LOCK_NAMESPACE, accountId]).catch(() => {});

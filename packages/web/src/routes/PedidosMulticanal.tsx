@@ -104,6 +104,8 @@ import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/s
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
+import { OrderSyncIssues } from '../components/OrderSyncIssues';
+import { orderSyncIssues } from '../lib/order-sync-issues';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import {
@@ -1310,6 +1312,14 @@ export default function PedidosMulticanal() {
     syncNoteTimer.current = window.setTimeout(() => setSyncNote(''), 2800);
   };
 
+  const syncStatusQuery = useQuery({
+    queryKey: ['managed-order-sync-status'],
+    queryFn: () => api.getManagedOrderSyncStatus(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const syncIssues = orderSyncIssues(syncStatusQuery.data?.accounts, channelCode);
+
   const syncMutation = useMutation({
     mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onMutate: () => {
@@ -1324,9 +1334,13 @@ export default function PedidosMulticanal() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
+        queryClient.invalidateQueries({ queryKey: ['managed-order-sync-status'] }),
       ]);
     },
-    onError: () => markSyncNote('Error'),
+    onError: () => {
+      markSyncNote('Error');
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sync-status'] });
+    },
   });
   const syncing = syncMutation.isPending;
   const syncRealData = () => syncMutation.mutate();
@@ -1600,6 +1614,8 @@ export default function PedidosMulticanal() {
           </Button>
         </div>
       </div>
+
+      <OrderSyncIssues issues={syncIssues} />
 
       <div className="space-y-3">
         <ChannelSummaryTabs tabs={channelTabs} value={channelCode} onChange={setChannelCode} loading={summaryLoading} />

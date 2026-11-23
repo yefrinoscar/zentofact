@@ -625,3 +625,76 @@ test('la lectura local resuelve documentos en una sola consulta SQL', async () =
   assert.equal(queries.some((query) => query.includes('left join lateral')), true);
   assert.equal(queries.some((query) => query.includes('boleta_datos_adicionales')), true);
 });
+
+test('un 503 no JSON de Falabella en la reconciliación queda como error de Falabella visible en el estado', async () => {
+  const db = new FakeDb();
+  db.reconcileCandidates = [{
+    order_id: '5008617043',
+    order_number: '3262981163',
+    status: 'pending',
+    falabella_created_at: '2026-11-23T03:53:55Z',
+    falabella_updated_at: '2026-11-23T10:15:26Z',
+    raw_data: { OrderId: '5008617043', Statuses: 'pending' },
+    label_count: 1,
+  }];
+  const logs = [];
+  const originalError = console.error;
+  console.error = (line) => logs.push(String(line));
+  let result;
+  try {
+    result = await syncFalabellaOrders(7, {
+      mode: 'range',
+      from: '2026-11-23T12:00:00.000Z',
+      to: '2026-11-23T12:30:00.000Z',
+    }, {
+      ...fakeDependencies(db, { getOrdersV2: async () => response([]) }),
+      orderItemsClientFor: () => new FalabellaApiClient({
+        userId: 'seller@example.com',
+        apiKey: 'k',
+        fetchImpl: async () => new Response('upstream connect error or disconnect/reset before headers', {
+          status: 503,
+          headers: { 'content-type': 'text/plain' },
+        }),
+      }),
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(result.status, 'partial');
+  assert.match(result.lastError, /Falabella respondió HTTP 503 sin JSON válido en GetOrderItems: upstream connect error/);
+  const stateUpdate = db.queries.find((query) => query.sql.startsWith('update falabella_sync_state set status=$7'));
+  assert.match(stateUpdate.params[7], /^1 pedido\(s\) requieren reintento\. Último error: Falabella respondió HTTP 503/);
+  const logLine = logs.find((line) => line.includes('order_sync_reconcile'));
+  const payload = JSON.parse(logLine.slice(logLine.indexOf('{')));
+  assert.equal(payload.source, 'falabella');
+  assert.equal(payload.httpStatus, 503);
+  assert.equal(payload.action, 'GetOrderItems');
+  assert.match(payload.bodySnippet, /^upstream connect error/);
+});
+
+test('summarizeFailures prioriza errores de Zentofact y cuenta cada origen', async () => {
+  const { createFailureLog, recordFailure, summarizeFailures, partialSyncMessage } = await import('./falabella-sync.js');
+  const items = createFailureLog();
+  const reconcile = createFailureLog();
+  recordFailure(reconcile, { details: { source: 'falabella' } }, { error: 'Falabella respondió HTTP 503', logId: 'log_aaaaaaaaaaaa' });
+  recordFailure(items, new Error('db down'), { error: 'db down', logId: 'log_bbbbbbbbbbbb' });
+  const summary = summarizeFailures(items, reconcile);
+  assert.equal(summary.source, 'zentofact');
+  assert.equal(summary.lastError, 'db down');
+  assert.equal(summary.lastLogId, 'log_bbbbbbbbbbbb');
+  assert.equal(partialSyncMessage(2, summary), '2 pedido(s) requieren reintento (1 por Falabella, 1 por Zentofact). Último error: db down');
+});
+
+test('falabellaResponseError describe el ErrorResponse de Falabella', async () => {
+  const { falabellaResponseError } = await import('./falabella-sync.js');
+  const error = falabellaResponseError('Falabella no devolvió los pedidos.', {
+    ok: false,
+    status: 401,
+    data: { ErrorResponse: { Head: { ErrorCode: '9', ErrorMessage: 'E009: Access Denied' } } },
+  }, 'GetOrders');
+  assert.equal(error.message, 'Falabella no devolvió los pedidos. Falabella respondió HTTP 401 en GetOrders: E009: Access Denied, código 9');
+  assert.deepEqual(
+    { source: error.details.source, kind: error.details.kind, httpStatus: error.details.httpStatus, code: error.details.falabellaErrorCode },
+    { source: 'falabella', kind: 'provider_error', httpStatus: 401, code: '9' },
+  );
+});
