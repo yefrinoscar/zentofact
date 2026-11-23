@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clientErrorMessage, createLogId, existingLogId, operationalErrorBody } from './error-log.js';
+import { clientErrorMessage, compactStack, createLogId, existingLogId, operationalErrorBody } from './error-log.js';
 
 test('createLogId returns a short copyable identifier', () => {
   const logId = createLogId();
@@ -64,7 +64,8 @@ test('operationalErrorBody logs context and returns the same logId', () => {
   assert.equal(payload.orderId, '32700111');
   assert.equal(payload.status, 502);
   assert.equal(payload.message, 'Falabella rechazó la operación.');
-  assert.equal(payload.stack, error.stack);
+  assert.deepEqual(payload.stack, compactStack(error));
+  assert.ok(payload.stack.every((frame) => !frame.includes('node:internal')));
 });
 
 test('clientErrorMessage oculta SQL de Drizzle al cliente', () => {
@@ -92,7 +93,41 @@ test('operationalErrorBody registra la causa de Postgres y no la devuelve como e
     logId: 'log_bbbbbbbbbbbb',
   });
   const payload = JSON.parse(lines[0].slice('[ZF_LOG] log_bbbbbbbbbbbb '.length));
-  assert.equal(payload.message, error.message);
-  assert.equal(payload.cause, 'column "issuer" of relation "account" does not exist');
+  assert.equal(payload.message, 'Falló una consulta a la base de datos (insert account): column "issuer" of relation "account" does not exist.');
+  assert.equal(payload.type, 'database_query');
+  assert.equal(payload.query, 'insert account');
+  assert.equal(payload.cause, undefined);
   assert.equal(payload.path, '/users');
+});
+
+test('un timeout del pool de Postgres se registra en una línea clara, sin SQL ni params', () => {
+  const lines = [];
+  const error = new Error('Failed query: select "id", "nombre", "falabella_api_key", "mercado_libre_refresh_token" from "companies" where "companies"."id" = $1 limit $2\nparams: 2,1');
+  error.cause = new Error('timeout exceeded when trying to connect');
+  error.stack = [
+    `Error: ${error.message}`,
+    '    at NodePgPreparedQuery.queryWithCache (/app/node_modules/drizzle-orm/pg-core/session.cjs:66:15)',
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)',
+    '    at async getCompany (/app/packages/core/dist/services/company.service.js:125:18)',
+    '    at async syncFalabellaOrders (file:///app/packages/server/src/falabella-sync.js:830:21)',
+    '    at async Promise.all (index 1)',
+  ].join('\n');
+  const body = operationalErrorBody(error, {
+    operation: 'order_sync_account',
+    context: { seller: 'DOLPHIN', companyId: 2, channelCode: 'falabella', source: 'zentofact' },
+  }, {
+    createLogId: () => 'log_c9fb1be42870',
+    log: (line) => lines.push(line),
+  });
+
+  assert.equal(body.error, 'La base de datos no respondió a tiempo. Intenta de nuevo en unos minutos.');
+  const payload = JSON.parse(lines[0].slice('[ZF_LOG] log_c9fb1be42870 '.length));
+  assert.equal(payload.message, 'La base de datos no respondió (select companies): timeout exceeded when trying to connect.');
+  assert.equal(payload.type, 'database_unavailable');
+  assert.equal(payload.query, 'select companies');
+  assert.deepEqual(payload.stack, [
+    'getCompany (packages/core/dist/services/company.service.js:125:18)',
+    'syncFalabellaOrders (packages/server/src/falabella-sync.js:830:21)',
+  ]);
+  assert.doesNotMatch(lines[0], /falabella_api_key|params|drizzle/);
 });
