@@ -52,6 +52,20 @@ export async function readArchive(relativeKey: string): Promise<Buffer> {
   return fs.readFileSync(filepath);
 }
 
+// Almacenamiento genérico (mismo backend que los archivos legales: proxy R2,
+// R2 directo o disco local). Lo usa el API para guardar fotos propias de productos.
+export async function saveStoredObject(relativeKey: string, body: Buffer, contentType: string): Promise<string> {
+  const key = String(relativeKey || '').trim().replace(/\\/g, '/');
+  if (!key || key.startsWith('/') || key.split('/').includes('..')) {
+    throw new Error('Ruta de archivo inválida');
+  }
+  return saveArchive(key, body, contentType);
+}
+
+export function readStoredObject(relativeKey: string): Promise<Buffer> {
+  return readArchive(relativeKey);
+}
+
 export async function saveXml(document: { serie: string; correlativo: string; fechaEmision: string }, xmlContent: string): Promise<string> {
   const dateStr = formatDate(document.fechaEmision);
   return saveArchive(`boletas/xml/${dateStr}/${document.serie}-${document.correlativo}.xml`, xmlContent, XML_TYPE);

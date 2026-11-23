@@ -71,6 +71,7 @@ const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
 const orderSyncSettings = await import('./order-sync-settings.js');
 const productService = await import('./catalog/product-service.js');
+const productImageStore = await import('./catalog/product-image-store.js');
 const listingService = await import('./catalog/listing-service.js');
 const listingSizeMismatch = await import('./catalog/listing-size-mismatch.js');
 const associationCandidateService = await import('./catalog/association-candidate-service.js');
@@ -219,8 +220,11 @@ const catalogGuard = (c, next) => {
     path === '/catalog/sales/today'
     || path === '/catalog/sales/today/refresh'
     || path === '/catalog/image'
+    || path.startsWith(productImageStore.PRODUCT_IMAGE_ROUTE)
   ) {
-    const keys = path === '/catalog/image'
+    const keys = path.startsWith(productImageStore.PRODUCT_IMAGE_ROUTE)
+      ? ['productos', 'order_management', 'salesperson', 'orders_inbox', 'orders_scanner']
+      : path === '/catalog/image'
       ? ['productos', 'order_management', 'salesperson']
       : ['productos', 'order_management'];
     return requireAnyPermission(keys)(c, next);
@@ -923,8 +927,44 @@ app.get('/products/listing-size-mismatches', async (c) => {
   try { return ok(c, await listingSizeMismatch.listListingSizeMismatches()); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+// Si llega una foto externa (Falabella, Ripley...), se copia al almacenamiento propio.
+// Si la copia falla, se conserva la URL externa para no bloquear la edición.
+async function keepOwnProductImage(product, actorUserId) {
+  const source = String(product?.imageUrl || '').trim();
+  if (!product?.id || !/^https:\/\//i.test(source)) return product;
+  try {
+    const mirrored = await productImageStore.mirrorProductImage(product.id, source, {
+      download: shippingLabelSheet.fetchPublicProductImage,
+    });
+    return productService.updateProduct(product.id, { imageUrl: mirrored.url }, actorUserId);
+  } catch (error) {
+    console.warn(JSON.stringify({ event: 'catalog.product_image.mirror_failed', productId: product.id, error: String(error?.message || error) }));
+    return product;
+  }
+}
+app.get(`${productImageStore.PRODUCT_IMAGE_ROUTE}:productId/:file`, async (c) => {
+  try {
+    const image = await productImageStore.readProductImage(`${c.req.param('productId')}/${c.req.param('file')}`);
+    c.header('Content-Type', image.mimeType);
+    // La ruta lleva el hash del contenido: una foto nueva siempre tiene otra URL.
+    c.header('Cache-Control', 'private, max-age=31536000, immutable');
+    return c.body(image.bytes);
+  } catch (e) { return fail(c, e, Number(e?.status || 404)); }
+});
+app.post('/products/:id/image', async (c) => {
+  try {
+    const productId = c.req.param('id');
+    const current = await productService.getProduct(productId);
+    if (!current) return c.json({ error: 'Producto no encontrado.' }, 404);
+    const stored = await productImageStore.storeProductImage(current.id, productImageStore.decodeUploadedImage(await c.req.json()));
+    return ok(c, await productService.updateProduct(current.id, { imageUrl: stored.url }, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/products', async (c) => {
-  try { return ok(c, await productService.createProduct(await c.req.json(), c.get('user')?.id), 201); }
+  try {
+    const actorUserId = c.get('user')?.id;
+    return ok(c, await keepOwnProductImage(await productService.createProduct(await c.req.json(), actorUserId), actorUserId), 201);
+  }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/products/:id', async (c) => {
@@ -953,7 +993,12 @@ app.post('/products/:id/activity', async (c) => {
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/products/:id', async (c) => {
-  try { return ok(c, await productService.updateProduct(c.req.param('id'), await c.req.json(), c.get('user')?.id)); }
+  try {
+    const actorUserId = c.get('user')?.id;
+    const input = await c.req.json();
+    const product = await productService.updateProduct(c.req.param('id'), input, actorUserId);
+    return ok(c, input.imageUrl !== undefined ? await keepOwnProductImage(product, actorUserId) : product);
+  }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.put('/products/:id/returns/:orderId/incident', async (c) => {

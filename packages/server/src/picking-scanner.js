@@ -1,4 +1,5 @@
 import { extractShippingLabelTrackingCodes } from './shipping-label-sheet.js';
+import { isOwnProductImageUrl } from './catalog/product-image-store.js';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -365,6 +366,8 @@ function shippingAddress(raw) {
 
 function proxiedImageUrl(value) {
   const imageUrl = text(value);
+  // Las fotos propias ya se sirven desde el API; no pasan por el proxy de Falabella.
+  if (isOwnProductImageUrl(imageUrl)) return imageUrl;
   return imageUrl ? `/falabella/picking/image?url=${encodeURIComponent(imageUrl)}` : '';
 }
 

@@ -28,6 +28,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Upload,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -1047,6 +1048,29 @@ export default function Productos() {
     if (result) setModal(null);
   };
 
+  const uploadProductImage = async (file: File | undefined) => {
+    if (!file || !selectedId) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setActionError('La foto debe ser PNG, JPEG o WEBP.');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setActionError('La foto pesa más de 8 MB.');
+      return;
+    }
+    const dataBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const result = await runAction(
+      () => api.uploadCatalogProductImage(selectedId, dataBase64),
+      () => 'Foto subida y guardada en el sistema.',
+    );
+    if (result) setModal(null);
+  };
+
   const associateListing = async (event: FormEvent) => {
     event.preventDefault();
     if (!associationProduct || associationListingIds.length === 0) return;
@@ -1564,8 +1588,13 @@ export default function Productos() {
             {imageUrl.trim() ? <img src={imageUrl.trim()} alt="Vista previa" className="h-full w-full object-contain" /> : <ImagePlus className="h-7 w-7 text-muted-foreground" />}
           </div>
           <div className="min-w-0 flex-1">
-            <Field label="URL de la foto principal" value={imageUrl} onChange={setImageUrl} />
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">Se guarda en el producto interno. No modifica imágenes de publicaciones existentes.</p>
+            <label className="secondary-button mb-3 inline-flex cursor-pointer items-center gap-2">
+              <Upload className="h-4 w-4" />
+              Subir foto
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" disabled={busy} onChange={(event) => { void uploadProductImage(event.target.files?.[0]); event.target.value = ''; }} />
+            </label>
+            <Field label="O pega la URL de la foto" value={imageUrl} onChange={setImageUrl} />
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">La foto se guarda en el sistema; si pegas una URL de Falabella o Ripley se copia automáticamente. No modifica imágenes de publicaciones existentes.</p>
           </div>
         </div>
         <ActionFeedback error={actionError} message={actionMessage} />
