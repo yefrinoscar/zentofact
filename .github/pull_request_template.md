@@ -14,7 +14,7 @@
 
 ## Release type
 
-<!-- Check exactly one option; the release label is applied automatically. Bump the version with `npm run release:bump -- patch|minor|major`. -->
+<!-- Check exactly one option; the release label is applied automatically. Bump the version with `npm run release:bump -- patch|minor|major`; if you forget, CI bumps and pushes it for you. -->
 
 - [ ] Patch — fixes or maintenance that preserve existing behavior (`release:patch`)
 - [ ] Minor — new backward-compatible functionality (`release:minor`)
