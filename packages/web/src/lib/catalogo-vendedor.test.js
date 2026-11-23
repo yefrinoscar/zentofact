@@ -7,6 +7,8 @@ import {
   commissionDisplay,
   formatProductMoney,
   productCountLabel,
+  productGalleryUrls,
+  productPublicationText,
   salespersonProductsFilter,
   sortingToQuery,
   stockDisplay,
@@ -101,4 +103,31 @@ test('oculta marcas de relleno como GENERICO y conserva marcas reales', async ()
   assert.equal(visibleBrand('sin marca'), null);
   assert.equal(visibleBrand(null), null);
   assert.equal(visibleBrand('Xiaomi'), 'Xiaomi');
+});
+
+test('la galería de Falabella lista {sku}_01…_08 a partir de cualquier foto', () => {
+  const urls = productGalleryUrls('https://media.falabella.com/falabellaPE/PMP20000722586-1_01');
+  assert.equal(urls.length, 8);
+  assert.equal(urls[0], 'https://media.falabella.com/falabellaPE/PMP20000722586-1_01');
+  assert.equal(urls[7], 'https://media.falabella.com/falabellaPE/PMP20000722586-1_08');
+  assert.equal(productGalleryUrls('https://media.falabella.com/falabellaPE/118765881_3?wid=800')[1], 'https://media.falabella.com/falabellaPE/118765881_02');
+});
+
+test('una foto que no es de Falabella se usa tal cual y sin foto no hay galería', () => {
+  assert.deepEqual(productGalleryUrls('/seed/ag301.svg'), ['/seed/ag301.svg']);
+  assert.deepEqual(productGalleryUrls(null), []);
+  assert.deepEqual(productGalleryUrls('  '), []);
+});
+
+test('el texto para publicar lleva nombre, marca visible y precio', () => {
+  const text = productPublicationText({ name: ' Silla de comer ', brand: 'Zento', price: 249, available: 8 });
+  const lines = text.split('\n');
+  assert.equal(lines[0], 'Silla de comer');
+  assert.equal(lines[1], 'Marca: Zento');
+  assert.match(lines[2], /^Precio: S\/\s?249\.00$/);
+  assert.equal(lines.length, 4);
+  assert.equal(lines[3], 'Stock disponible. Escríbeme para coordinar la entrega.');
+  const sinStock = productPublicationText({ name: 'X', brand: null, price: 1, available: 0 });
+  assert.ok(!sinStock.includes('Marca'));
+  assert.ok(sinStock.endsWith('Escríbeme para consultar disponibilidad.'));
 });

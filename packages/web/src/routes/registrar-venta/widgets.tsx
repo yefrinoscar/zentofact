@@ -261,15 +261,20 @@ function productImageSrc(url?: string | null, shopSku?: string | null, sku?: str
   return value;
 }
 
-export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
+function productImageCandidates(url?: string | null, shopSku?: string | null, sku?: string | null) {
+  return [productImageSrc(url), productImageSrc(null, shopSku), productImageSrc(null, null, sku)]
+    .filter((src, index, list) => src && list.indexOf(src) === index);
+}
+
+export function ProductPhoto({ url, shopSku, sku, name, size = 'md', onUnavailable }: {
   url?: string | null;
   shopSku?: string | null;
   sku?: string | null;
   name: string;
   size?: 'sm' | 'md' | 'lg' | 'fill';
+  onUnavailable?: () => void;
 }) {
-  const candidates = [productImageSrc(url), productImageSrc(null, shopSku), productImageSrc(null, null, sku)]
-    .filter((src, index, list) => src && list.indexOf(src) === index);
+  const candidates = productImageCandidates(url, shopSku, sku);
   const [failedCount, setFailedCount] = useState(0);
   const src = candidates[failedCount] || '';
   const box = size === 'sm' ? 'size-9' : size === 'lg' ? 'size-16' : size === 'fill' ? 'aspect-square w-full' : 'size-12';
@@ -287,7 +292,10 @@ export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
       title={name}
       loading="lazy"
       decoding="async"
-      onError={() => setFailedCount((current) => current + 1)}
+      onError={() => {
+        if (failedCount + 1 >= candidates.length) onUnavailable?.();
+        setFailedCount((current) => current + 1);
+      }}
       className={cn('shrink-0 rounded-md bg-muted object-cover ring-1 ring-border', box)}
     />
   );
