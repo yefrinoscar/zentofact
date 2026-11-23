@@ -141,16 +141,38 @@ jobs:
             PR_BODY=$(gh pr view "$number" --json body --jq .body < /dev/null)
             RELEASE_LABELS=$(gh pr view "$number" --json labels --jq '[.labels[].name]' < /dev/null)
             git checkout --quiet -B "$head_ref" "origin/$head_ref"
+            # Two release PRs always edit the same version lines, so the one left
+            # open conflicts with main. Resolve that conflict here; GitHub does not
+            # run pull_request workflows while a PR is conflicting.
+            merging=false
+            if ! git merge --quiet --no-commit --no-ff origin/main > /dev/null 2>&1; then
+              conflicts=$(git diff --name-only --diff-filter=U | grep -vxE 'packages/web/package.json|package-lock.json' || true)
+              if [ -n "$conflicts" ]; then
+                git merge --abort
+                echo "::warning::#$number conflicts with main outside the version files; resolve it by hand."
+                echo "::endgroup::"
+                continue
+              fi
+              git checkout origin/main -- packages/web/package.json package-lock.json
+              merging=true
+            else
+              git merge --abort 2> /dev/null || true
+            fi
             out=$(mktemp)
             if ! GITHUB_OUTPUT="$out" node "$RUNNER_TEMP/release-scripts/sync-release-version.mjs"; then
+              [ "$merging" = true ] && git merge --abort
               echo "::warning::#$number has no single release type checked; skipped."
               echo "::endgroup::"
               continue
             fi
-            if grep -q '^changed=true$' "$out"; then
-              version=$(sed -n 's/^version=//p' "$out")
+            version=$(sed -n 's/^version=//p' "$out")
+            if [ "$merging" = true ] || grep -q '^changed=true$' "$out"; then
               git add packages/web/package.json package-lock.json
-              git commit --quiet -m "chore(release): bump version to $version"
+              if [ "$merging" = true ]; then
+                git commit --quiet --no-edit -m "chore(release): merge main and bump version to $version"
+              else
+                git commit --quiet -m "chore(release): bump version to $version"
+              fi
               if ! git push --quiet origin "HEAD:$head_ref"; then
                 echo "::warning::Could not push the bump to $head_ref."
                 echo "::endgroup::"
@@ -161,7 +183,7 @@ jobs:
                   -f state=success -f context="Release version" \
                   -f description="Re-bumped to $version after main moved"
               fi
-              echo "#$number -> $version"
+              echo "#$number -> $version (merged main: $merging)"
             fi
             echo "::endgroup::"
           done
