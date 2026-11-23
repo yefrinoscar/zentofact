@@ -73,9 +73,12 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/bulk'), 'credit_notes_bulk');
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
   assert.equal(pathPermission('/insumos'), 'insumos');
+  assert.equal(pathPermission('/carros'), 'carros');
+  assert.equal(pathPermission('/cars/1/expenses'), 'carros');
   assert.equal(pathPermission('/avisos'), null);
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/ventas'), 'dashboard');
+  assert.equal(pathPermission('/vendedores'), 'dashboard');
   assert.equal(pathPermission('/productos'), 'productos');
 });
 
@@ -356,4 +359,15 @@ test('admin multi-perfil no convierte en vendedor ni pierde acceso', () => {
   assert.equal(userHasPermission(user, 'dashboard'), true);
   assert.equal(userCanWritePermission(user, 'facturas'), true);
   assert.equal(isSalespersonOnly(user), false);
+});
+
+test('carros es un módulo de operación que solo los administradores reciben por defecto', () => {
+  const carros = PERMISSIONS.find(({ key }) => key === 'carros');
+  assert.equal(carros?.path, '/carros');
+  assert.equal(carros?.section, 'operation');
+  assert.equal(ROLE_PRESETS.admin.permissions.includes('carros'), true);
+  assert.equal(ROLE_PRESETS.operator.permissions.includes('carros'), false);
+  assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, 'carros'), true);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: [] }, 'carros'), false);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['carros'] }, 'carros'), true);
 });

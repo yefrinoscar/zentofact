@@ -426,3 +426,68 @@ test('al retomar una cuenta cierra las ejecuciones que quedaron running', async 
   assert.match(queries[0], /update order_sync_runs/i);
   assert.match(queries[1], /update order_sync_state/i);
 });
+
+function falabellaAccountDb(writes) {
+  return {
+    async query(sql, params = []) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 3, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        nombre_comercial: 'MANTA RAYA', falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-11-23T12:00:00Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 9 }] };
+      if (sql.startsWith('update order_sync_state') && sql.includes('last_error_source')) writes.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+}
+
+test('una sincronización parcial guarda el último error real y que falló Falabella', async () => {
+  const writes = [];
+  const result = await syncOrderAccount(7, { now: '2026-11-23T13:12:55Z' }, {
+    pool: { connect: async () => falabellaAccountDb(writes) },
+    syncFalabellaOrders: async () => ({
+      status: 'partial',
+      received: 3,
+      upserted: 2,
+      failed: 1,
+      lastLogId: 'log_35d2e55e4ec2',
+      lastError: 'Falabella respondió HTTP 503 sin JSON válido en GetOrderItems: upstream connect error',
+      lastErrorSource: 'falabella',
+      failureSummary: { falabellaFailed: 1, zentofactFailed: 0 },
+    }),
+  });
+  assert.equal(result.status, 'partial');
+  assert.equal(result.errorSource, 'falabella');
+  assert.match(result.error, /^1 pedido\(s\) fallaron; se reintentará la ventana\. Último error: Falabella respondió HTTP 503/);
+  const [write] = writes;
+  assert.match(write.params[4], /Último error: Falabella respondió HTTP 503/);
+  assert.equal(write.params[10], 'falabella');
+  assert.equal(write.params[5], 'log_35d2e55e4ec2');
+});
+
+test('un error lanzado por Falabella queda con origen falabella; uno propio, zentofact', async () => {
+  for (const [thrown, expected] of [
+    [Object.assign(new Error('Falabella no devolvió los pedidos. Falabella respondió HTTP 401 en GetOrders: E009 Access Denied'), { details: { source: 'falabella' } }), 'falabella'],
+    [new TypeError("Cannot read properties of undefined (reading 'id')"), 'zentofact'],
+  ]) {
+    const writes = [];
+    const originalError = console.error;
+    console.error = () => {};
+    let result;
+    try {
+      result = await syncOrderAccount(7, { now: '2026-11-23T13:12:55Z' }, {
+        pool: { connect: async () => falabellaAccountDb(writes) },
+        syncFalabellaOrders: async () => { throw thrown; },
+      });
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(result.status, 'error');
+    assert.equal(result.errorSource, expected);
+    assert.equal(writes.at(-1).params[4], expected);
+  }
+});

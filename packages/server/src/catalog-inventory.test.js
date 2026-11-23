@@ -711,7 +711,7 @@ test('cancelar un pedido reservado suelta la reserva sin movimiento de almacén'
   assert.equal(db.items.get(101).stock_state, 'reversed');
 });
 
-test('reservar más que el disponible marketplace marca la línea y no toca el almacén', async () => {
+test('reservar más que el disponible marketplace agrega solo el faltante y reserva', async () => {
   const db = new InventoryDb(1);
   db.listings.push(listing({ quantity_on_hand: 1 }));
   db.items.set(101, item());
@@ -721,10 +721,12 @@ test('reservar más que el disponible marketplace marca la línea y no toca el a
       ordered_at: '2026-09-04T18:00:00.000Z',
     },
   }));
-  assert.equal(result.skipped, 1);
-  assert.equal(db.quantity, 1);
-  assert.equal(db.reserved, 0);
-  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
+  assert.equal(result.skipped, 0);
+  assert.equal(result.reserved, 1);
+  assert.equal(db.quantity, 2);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.movements.get('regularize_reserve:order_item:101:qty:2').quantity_delta, 1);
+  assert.equal(db.items.get(101).stock_state, 'pending');
 });
 
 test('applyInventoryReservation baja el disponible y no el almacén', async () => {
@@ -846,32 +848,100 @@ test('línea doomed se revierte antes de borrarse y conserva el ledger', async (
   assert.equal(db.movements.has('sale_reversal:order_item:101:rev:2'), true);
 });
 
-test('stock insuficiente marketplace conserva el pedido y marca la línea para operaciones', async () => {
+test('un pedido listo para enviar sin stock agrega el faltante y descuenta sin dejar negativo', async () => {
   const db = new InventoryDb(0);
   db.listings.push(listing({ quantity_on_hand: 0 }));
   db.items.set(101, item());
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }]));
-  assert.equal(result.skipped, 1);
-  assert.equal(result.unmapped, 0);
-  assert.equal(result.insufficient, 1);
+  assert.equal(result.applied, 1);
+  assert.equal(result.skipped, 0);
+  assert.equal(result.insufficient, 0);
   assert.equal(db.quantity, 0);
-  assert.equal(db.movements.size, 0);
-  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
-  assert.equal(db.items.get(101).stock_applied_quantity, 0);
-  assert.equal(db.items.get(101).stock_revision, 0);
+  const topUp = db.movements.get('regularize:order_item:101:rev:1');
+  assert.equal(topUp.movement_type, 'adjustment_in');
+  assert.equal(topUp.quantity_delta, 2);
+  const movement = db.movements.get('sale:order_item:101:rev:1');
+  assert.equal(movement.movement_type, 'sale');
+  assert.equal(movement.quantity_delta, -2);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+  assert.equal(db.items.get(101).stock_applied_quantity, 2);
 });
 
-test('una reparación del sistema conserva la semántica marketplace del canal', async () => {
+test('el descuento sin stock ignora allowNegative=false y una venta manual tampoco queda sin descontar', async () => {
+  for (const overrides of [
+    { allowNegative: false },
+    { account: { id: 9, channelCode: 'manual', settings: { allowNegative: false } }, source: 'manual' },
+  ]) {
+    const db = new InventoryDb(1);
+    db.items.set(101, item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M' }));
+    const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], overrides));
+    assert.equal(result.applied, 1);
+    assert.equal(db.quantity, 0);
+    assert.equal(db.items.get(101).stock_state, 'applied');
+  }
+});
+
+test('una línea skipped_insufficient de un pedido enviado se descuenta al reprocesar', async () => {
+  const db = new InventoryDb(0);
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M', stock_state: 'skipped_insufficient',
+  }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    source: 'system',
+    includeSkippedPolicy: true,
+    persisted: { fulfillment_status: 'shipped' },
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(db.quantity, 0);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+  assert.equal(db.movements.has('sale:order_item:101:rev:1'), true);
+  assert.equal(db.movements.get('regularize:order_item:101:rev:1').quantity_delta, 2);
+  // Reprocesar no vuelve a descontar.
+  const again = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    persisted: { fulfillment_status: 'shipped' },
+  }));
+  assert.equal(again.applied, 0);
+  assert.equal(db.quantity, 0);
+  assert.equal(db.movements.size, 2);
+});
+
+test('confirmar una reserva sin stock suficiente descuenta y no la deja pendiente', async () => {
+  const db = new InventoryDb(1);
+  db.reserved = 1;
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'pending', stock_applied_quantity: 1, quantity: 3,
+  }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'preparing' },
+  }));
+  assert.equal(result.committed, 1);
+  assert.equal(db.quantity, 0);
+  assert.equal(db.movements.get('regularize:order_item:101:rev:1').quantity_delta, 2);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+  assert.equal(db.items.get(101).stock_applied_quantity, 3);
+});
+
+test('reservar sin stock en marketplace agrega el stock y nunca queda sin stock', async () => {
   const db = new InventoryDb(0);
   db.listings.push(listing({ quantity_on_hand: 0 }));
   db.items.set(101, item());
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
-    source: 'system',
-    includeSkippedPolicy: true,
+    persisted: { fulfillment_status: 'pending' },
   }));
-  assert.equal(result.skipped, 1);
+  assert.equal(result.insufficient, 0);
+  assert.equal(db.quantity, 2);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.items.get(101).stock_state, 'pending');
+  // Al pasar a listo para enviar descuenta sin otro ajuste.
+  const shipped = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(shipped.committed, 1);
   assert.equal(db.quantity, 0);
-  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
+  assert.equal(db.reserved, 0);
+  assert.equal(db.movements.has('regularize:order_item:101:rev:1'), false);
 });
 
 test('cancelación y devolución revierten cantidades aplicadas una sola vez', async () => {
@@ -2521,4 +2591,21 @@ test('refresh Ripley actualiza existentes y pone en cero una oferta ausente sin 
     { status: 'inactive', stock: 0, id: 81 },
   ]);
   assert.equal(updates.some(({ sql }) => sql.includes('insert into products')), false);
+});
+
+test('con stock suficiente no se agrega ajuste de regularización', async () => {
+  const db = new InventoryDb(5);
+  db.items.set(101, item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M' }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }]));
+  assert.equal(result.applied, 1);
+  assert.equal(db.quantity, 3);
+  assert.equal(db.movements.has('regularize:order_item:101:rev:1'), false);
+});
+
+test('con stock parcial solo se agrega lo que falta', async () => {
+  const db = new InventoryDb(1);
+  db.items.set(101, item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M' }));
+  await stockPhase(phaseInput(db, [{ ...db.items.get(101) }]));
+  assert.equal(db.movements.get('regularize:order_item:101:rev:1').quantity_delta, 1);
+  assert.equal(db.quantity, 0);
 });

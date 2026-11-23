@@ -65,6 +65,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
 import { SHIPPING_CARRIERS } from '../lib/shipping-carrier';
+import { saveBase64File } from '../lib/download-file';
 import { canCancelManualOrder } from '../lib/manual-order-cancellation';
 import {
   canMarkLogisticsDelivered,
@@ -103,6 +104,8 @@ import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/s
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
+import { OrderSyncIssues } from '../components/OrderSyncIssues';
+import { orderSyncIssues } from '../lib/order-sync-issues';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import {
@@ -538,12 +541,7 @@ function svcResultIsSandbox(value: unknown) {
 
 function downloadPdf(base64: unknown, filename: string) {
   if (typeof base64 !== 'string' || !base64.trim()) throw new Error('Ripley no devolvió el PDF esperado.');
-  const link = document.createElement('a');
-  link.href = `data:application/pdf;base64,${base64}`;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  return saveBase64File(base64, filename, 'application/pdf');
 }
 
 function svcPdf(value: unknown, keys: string[]): string | null {
@@ -639,6 +637,13 @@ function formatEstimatedDelivery(value?: string | null) {
 function paymentMethodLabel(order: ManagedOrder) {
   const method = String(order.metadata?.paymentMethod || '').trim();
   return PAYMENT_METHOD_LABELS[method] || '—';
+}
+
+/** Método de pago para la cabecera; en efectivo añade quién recibió el dinero. */
+function paymentMethodHint(order: ManagedOrder) {
+  const receivedBy = String(order.metadata?.receivedBy || '').trim();
+  const label = paymentMethodLabel(order);
+  return order.metadata?.paymentMethod === 'efectivo' && receivedBy ? `${label} · recibió ${receivedBy}` : label;
 }
 
 function fulfillmentTone(status: string): StatusTone {
@@ -1307,6 +1312,14 @@ export default function PedidosMulticanal() {
     syncNoteTimer.current = window.setTimeout(() => setSyncNote(''), 2800);
   };
 
+  const syncStatusQuery = useQuery({
+    queryKey: ['managed-order-sync-status'],
+    queryFn: () => api.getManagedOrderSyncStatus(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const syncIssues = orderSyncIssues(syncStatusQuery.data?.accounts, channelCode);
+
   const syncMutation = useMutation({
     mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onMutate: () => {
@@ -1321,9 +1334,13 @@ export default function PedidosMulticanal() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
+        queryClient.invalidateQueries({ queryKey: ['managed-order-sync-status'] }),
       ]);
     },
-    onError: () => markSyncNote('Error'),
+    onError: () => {
+      markSyncNote('Error');
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sync-status'] });
+    },
   });
   const syncing = syncMutation.isPending;
   const syncRealData = () => syncMutation.mutate();
@@ -1441,6 +1458,26 @@ export default function PedidosMulticanal() {
           ) : null}
         </div>
       ),
+    },
+    {
+      id: 'payment',
+      header: 'Pago y entrega',
+      size: 132,
+      cell: ({ row }) => {
+        if (row.original.channelCode !== 'manual') return null;
+        const method = row.original.metadata?.paymentMethod ? paymentMethodLabel(row.original) : '';
+        const delivery = deliveryLabel(row.original);
+        return (
+          <div className="flex min-w-0 flex-col items-start gap-1">
+            <Badge variant="outline" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
+              {method || <span className="font-medium normal-case text-muted-foreground">Sin método</span>}
+            </Badge>
+            <Badge variant="secondary" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
+              {deliveryShowsAsTag(delivery) ? delivery : <span className="font-medium normal-case text-muted-foreground">Sin entrega</span>}
+            </Badge>
+          </div>
+        );
+      },
     },
     {
       id: 'status',
@@ -1577,6 +1614,8 @@ export default function PedidosMulticanal() {
           </Button>
         </div>
       </div>
+
+      <OrderSyncIssues issues={syncIssues} />
 
       <div className="space-y-3">
         <ChannelSummaryTabs tabs={channelTabs} value={channelCode} onChange={setChannelCode} loading={summaryLoading} />
@@ -1740,7 +1779,7 @@ export default function PedidosMulticanal() {
                         label: 'Pago',
                         value: PAYMENT_LABELS[detail.paymentStatus] || 'Sin dato',
                         tone: paymentTone(detail.paymentStatus),
-                        hint: detail.channelCode === 'manual' && detail.metadata?.paymentMethod ? paymentMethodLabel(detail) : undefined,
+                        hint: detail.channelCode === 'manual' && detail.metadata?.paymentMethod ? paymentMethodHint(detail) : undefined,
                         onSelect: canRecordPayment(detail) ? () => setPaymentOrder(detail) : undefined,
                       },
                       {
@@ -2449,8 +2488,8 @@ function RegisterPaymentDialog({
         </div>
         {paymentMethod === 'efectivo' && (
           <div className="space-y-1.5">
-            <Label htmlFor="pay-received-by">¿Quién cobró?</Label>
-            <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
+            <Label htmlFor="pay-received-by">Recibió el efectivo</Label>
+            <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Nombre de quien recibió el dinero" required maxLength={200} />
           </div>
         )}
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
@@ -2500,12 +2539,19 @@ function RegisterPaymentDialog({
             type="button"
             className="cursor-pointer"
             disabled={busy}
-            onClick={() => onSubmit({
-              paymentMethod,
-              receivedBy,
-              paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
-              paymentProof,
-            })}
+            onClick={() => {
+              if (paymentMethod === 'efectivo' && !receivedBy.trim()) {
+                setLocalError('Escribe el nombre de quien recibió el efectivo.');
+                return;
+              }
+              setLocalError('');
+              onSubmit({
+                paymentMethod,
+                receivedBy: receivedBy.trim(),
+                paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
+                paymentProof,
+              });
+            }}
           >
             {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {busy ? 'Guardando…' : 'Registrar pago'}

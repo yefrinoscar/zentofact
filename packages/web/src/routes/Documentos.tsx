@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { saveBase64File } from '../lib/download-file';
 import { Plus, Search, Download, FileCode2, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2, RefreshCw, MoreHorizontal } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
@@ -219,9 +220,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     setDownloadingId(d.id);
     try {
       const res = kind === 'boletas' ? await api.generateBoletaPdf(d.id) : await api.generateFacturaPdf(d.id);
-      if (!res?.base64) return;
-      const link = document.createElement('a');
-      link.href = `data:application/pdf;base64,${res.base64}`; link.download = `${d.numeroCompleto}.pdf`; link.click();
+      if (!res?.base64) throw new Error('El servidor respondió sin el archivo PDF.');
+      await saveBase64File(res.base64, `${d.numeroCompleto}.pdf`, 'application/pdf');
     } catch (e: any) { setRetryMsg(e?.message || 'No se pudo descargar el PDF.'); }
     finally { setDownloadingId(null); }
   };
@@ -231,10 +231,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     try {
       const res = kind === 'boletas' ? await api.downloadBoletaXml(d.id) : await api.downloadFacturaXml(d.id);
       if (!res?.base64) throw new Error('El servidor respondió sin el archivo XML.');
-      const link = document.createElement('a');
-      link.href = `data:application/xml;base64,${res.base64}`;
-      link.download = `${d.numeroCompleto}.xml`;
-      link.click();
+      await saveBase64File(res.base64, `${d.numeroCompleto}.xml`, 'application/xml');
     } catch (e: any) {
       setRetryMsg(e?.message || 'No se pudo descargar el XML.');
     } finally {

@@ -50,6 +50,8 @@ Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockO
 
 Do not POST inventory adjust or click publication switches unless the task explicitly enables marketplace mutation.
 
+Proof: as superadmin or admin, `#/vendedores` (Ganancias de vendedores) and `GET /dashboard/salesperson-earnings?from=2026-11-01&to=2026-11-30` list Vendedor Preview with VTA-10012 flagged `partial` (HOG025 and BB110 have no commission). Seed dates move with the boot day, so pick a range that covers them. Vendedor and operator get 403.
+
 ## Inbox and outbound seed
 
 Inbox reads `falabella_orders`, not the unified `orders` table.

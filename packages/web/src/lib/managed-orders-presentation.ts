@@ -1,11 +1,12 @@
 /**
  * Columnas visibles de la bandeja multicanal. El seller va debajo del número de pedido;
- * entrega, dirección y método viven en el detalle.
+ * pago y entrega van como tags; la dirección vive en el detalle.
  */
 export const MANAGED_ORDER_TABLE_COLUMNS = [
   'order',
   'product',
   'customer',
+  'payment',
   'status',
   'total',
   'actions',

@@ -30,6 +30,7 @@
     "sunat:reconcile": "node scripts/reconcile-sunat-documents.mjs",
     "r2:pull": "node scripts/pull-r2-to-minio.mjs",
     "worktree:setup": "bash scripts/setup-worktree.sh",
+    "release:bump": "node scripts/release-bump.mjs",
     "cloud:install": "bash scripts/cloud-agent-install.sh",
     "cloud:start": "bash scripts/cloud-agent-start.sh"
   },

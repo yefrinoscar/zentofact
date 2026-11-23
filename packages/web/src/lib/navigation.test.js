@@ -60,3 +60,11 @@ test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   assert.equal(isNavItemActive('/orders/envio', '/orders'), false);
   assert.equal(isNavItemActive('/envio-propio', '/orders'), false);
 });
+
+test('Cobertura se ve para cualquier usuario, sin permisos', () => {
+  const cobertura = { to: '/cobertura', alwaysVisible: true };
+  const none = () => false;
+  assert.equal(isNavItemVisible(cobertura, none, true, {}), true);
+  assert.equal(isNavItemVisible(cobertura, none, true, { isAdmin: true }), true);
+  assert.equal(isNavItemVisible(cobertura, none, true, { isSuperadmin: true }), true);
+});

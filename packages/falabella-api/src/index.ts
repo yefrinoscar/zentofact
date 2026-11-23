@@ -1,4 +1,5 @@
-export { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from './client';
+export { FalabellaApiClient, FalabellaApiError, getFalabellaError, isFalabellaApiError, normalizeGetOrdersResult } from './client';
+export type { FalabellaApiErrorDetails, FalabellaApiErrorKind } from './client';
 export { buildIsoUtcTimestamp, canonicalizeParameters, signParameters } from './signing';
 export type {
   FalabellaApiCallOptions,

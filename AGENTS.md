@@ -21,11 +21,13 @@
   - `release:minor` for new backward-compatible functionality that does not require existing users or integrations to change.
   - `release:major` for breaking changes that require users, integrations, configuration, or stored data to change.
 - When a pull request contains more than one change type, use the highest-impact increment: `release:major` over `release:minor` over `release:patch`.
+- Before opening a pull request into `main`, run `npm run release:bump -- patch|minor|major` and commit the result. It computes the next version from `origin/main` and updates `packages/web/package.json` and `package-lock.json` together. Check the matching release type in the pull request description; the `Release version` check reads it and applies the label automatically.
+- If the bump is missing or stale, the `Release version` workflow fixes it: it runs `scripts/sync-release-version.mjs` on the pull request branch, commits `chore(release): bump version to X.Y.Z` as `github-actions[bot]`, and pushes it. After every merge into `main` it re-bumps all open pull requests into `main` the same way. Because the bot may have pushed to your branch, run `git pull --rebase` before pushing again.
 - Compare the version on the feature branch with the current version on `main` before opening the pull request and update it as follows:
   - Patch: `X.Y.Z` becomes `X.Y.(Z+1)`.
   - Minor: `X.Y.Z` becomes `X.(Y+1).0`.
   - Major: `X.Y.Z` becomes `(X+1).0.0`.
-- Recalculate the version if `main` changed while the pull request was open. After merge, update `dev` from the latest `main`.
+- Recalculate the version if `main` changed while the pull request was open (CI does this automatically for open pull requests from this repository). After merge, update `dev` from the latest `main`.
 - Never reuse an existing version, create a release tag from a feature branch, or manually create an additional version after a release job fails.
 - The release pull request description must state the selected release type and why it applies.
 - After merge, the release workflow tags the merged commit as `vX.Y.Z` and creates the corresponding GitHub Release. If it fails, rerun the same workflow for the same commit.

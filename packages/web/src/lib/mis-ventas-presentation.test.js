@@ -2,14 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   commissionHint,
+  currentSalesMonth,
   dailySeries,
   dayKeyLabel,
+  misVentasQueryIncludesDate,
   paymentMethodLabel,
   paymentMixSlices,
   productivityStats,
   saleListRow,
   saleMoreProductsLabel,
   saleProductTitle,
+  salesMonthLabel,
+  salesMonthRange,
   salespersonKpis,
 } from './mis-ventas-presentation.ts';
 
@@ -166,6 +170,36 @@ test('la etiqueta de día no se desplaza por zona horaria', () => {
   assert.match(dayKeyLabel('2026-08-24'), /^24 ago/);
   assert.match(dayKeyLabel('2026-01-01'), /^1 ene/);
   assert.equal(dayKeyLabel('nope'), '');
+});
+
+test('el filtro mensual empieza en el mes de Lima y termina hoy', () => {
+  const now = new Date('2026-11-05T03:30:00Z');
+  assert.equal(currentSalesMonth(now), '2026-11');
+  assert.deepEqual(salesMonthRange('2026-11', now), {
+    month: '2026-11',
+    from: '2026-11-01',
+    to: '2026-11-04',
+  });
+});
+
+test('un mes anterior usa todos sus días y un mes futuro vuelve al actual', () => {
+  const now = new Date('2026-11-15T18:00:00Z');
+  assert.deepEqual(salesMonthRange('2024-02', now), {
+    month: '2024-02',
+    from: '2024-02-01',
+    to: '2024-02-29',
+  });
+  assert.deepEqual(salesMonthRange('2027-01', now), {
+    month: '2026-11',
+    from: '2026-11-01',
+    to: '2026-11-15',
+  });
+});
+
+test('el mes tiene una etiqueta legible y la caché respeta el rango', () => {
+  assert.equal(salesMonthLabel('2026-11'), 'noviembre de 2026');
+  assert.equal(misVentasQueryIncludesDate({ from: '2026-11-01', to: '2026-11-30' }, '2026-11-15'), true);
+  assert.equal(misVentasQueryIncludesDate({ from: '2026-10-01', to: '2026-10-31' }, '2026-11-15'), false);
 });
 
 test('la fila usa la comisión de los productos calculada por el servidor, incluso cero', () => {

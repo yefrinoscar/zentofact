@@ -1,7 +1,7 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
-import { operationalErrorBody } from './error-log.js';
+import { describeError, operationalErrorBody } from './error-log.js';
 import { isFalabellaSyncEnabled } from './system-config.js';
 import {
   ensureFalabellaOrderAccount,
@@ -12,6 +12,93 @@ import {
 import { providerFetch } from './provider-request.js';
 import { resolveIncrementalOrderWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
+
+/**
+ * Builds an error for a Falabella response that arrived but was not usable
+ * (HTTP error or an ErrorResponse document). The message names Falabella, the
+ * action, HTTP status and Falabella's own error so operators can tell whether
+ * the marketplace or Zentofact failed. `details` is merged into the ZF_LOG line.
+ */
+export function falabellaResponseError(fallback, response, action) {
+  const falabellaError = getFalabellaError(response?.data);
+  const head = falabellaError?.Head || {};
+  const code = head.ErrorCode == null || head.ErrorCode === '' ? '' : String(head.ErrorCode);
+  const providerMessage = head.ErrorMessage ? String(head.ErrorMessage) : '';
+  const status = Number(response?.status) || undefined;
+  const reason = [providerMessage, code && `código ${code}`].filter(Boolean).join(', ');
+  const error = new Error(
+    `${fallback} Falabella respondió HTTP ${status ?? 'sin estado'} en ${action}${reason ? `: ${reason}` : '.'}`,
+  );
+  error.details = {
+    source: 'falabella',
+    kind: falabellaError ? 'provider_error' : 'http_error',
+    action,
+    httpStatus: status,
+    falabellaErrorCode: code || undefined,
+    falabellaErrorMessage: providerMessage || undefined,
+    bodySnippet: falabellaError ? undefined : String(response?.rawText || '').replace(/\s+/g, ' ').trim().slice(0, 300) || undefined,
+  };
+  return error;
+}
+
+/** Who failed: Falabella (unreachable, bad response) or Zentofact itself. */
+export function failureSource(error) {
+  return error?.details?.source === 'falabella' ? 'falabella' : 'zentofact';
+}
+
+/**
+ * Accumulates per-order failures of one sync phase, split by who failed, so the
+ * stored message can say whether Falabella or Zentofact needs attention.
+ */
+export function createFailureLog() {
+  return { count: 0, lastLogId: null, lastError: null, bySource: {} };
+}
+
+export function recordFailure(log, error, logged) {
+  const source = failureSource(error);
+  log.count += 1;
+  log.lastLogId = logged.logId;
+  log.lastError = logged.error;
+  const entry = log.bySource[source] ||= { count: 0, lastError: null, lastLogId: null };
+  entry.count += 1;
+  entry.lastError = logged.error;
+  entry.lastLogId = logged.logId;
+}
+
+/**
+ * Merges phase failure logs. Zentofact failures win over Falabella ones because
+ * they are the ones we can fix; the message and logId belong to that source.
+ */
+export function summarizeFailures(...logs) {
+  const bySource = {};
+  for (const log of logs) {
+    for (const [source, entry] of Object.entries(log?.bySource || {})) {
+      const target = bySource[source] ||= { count: 0, lastError: null, lastLogId: null };
+      target.count += entry.count;
+      target.lastError = entry.lastError || target.lastError;
+      target.lastLogId = entry.lastLogId || target.lastLogId;
+    }
+  }
+  const source = bySource.zentofact ? 'zentofact' : bySource.falabella ? 'falabella' : null;
+  const count = Object.values(bySource).reduce((total, entry) => total + entry.count, 0);
+  return {
+    count,
+    source,
+    lastError: source ? bySource[source].lastError : null,
+    lastLogId: source ? bySource[source].lastLogId : null,
+    falabellaFailed: bySource.falabella?.count || 0,
+    zentofactFailed: bySource.zentofact?.count || 0,
+  };
+}
+
+export function partialSyncMessage(failed, summary) {
+  const split = summary?.falabellaFailed && summary?.zentofactFailed
+    ? ` (${summary.falabellaFailed} por Falabella, ${summary.zentofactFailed} por Zentofact)`
+    : '';
+  const base = `${failed} pedido(s) requieren reintento${split}.`;
+  return summary?.lastError ? `${base} Último error: ${String(summary.lastError).slice(0, 1500)}` : base;
+}
+
 
 export { effectiveFalabellaItemStatus, resolveFalabellaIngestStatus };
 
@@ -188,10 +275,9 @@ export async function fetchFalabellaPages(client, filters, onPage, pageSize = PA
   for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
     const response = await client.getOrdersV2({ ...providerFilters, limit: pageSize, offset });
     const apiError = getFalabellaError(response.data);
-    if (apiError) {
-      throw new Error(apiError.Head?.ErrorMessage || apiError.Head?.ErrorCode || 'Falabella devolvió un error.');
+    if (apiError || !response.ok) {
+      throw falabellaResponseError('Falabella no devolvió los pedidos.', response, 'GetOrders');
     }
-    if (!response.ok) throw new Error(`Falabella respondió HTTP ${response.status}.`);
     const orders = normalizeGetOrdersResult(response.data).orders || [];
     pages += 1;
     received += orders.length;
@@ -299,6 +385,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
       const logged = operationalErrorBody(error, {
         operation: 'order_sync_order',
         context: {
+          source: failureSource(error),
           seller: context.seller,
           companyId,
           channelAccountId: canonicalAccount?.id,
@@ -307,8 +394,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
           externalOrderId: order?.OrderId || order?.orderId,
         },
       });
-      context.failures.count += 1;
-      context.failures.lastLogId = logged.logId;
+      recordFailure(context.failures, error, logged);
     }
   }
   return upserted;
@@ -383,6 +469,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
   let hydrated = 0;
   let failed = 0;
   let lastLogId = null;
+  const failures = createFailureLog();
   await Promise.all(Array.from({ length: Math.min(6, candidates.rows.length) }, async () => {
     while (cursor < candidates.rows.length) {
       const order = candidates.rows[cursor++];
@@ -394,13 +481,14 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
         });
         if (!response.ok || getFalabellaError(response.data)) {
           failed += 1;
+          const responseError = falabellaResponseError('Falabella no devolvió los items del pedido.', response, 'GetOrderItems');
           await markFalabellaItemsError(
             db,
             account.id,
             order.order_id,
-            'Falabella no devolvió los items del pedido.',
+            responseError.message,
           );
-          const logged = operationalErrorBody(new Error('Falabella no devolvió los items del pedido.'), {
+          const logged = operationalErrorBody(responseError, {
             operation: 'order_sync_items',
             context: {
               seller: options.seller,
@@ -412,19 +500,22 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
             },
           });
           lastLogId = logged.logId;
+          recordFailure(failures, responseError, logged);
           continue;
         }
         checked += 1;
         const items = extractOrderItems(response.data);
         if (!items.length) {
           failed += 1;
+          const emptyItems = falabellaResponseError('Falabella devolvió el pedido sin items.', response, 'GetOrderItems');
+          emptyItems.details.kind = 'empty_items';
           await markFalabellaItemsError(
             db,
             account.id,
             order.order_id,
-            'Falabella devolvió el pedido sin items.',
+            emptyItems.message,
           );
-          const logged = operationalErrorBody(new Error('Falabella devolvió el pedido sin items.'), {
+          const logged = operationalErrorBody(emptyItems, {
             operation: 'order_sync_items',
             context: {
               seller: options.seller,
@@ -436,6 +527,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
             },
           });
           lastLogId = logged.logId;
+          recordFailure(failures, emptyItems, logged);
           continue;
         }
         const normalized = normalizeFalabellaOrder({
@@ -486,6 +578,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
         const logged = operationalErrorBody(error, {
           operation: 'order_sync_items',
           context: {
+            source: failureSource(error),
             seller: options.seller,
             companyId,
             channelAccountId: account?.id,
@@ -495,10 +588,11 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
           },
         });
         lastLogId = logged.logId;
+        recordFailure(failures, error, logged);
       }
     }
   }));
-  return { candidates: candidates.rows.length, checked, hydrated, failed, lastLogId };
+  return { candidates: candidates.rows.length, checked, hydrated, failed, lastLogId, lastError: failures.lastError, failures };
 }
 
 function itemNeedsStockRestock(item) {
@@ -590,6 +684,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
   let updated = 0;
   let failed = 0;
   let lastLogId = null;
+  const failures = createFailureLog();
   let account = null;
   for (const order of candidates.rows) {
     try {
@@ -600,7 +695,8 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
       });
       if (!response.ok || getFalabellaError(response.data)) {
         failed += 1;
-        const logged = operationalErrorBody(new Error('Falabella no devolvió el estado de los items del pedido.'), {
+        const responseError = falabellaResponseError('Falabella no devolvió el estado de los items del pedido.', response, 'GetOrderItems');
+        const logged = operationalErrorBody(responseError, {
           operation: 'order_sync_reconcile',
           context: {
             seller: options.seller,
@@ -612,6 +708,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
           },
         });
         lastLogId = logged.logId;
+        recordFailure(failures, responseError, logged);
         continue;
       }
       const items = extractOrderItems(response.data);
@@ -679,6 +776,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
       const logged = operationalErrorBody(error, {
         operation: 'order_sync_reconcile',
         context: {
+          source: failureSource(error),
           seller: options.seller,
           companyId,
           channelAccountId: account?.id,
@@ -688,9 +786,10 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
         },
       });
       lastLogId = logged.logId;
+      recordFailure(failures, error, logged);
     }
   }
-  return { checked: candidates.rows.length, updated, failed, lastLogId };
+  return { checked: candidates.rows.length, updated, failed, lastLogId, lastError: failures.lastError, failures };
 }
 
 function clientFor(company) {
@@ -767,13 +866,16 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       windowFrom = new Date(window.from);
       windowTo = new Date(window.to);
       if (windowFrom >= windowTo) {
+        const seller = company.nombreComercial || company.nombre || company.razonSocial;
         const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
           applyRecentStock: Boolean(state.last_successful_sync_at),
           observedSince: INVENTORY_LISTEN_FROM_AT,
+          seller,
           stockDb: dbPool,
         });
         const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
           orderClient: client,
+          seller,
         });
         return { status: 'success', skipped: 'already_current', itemHydration, reconciliation, sync: await getFalabellaSyncStatus(companyId, db) };
       }
@@ -793,7 +895,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     );
 
     let upserted = 0;
-    const orderFailures = { count: 0, lastLogId: null };
+    const orderFailures = createFailureLog();
     const stats = await fetchFalabellaPages(client, filters, async (orders) => {
       upserted += await upsertOrders(db, companyId, orders, {
         source: 'sync',
@@ -822,6 +924,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       syncMode: mode,
     });
     const failed = orderFailures.count + itemHydration.failed + reconciliation.failed;
+    const failureSummary = summarizeFailures(orderFailures, itemHydration.failures, reconciliation.failures);
     const syncStatus = failed > 0 ? 'partial' : 'success';
 
     await db.query(
@@ -844,7 +947,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         mode,
         windowTo.toISOString(),
         syncStatus,
-        syncStatus === 'partial' ? `${failed} pedido(s) requieren reintento.` : null,
+        syncStatus === 'partial' ? partialSyncMessage(failed, failureSummary) : null,
       ],
     );
     if (mode === 'month' && syncStatus === 'success') {
@@ -863,13 +966,16 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       ...stats,
       upserted,
       failed,
-      lastLogId: reconciliation.lastLogId || itemHydration.lastLogId || orderFailures.lastLogId,
+      lastLogId: failureSummary.lastLogId || reconciliation.lastLogId || itemHydration.lastLogId || orderFailures.lastLogId,
+      lastError: failureSummary.lastError,
+      lastErrorSource: failureSummary.source,
+      failureSummary,
       itemHydration,
       reconciliation,
       sync: await getFalabellaSyncStatus(companyId, db),
     };
   } catch (error) {
-    const message = String(error?.message || error).slice(0, 2000);
+    const message = describeError(error).message.slice(0, 2000);
     if (runId) await db.query(
       `update falabella_sync_runs set status='error', error=$2, finished_at=now() where id=$1`,
       [runId, message],

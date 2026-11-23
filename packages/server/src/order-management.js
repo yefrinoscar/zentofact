@@ -920,6 +920,10 @@ async function ingestOrderInTransaction(input, db) {
 }
 
 export async function ingestOrder(input, db) {
+  if (input.source === 'manual' && input.metadata?.paymentMethod === 'efectivo'
+    && !optionalText(input.metadata.receivedBy, 200)) {
+    throw new Error('Escribe el nombre de quien recibió el efectivo.');
+  }
   if (db) return ingestOrderInTransaction(input, db);
   const { pool } = await loadCore();
   const client = await pool.connect();
@@ -936,9 +940,13 @@ export async function ingestOrder(input, db) {
   }
 }
 
-const SALESPERSON_COMMISSION_SQL = `coalesce(
+/**
+ * Comisión de un Pedido de vendedor: la de cada línea (corregida en la línea o, si no, la del
+ * catálogo) por unidad, tenga o no Producto enlazado; si ninguna línea la tiene, el % del vendedor.
+ */
+export const SALESPERSON_COMMISSION_SQL = `coalesce(
     (select sum(coalesce(oi.commission_amount, p.commission_amount) * oi.quantity)
-     from order_items oi join products p on p.id=oi.product_id
+     from order_items oi left join products p on p.id=oi.product_id
    where oi.order_id=o.id),
   round(coalesce(o.total, 0) * coalesce(
     (select u.commission_percent from "user" u where u.id=o.created_by), 0
@@ -1722,7 +1730,8 @@ export async function getSalesPulse(filters = {}, db) {
   };
 }
 
-const SALES_EXCLUSIONS = `
+/** Pedidos que no cuentan como venta: cancelados, fallidos, reembolsados o devueltos. */
+export const SALES_EXCLUSIONS = `
   o.order_status not in ('cancelled', 'failed')
   and o.payment_status not in ('refunded', 'failed')
   and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
@@ -1780,7 +1789,7 @@ export async function getSalespersonHome(filters = {}, db) {
   const commissionPercent = Number(filters.commissionPercent) || 0;
   const today = limaDateKey();
   const monthStart = `${today.slice(0, 7)}-01`;
-  const from = String(filters.from || '').trim() || addCalendarDays(today, -29);
+  const from = String(filters.from || '').trim() || monthStart;
   const to = String(filters.to || '').trim() || today;
   if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('from inválido.');
   if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('to inválido.');
@@ -1998,6 +2007,9 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     throw new Error('paymentMethod inválido.');
   }
   const receivedBy = optionalText(input.receivedBy, 200);
+  if (paymentMethod === 'efectivo' && !receivedBy) {
+    throw new Error('Escribe el nombre de quien recibió el efectivo.');
+  }
   const paidTo = optionalText(input.paidTo, 50);
   if (paidTo && !PAYMENT_RECIPIENTS.includes(paidTo)) {
     throw new Error('paidTo inválido.');

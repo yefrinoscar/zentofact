@@ -8,6 +8,14 @@ Operación de catálogo, pedidos, comprobantes e inventario de una bodega multi-
 Material de empaque que se consume al operar: fill grande, fill pequeño o cinta scotch. Tiene cantidad propia y no se vende.
 _Avoid_: Producto, SKU, listing, stock de catálogo
 
+**Carro**:
+Vehículo propio del negocio, como el Suzuki Grand Vitara 3 puertas. Guarda su kilometraje actual y cada cuántos kilómetros toca cambiar el aceite. No se vende ni pertenece a un Seller. Incluye la ficha técnica de la TIVE de SUNARP: motor, combustible, cilindrada, potencia, tracción, carrocería, asientos, placa anterior y categoría.
+_Avoid_: Vehículo de envío propio, flota de reparto
+
+**Gasto de carro**:
+Registro de un Carro en una fecha: kilometraje, combustible, gas natural, llantas, refrigerante, aceite, frenos u otro. El registro de kilometraje es una lectura del odómetro: exige el kilometraje y su monto puede ser 0. Las demás categorías exigen monto y pueden anotar el kilometraje y el próximo servicio.
+_Avoid_: Insumo, pago de Falabella
+
 **Producto**:
 Artículo vendible del catálogo canónico, identificado por SKU interno.
 _Avoid_: Insumo
@@ -72,6 +80,10 @@ _Avoid_: stock aplicado, descontado
 Estado de entrega en el que el pedido ya está preparado y sale del almacén. Ahí se confirma la reserva: el stock del Producto deja de estar Reservado y se descuenta del almacén.
 _Avoid_: confirmed, pending
 
+**Descuento de stock**:
+Salida del Almacén que se registra cuando un Pedido pasa a Listo para enviar, enviado o entregado. Se aplica siempre: todo lo que se descontó estaba en stock, menos la devolución. Si el conteo no tenía esas unidades, primero se agregan con un ajuste de entrada de regularización ligado a la línea del Pedido, así el stock nunca queda negativo ni el pedido sin descontar. Lo mismo aplica al reservar un Pedido de canal: nunca queda "sin stock". Solo la devolución o la cancelación reintegran las unidades.
+_Avoid_: sin stock, descuento pendiente por falta de stock
+
 **Movimiento de inventario**:
 Registro auditable de una entrada o salida del stock de un Producto. Si sale por un Pedido listo para enviar, queda ligado a ese pedido.
 _Avoid_: Bitácora, kardex
@@ -79,6 +91,10 @@ _Avoid_: Bitácora, kardex
 **Comisión**:
 Monto fijo configurado en el Producto para calcular la ganancia al venderlo.
 _Avoid_: Margen, fee, comisión del marketplace
+
+**Ganancia del vendedor**:
+Comisión que suman los Pedidos que registró un usuario con perfil Vendedor: la Comisión de cada línea por unidad o, si ninguna línea la tiene, el % del vendedor. No descuenta costos ni cobros del canal, así que no es utilidad del negocio.
+_Avoid_: Utilidad, margen, ganancia del Seller
 
 **Precio por mayor**:
 Precio del Producto para venta al por mayor. Es distinto del precio de catálogo.

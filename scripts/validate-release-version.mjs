@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { bumpVersion, resolveReleaseType } from './lib/release-type.mjs';
 
-const releaseLabels = new Set(['release:patch', 'release:minor', 'release:major']);
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function fail(message) {
@@ -9,56 +9,44 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-function parseVersion(value, source) {
-  const match = semverPattern.exec(value);
-  if (!match) {
-    throw new Error(`${source} must contain a stable X.Y.Z version; found ${JSON.stringify(value)}.`);
-  }
-
-  return match.slice(1).map(Number);
-}
-
 function versionFromGit(sha, file) {
   const contents = execFileSync('git', ['show', `${sha}:${file}`], { encoding: 'utf8' });
   return JSON.parse(contents).version;
-}
-
-function expectedVersion(baseVersion, releaseType) {
-  const [major, minor, patch] = parseVersion(baseVersion, 'Base branch');
-
-  if (releaseType === 'release:major') return `${major + 1}.0.0`;
-  if (releaseType === 'release:minor') return `${major}.${minor + 1}.0`;
-  return `${major}.${minor}.${patch + 1}`;
 }
 
 try {
   const baseSha = process.env.BASE_SHA;
   if (!baseSha) throw new Error('BASE_SHA is required.');
 
-  const labels = JSON.parse(process.env.RELEASE_LABELS || '[]');
-  const selectedLabels = labels.filter((label) => releaseLabels.has(label));
-  if (selectedLabels.length !== 1) {
-    throw new Error(
-      `Apply exactly one release label (${[...releaseLabels].join(', ')}); found ${selectedLabels.length}.`,
-    );
+  const { releaseType, source } = resolveReleaseType({
+    labels: JSON.parse(process.env.RELEASE_LABELS || '[]'),
+    body: process.env.PR_BODY || '',
+  });
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `release_type=${releaseType}\nsource=${source}\n`);
   }
 
-  const releaseType = selectedLabels[0];
   const versionFile = 'packages/web/package.json';
   const lockfile = 'package-lock.json';
   const baseVersion = versionFromGit(baseSha, versionFile);
   const headVersion = JSON.parse(readFileSync(versionFile, 'utf8')).version;
   const lockVersion = JSON.parse(readFileSync(lockfile, 'utf8')).packages?.['packages/web']?.version;
-  const expected = expectedVersion(baseVersion, releaseType);
+  const expected = bumpVersion(baseVersion, releaseType);
 
-  parseVersion(headVersion, 'Feature branch');
+  if (!semverPattern.test(headVersion)) {
+    throw new Error(`Feature branch must contain a stable X.Y.Z version; found ${JSON.stringify(headVersion)}.`);
+  }
 
   if (headVersion !== expected) {
-    fail(`${releaseType} requires ${baseVersion} -> ${expected}, but the pull request contains ${headVersion}.`);
+    const kind = releaseType.replace('release:', '');
+    fail(
+      `${releaseType} requires ${baseVersion} -> ${expected}, but the pull request contains ${headVersion}. ` +
+        `Run \`npm run release:bump -- ${kind}\`, commit, and push.`,
+    );
   }
 
   if (lockVersion !== headVersion) {
-    fail(`${lockfile} contains ${lockVersion || 'no web version'}; expected ${headVersion}.`);
+    fail(`${lockfile} contains ${lockVersion || 'no web version'}; expected ${headVersion}. Run \`npm run release:bump\`.`);
   }
 
   const existingTag = execFileSync('git', ['tag', '--list', `v${headVersion}`], { encoding: 'utf8' }).trim();
@@ -71,7 +59,7 @@ try {
   }
 
   if (!process.exitCode) {
-    console.log(`Validated ${releaseType}: ${baseVersion} -> ${headVersion}.`);
+    console.log(`Validated ${releaseType} (from ${source}): ${baseVersion} -> ${headVersion}.`);
   }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));

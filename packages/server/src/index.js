@@ -36,6 +36,8 @@ const insumos = await import('./insumos.js');
 const insumoLowStockAlert = await import('./insumo-low-stock-alert.js');
 const { sendEmail } = await import('./mailer.js');
 await insumos.ensureTables();
+const cars = await import('./cars.js');
+await cars.ensureTables();
 const notifications = await import('./notifications.js');
 await notifications.ensureTables();
 if (shouldSeedPreview()) {
@@ -91,6 +93,7 @@ const marketplaceMutationJobs = await import('./catalog/marketplace-mutation-job
 await marketplaceMutationJobs.ensureMarketplaceMutationJobTables(core.pool);
 const dashboard = await import('./dashboard.js');
 const productSalesReport = await import('./catalog/product-sales-report.js');
+const salespersonEarnings = await import('./salesperson-earnings.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -192,6 +195,7 @@ const moduleGuards = [
   ['/workflow', 'falabella_sellers'],
   ['/auto-emit', 'auto_emision'],
   ['/insumos', 'insumos'],
+  ['/cars', 'carros'],
 ];
 for (const [prefix, perm] of moduleGuards) {
   const permissionGuard = requirePermission(perm);
@@ -348,6 +352,21 @@ app.get('/dashboard', async (c) => {
 app.get('/dashboard/product-sales', async (c) => {
   try {
     const data = await productSalesReport.listProductSalesReport(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+// Ganancias de vendedores: mismo permiso de Dashboard (solo administradores).
+app.get('/dashboard/salesperson-earnings', async (c) => {
+  try {
+    const data = await salespersonEarnings.listSalespersonEarnings(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/dashboard/salesperson-earnings/:userId/sales', async (c) => {
+  try {
+    const data = await salespersonEarnings.listSalespersonEarningSales(c.req.param('userId'), c.req.query());
     c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
@@ -1330,6 +1349,55 @@ app.post('/insumos/:id/adjust', async (c) => {
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
+// ── Carros: vehículos propios y sus gastos (mantenimiento, aceite, combustible…) ──
+app.get('/cars/:id/expenses', async (c) => {
+  try {
+    return ok(c, await cars.listCarExpenses(c.req.param('id'), {
+      category: c.req.query('category'),
+      from: c.req.query('from'),
+      to: c.req.query('to'),
+      q: c.req.query('q'),
+      page: c.req.query('page'),
+      pageSize: c.req.query('pageSize'),
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/cars/:id/expenses', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await cars.createCarExpense(c.req.param('id'), body, c.get('user')), 201);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/cars/:id/expenses/:expenseId', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await cars.updateCarExpense(c.req.param('id'), c.req.param('expenseId'), body, c.get('user')));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.delete('/cars/:id/expenses/:expenseId', async (c) => {
+  try {
+    return ok(c, await cars.deleteCarExpense(c.req.param('id'), c.req.param('expenseId')));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/cars', async (c) => {
+  try { return ok(c, await cars.listCars({ status: c.req.query('status') })); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/cars/:id', async (c) => {
+  try { return ok(c, await cars.getCar(c.req.param('id'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/cars', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await cars.createCar(body, c.get('user')), 201);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/cars/:id', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await cars.updateCar(c.req.param('id'), body, c.get('user')));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──
 app.get('/companies', async (c) => { try { return ok(c, await core.listPublicCompanies()); } catch (e) { return fail(c, e); } });
 app.get('/companies/:id', requirePermission('companies'), async (c) => {
@@ -1607,7 +1675,7 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
     const companyId = Number(c.req.param('companyId'));
     const orderId = c.req.param('orderId');
     const order = (await core.pool.query(
-      'select status from falabella_orders where company_id=$1 and order_id=$2',
+      'select status, order_number from falabella_orders where company_id=$1 and order_id=$2',
       [companyId, orderId],
     )).rows[0];
     if (!order || !core.canPrintFalabellaShippingLabel(order.status)) {
@@ -1622,10 +1690,36 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
         context: { companyId, orderId, status },
       }), status);
     }
+    // Igual que en la hoja A4: guardar el tracking impreso para que el escáner
+    // de armado resuelva la etiqueta. No bloquea ni hace fallar la impresión.
+    if (result?.base64) {
+      void saveSingleLabelTrackingSnapshot({
+        companyId,
+        orderId,
+        orderNumber: order.order_number,
+        base64: result.base64,
+      });
+    }
     c.header('Cache-Control', 'private, no-store');
     return ok(c, result);
   } catch (e) { return fail(c, e); }
 });
+async function saveSingleLabelTrackingSnapshot({ companyId, orderId, orderNumber, base64 }) {
+  try {
+    const trackingCodes = await shippingLabelSheet.extractShippingLabelTrackingCodes(
+      Buffer.from(String(base64).replace(/\s+/g, ''), 'base64'),
+    );
+    const inventory = await core.falabellaGetOrderItems({ companyId, orderId });
+    if (inventory?.error || inventory?.ok === false) throw new Error(inventory?.error || 'Falabella no devolvió los productos.');
+    await pickingScanner.saveFalabellaTicketSnapshot(
+      core.pool,
+      { companyId, orderId, orderNumber },
+      pickingScanner.attachShippingLabelTrackingCodes(inventory, trackingCodes),
+    );
+  } catch (error) {
+    console.warn('[SHIPPING LABEL TRACKING]', orderId, error?.message || error);
+  }
+}
 app.post('/falabella/shipping-labels/a4', async (c) => {
   try {
     const { orders } = await c.req.json();

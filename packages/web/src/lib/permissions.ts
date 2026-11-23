@@ -7,6 +7,7 @@ export type PermissionKey =
   | 'return_stock_approve'
   | 'productos'
   | 'insumos'
+  | 'carros'
   | 'orders_inbox'
   | 'orders_scanner'
   | 'boletas'
@@ -54,6 +55,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'return_stock_approve', label: 'Aprobar devoluciones', description: 'Revisar devoluciones y pasarlas al stock vendible', path: '/cancelados', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
+  { key: 'carros', label: 'Carros', description: 'Ver los vehículos y registrar mantenimientos, cambios de aceite y gastos', path: '/carros', section: 'operation' },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/bandeja', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'orders' },
@@ -443,6 +445,7 @@ function roleRankOf(role: AppRole) {
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/ventas')) return 'dashboard';
+  if (pathname.startsWith('/vendedores')) return 'dashboard';
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/envio-propio') || pathname.startsWith('/orders/envio')) return 'settings';
@@ -458,6 +461,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/productos')) return 'productos';
   if (pathname.startsWith('/descuentos-stock')) return 'productos';
   if (pathname.startsWith('/insumos')) return 'insumos';
+  if (pathname.startsWith('/carros')) return 'carros';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';
   if (pathname.startsWith('/credit-notes/bulk')) return 'credit_notes_bulk';
   if (pathname.startsWith('/credit-notes')) return 'credit_notes_manage';

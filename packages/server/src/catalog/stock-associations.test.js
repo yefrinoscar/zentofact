@@ -18,6 +18,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
           order_item_id: '91', company_id: 4, company: 'LIMBO', channel_code: 'falabella',
           channel_account_id: '12', seller_sku: 'S126695', shop_sku: 'PMP20000722586-1',
           title: 'Camiseta reductora', image_url: 'https://media.falabella.com/falabellaPE/PMP20000722586-1_01',
+          variant_raw: [{ Variation: '...' }, { Variation: 'M' }],
           line_count: 2, quantity: '2',
           order_numbers: ['7934119901', '7934178001'],
         }],
@@ -30,6 +31,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
   assert.match(sql, /product_id is null/i);
   assert.match(sql, /image_url/i);
   assert.match(sql, /product_medias/i);
+  assert.match(sql, /falabella_product_variants/i);
   assert.deepEqual(rows, [{
     orderItemId: 91,
     companyId: 4,
@@ -43,6 +45,10 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
     lineCount: 2,
     quantity: 2,
     orderNumbers: ['7934119901', '7934178001'],
+    color: null,
+    size: 'M',
+    variantLabel: 'Talla M',
+    sizeSource: 'order',
   }]);
 });
 

@@ -994,6 +994,86 @@ export async function reopenReservedStockJobsForCommit(db) {
   return { reopened: result.rows.length };
 }
 
+// "Todo lo que se descontó está en stock, menos la devolución": un pedido que
+// ya salió del Almacén siempre descuenta: primero se agrega el stock faltante. Las
+// líneas que quedaron sin descontar con la regla anterior (skipped_insufficient
+// o reservas atascadas) vuelven a la cola para que el worker las confirme.
+// Un job fallido por falta de stock también vuelve aunque su línea siga en
+// none/skipped_policy: la señal es result.insufficient, la misma que usa el
+// aviso. No toca incidencias reportadas (warning), devoluciones ni
+// cancelaciones, ni jobs bloqueados por líneas sin producto maestro.
+export async function requeueShippedStockShortages(input = {}, db, dependencies = {}) {
+  const since = input.since || INVENTORY_LISTEN_FROM_AT;
+  const enqueue = dependencies.enqueue || enqueueStockJob;
+  const client = await target(db);
+  const activeOrderSql = `
+       o.order_status not in ('cancelled','failed')
+       and o.fulfillment_status not in ('cancelled','returned','failed')
+       and o.items_status='complete'
+       and o.ordered_at >= $1::timestamptz
+       and coalesce(o.metadata->'stockIncident'->>'status', '') <> 'reported'`;
+  const shortageLineSql = `exists (
+         select 1 from order_items oi
+         where oi.order_id=o.id
+           and (
+             oi.stock_state='skipped_insufficient'
+             or (oi.stock_state='pending' and o.fulfillment_status in (${READY_FULFILLMENT_SQL}))
+           )
+       )`;
+  const eligibleOrderSql = `${activeOrderSql}
+       and ${shortageLineSql}`;
+  const requeued = await client.query(
+    `update inventory_stock_jobs job
+        set status='pending', attempts=0, last_error=null,
+            next_attempt_at=null, updated_at=now()
+       from orders o
+      where job.order_id=o.id
+        and ${activeOrderSql}
+        and (
+          (job.status='done' and ${shortageLineSql})
+          or (
+            (job.status='failed' or (job.status='pending' and job.attempts >= $2))
+            -- Solo reintenta fallos por falta de stock; un error distinto o una
+            -- línea sin producto maestro no se resuelve con la regla y entraría
+            -- en un bucle de reintentos.
+            and coalesce((job.result->>'unmapped')::int, 0) = 0
+            and (
+              coalesce((job.result->>'insufficient')::int, 0) > 0
+              or (
+                (job.last_error is null or job.last_error ilike '%stock disponible%')
+                and ${shortageLineSql}
+              )
+            )
+          )
+        )
+      returning job.id`,
+    [since, MAX_ATTEMPTS],
+  );
+  const orphans = await client.query(
+    `select o.id as order_id, o.company_id, o.external_order_id, o.external_order_number
+       from orders o
+      where ${eligibleOrderSql}
+        and o.company_id is not null
+        and not exists (select 1 from inventory_stock_jobs j where j.order_id=o.id)
+      order by o.ordered_at desc, o.id desc
+      limit 50`,
+    [since],
+  );
+  let enqueued = 0;
+  for (const row of orphans.rows) {
+    const result = await enqueue({
+      orderId: row.order_id,
+      companyId: row.company_id,
+      externalOrderId: row.external_order_id,
+      orderNumber: row.external_order_number,
+      source: input.source || 'listen',
+      resetAttempts: true,
+    }, db);
+    if (result.enqueued) enqueued += 1;
+  }
+  return { since, requeued: requeued.rows.length, enqueued };
+}
+
 export async function enqueueStockJobsSinceListenFrom(input = {}, db, dependencies = {}) {
   const since = input.since || INVENTORY_LISTEN_FROM_AT;
   const enqueue = dependencies.enqueue || enqueueStockJob;
@@ -1094,7 +1174,7 @@ export async function drainStockQueue(input = {}, db) {
 
 export async function runStockReconciliation(input = {}, db, dependencies = {}) {
   const paused = await (dependencies.getPaused || getPaused)(db);
-  if (paused) return { paused: true, listened: null, reopened: null };
+  if (paused) return { paused: true, listened: null, reopened: null, shortages: null };
   const record = dependencies.record || (async (result, error) => {
     const client = await target(db);
     await client.query(
@@ -1113,7 +1193,11 @@ export async function runStockReconciliation(input = {}, db, dependencies = {}) 
       db,
     );
     const reopened = await (dependencies.reopen || reopenReservedStockJobsForCommit)(db);
-    const result = { paused: false, listened, reopened };
+    const shortages = await (dependencies.requeueShortages || requeueShippedStockShortages)(
+      { source: input.source || 'cron' },
+      db,
+    );
+    const result = { paused: false, listened, reopened, shortages };
     await record(result, null);
     return result;
   } catch (error) {
@@ -1129,7 +1213,8 @@ export function startStockReconciliationCron() {
     running = true;
     try {
       const result = await runStockReconciliation();
-      if (result.listened?.enqueued || result.reopened?.reopened) log(JSON.stringify({ cron: result }));
+      if (result.listened?.enqueued || result.reopened?.reopened
+        || result.shortages?.requeued || result.shortages?.enqueued) log(JSON.stringify({ cron: result }));
     } catch (error) {
       log('cron error:', error?.message || error);
     } finally {

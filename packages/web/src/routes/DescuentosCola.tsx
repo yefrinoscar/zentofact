@@ -59,6 +59,17 @@ type UnmatchedStockItem = {
   lineCount: number;
   quantity: number;
   orderNumbers: string[];
+  color?: string | null;
+  size?: string | null;
+  variantLabel?: string | null;
+  sizeSource?: string | null;
+};
+
+const SIZE_SOURCE_LABEL: Record<string, string> = {
+  order: 'Atributo del pedido',
+  variant_cache: 'Variante guardada del marketplace',
+  listing: 'Publicación',
+  title: 'Título',
 };
 
 type Job = {
@@ -783,6 +794,15 @@ export default function DescuentosCola() {
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">{sellerShortName(item.company)}</span>
                     <ChannelBadge code={item.channelCode} />
+                    {item.size ? (
+                      <span
+                        className="inline-flex items-center rounded-md bg-foreground px-1.5 py-0.5 text-[11px] font-semibold text-background"
+                        title={item.sizeSource ? `Detectada desde: ${SIZE_SOURCE_LABEL[item.sizeSource] || item.sizeSource}` : undefined}
+                      >
+                        Talla {item.size}
+                      </span>
+                    ) : null}
+                    {item.color ? <span className="font-medium text-foreground">{item.color}</span> : null}
                     <span>Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></span>
                     {item.shopSku ? <span>Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></span> : null}
                   </div>
@@ -996,7 +1016,7 @@ export default function DescuentosCola() {
         canSelect={() => assigningProductId == null}
         title="Asignar producto maestro"
         description={assignmentItem
-          ? `Elige el maestro para ${assignmentItem.sellerSku}. La asociación se aplicará a sus pedidos pendientes.`
+          ? `Elige el maestro para ${assignmentItem.sellerSku}${assignmentItem.variantLabel ? ` (${assignmentItem.variantLabel})` : ''}. La asociación se aplicará a sus pedidos pendientes.`
           : 'Elige el producto maestro.'}
       />
 

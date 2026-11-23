@@ -1,4 +1,6 @@
-import puppeteer, { Browser } from 'puppeteer';
+import puppeteer from 'puppeteer';
+import { createIdleBrowser } from '../utils/idle-browser';
+import { renderHtmlToPdfWithTakumi } from '../utils/takumi-pdf';
 import { generateQRDataUrl, buildQRString } from '../utils/qr-generator';
 import { numeroALetras } from '../utils/number-to-words';
 
@@ -12,18 +14,14 @@ const FORMAT_DIMS: Record<PdfFormat, { width: string; height: string }> = {
   'ticket': { width: '50mm',  height: '150mm' },
 };
 
-let _browser: Browser | null = null;
-
-async function getBrowser(): Promise<Browser> {
-  if (!_browser || !_browser.connected) {
-    _browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    });
-  }
-  return _browser;
-}
+// Chromium se libera tras 60 s sin generar PDFs (ver utils/idle-browser).
+const pdfBrowser = createIdleBrowser({
+  launch: () => puppeteer.launch({
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  }),
+});
 
 export interface PdfBoletaData {
   company: {
@@ -100,22 +98,38 @@ export async function generateBoletaPreviewHtml(data: PdfBoletaData, format: Pdf
   return buildHtml(data, qrImage, montoLetras, isTicket);
 }
 
+// A4 se imprime sin navegador (takumi-pdf). PDF_A4_RENDERER=chromium vuelve a Chromium
+// sin redeploy de código. Los demás formatos siguen en Chromium por ahora.
+function a4UsesTakumi(): boolean {
+  return (process.env.PDF_A4_RENDERER || 'takumi').trim().toLowerCase() !== 'chromium';
+}
+
 export async function generateBoletaPdf(data: PdfBoletaData, format: PdfFormat): Promise<Buffer> {
   const html = await generateBoletaPreviewHtml(data, format);
 
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'load' });
+  if (format === 'A4' && a4UsesTakumi()) {
+    try {
+      return await renderHtmlToPdfWithTakumi(html, { widthMm: 210, heightMm: 297 });
+    } catch (error) {
+      // Nunca bloquear una emisión por el renderizador: si takumi falla, imprime Chromium.
+      console.warn('[PDF] takumi-pdf falló en A4; se usa Chromium:', (error as Error)?.message || error);
+    }
+  }
 
+  return renderHtmlToPdfWithChromium(html, format);
+}
+
+async function renderHtmlToPdfWithChromium(html: string, format: PdfFormat): Promise<Buffer> {
   const dims = FORMAT_DIMS[format];
-  const pdf = await page.pdf({
-    width: dims.width,
-    height: dims.height,
-    printBackground: true,
-    margin: { top: '0mm', bottom: '0mm', left: '0mm', right: '0mm' },
+  const pdf = await pdfBrowser.withPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'load' });
+    return page.pdf({
+      width: dims.width,
+      height: dims.height,
+      printBackground: true,
+      margin: { top: '0mm', bottom: '0mm', left: '0mm', right: '0mm' },
+    });
   });
-
-  await page.close();
   return Buffer.from(pdf);
 }
 

@@ -11,6 +11,7 @@ import {
   inventoryForTicket,
   shippingLabelCropBox,
   ticketCode,
+  trackingCodeFromTextFragments,
 } from './shipping-label-sheet.js';
 
 async function sampleLabel(width = 200, height = 320, pages = 1) {
@@ -34,6 +35,24 @@ test('extrae el tracking largo del texto de cada página de Falabella', async ()
     await extractShippingLabelTrackingCodes(await pdf.save()),
     ['240121000011894785', '240111000011900534'],
   );
+});
+
+test('reconstruye el tracking girado que pdf.js devuelve en trozos o dígito por dígito', async () => {
+  assert.equal(
+    trackingCodeFromTextFragments(['Nombre Seller:', '2401210000', '14992520', 'N° Bultos :']),
+    '240121000014992520',
+  );
+  assert.equal(
+    trackingCodeFromTextFragments(['TO:#106', ...'240121000014992520'.split(''), 'COLLECT']),
+    '240121000014992520',
+  );
+  assert.equal(trackingCodeFromTextFragments(['3261381802', 'Cant: 1']), '');
+
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([300, 400]);
+  page.drawText('Orden 3261381802', { y: 360 });
+  [...'240121000014992520'].forEach((digit, index) => page.drawText(digit, { x: 20, y: 40 + index * 12 }));
+  assert.deepEqual(await extractShippingLabelTrackingCodes(await pdf.save()), ['240121000014992520']);
 });
 
 const SAMPLE_PNG = Buffer.from(

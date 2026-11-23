@@ -34,6 +34,14 @@ import {
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
 } from '../../lib/own-fleet-shipping';
 import { SHIPPING_CARRIERS, isSellerPricedShipping } from '../../lib/shipping-carrier';
+import {
+  DINSIDES_AGENCY_AMOUNT,
+  DINSIDES_CARRIER,
+  DINSIDES_COVERAGE_URL,
+  DINSIDES_MIN_AMOUNT,
+  DINSIDES_PACKAGE_LIMIT,
+  DINSIDES_ZONE_LIST,
+} from '../../lib/dinsides-coverage';
 import { copyText } from '../../lib/clipboard';
 import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
 import {
@@ -48,6 +56,7 @@ import { PlacePicker } from '../../components/PlacePicker';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -412,6 +421,84 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
   );
 }
 
+function DinsidesQuoteCard({
+  zone,
+  amount,
+  applied,
+  onUse,
+}: {
+  zone: string;
+  amount: number;
+  applied: boolean;
+  onUse: (amount: number) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-md bg-muted/50 px-3 py-2.5 ring-1 ring-border">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 text-sm font-semibold">Dinsides · {zone}</span>
+        <span className="shrink-0 text-sm font-semibold tabular-nums">{formatSaleMoney(amount)}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="text-xs text-muted-foreground">Tarifa regular · {DINSIDES_PACKAGE_LIMIT}</p>
+        {applied ? null : (
+          <button
+            type="button"
+            className="cursor-pointer text-xs font-medium text-primary underline underline-offset-2"
+            onClick={() => onUse(amount)}
+          >
+            Usar {formatSaleMoney(amount)}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DinsidesRatesPopover() {
+  const tiers = DINSIDES_ZONE_LIST.reduce<Array<{ amount: number; zones: string[] }>>((acc, zone) => {
+    const last = acc[acc.length - 1];
+    if (last && last.amount === zone.amount) last.zones.push(zone.name);
+    else acc.push({ amount: zone.amount, zones: [zone.name] });
+    return acc;
+  }, []);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="cursor-pointer underline underline-offset-2">
+          Ver tarifas
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-[min(28rem,70vh)] w-80 max-w-[calc(100vw-2rem)] gap-0 overflow-y-auto p-0">
+        <div className="border-b px-4 py-3">
+          <p className="text-sm font-semibold">Tarifas Dinsides</p>
+          <p className="text-xs text-muted-foreground">{DINSIDES_PACKAGE_LIMIT}. Más grande, se cotiza.</p>
+        </div>
+        <dl className="divide-y">
+          {tiers.map((tier) => (
+            <div key={tier.amount} className="grid grid-cols-[4rem_1fr] gap-3 px-4 py-2.5">
+              <dt className="text-sm font-semibold tabular-nums">{formatSaleMoney(tier.amount)}</dt>
+              <dd className="text-xs leading-5 text-muted-foreground">{tier.zones.join(', ')}</dd>
+            </div>
+          ))}
+          <div className="grid grid-cols-[4rem_1fr] gap-3 px-4 py-2.5">
+            <dt className="text-sm font-semibold tabular-nums">{formatSaleMoney(DINSIDES_AGENCY_AMOUNT)}</dt>
+            <dd className="text-xs leading-5 text-muted-foreground">Envío a agencia Shalom, Olva o Marvisur</dd>
+          </div>
+        </dl>
+        <a
+          href={DINSIDES_COVERAGE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 border-t px-4 py-2.5 text-xs font-medium text-primary"
+        >
+          Ver mapa en dinsides.com
+          <ExternalLink className="size-3" />
+        </a>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function EntregaStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel title="Entrega" hint="Cómo y cuándo lo recibe." icon={Truck}>
@@ -487,7 +574,14 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
                 placeholder="0.00"
                 className={cn('h-10 bg-background sm:max-w-40 sm:h-9', NUMBER_INPUT)}
               />
-              <p className="mt-1.5 text-xs text-muted-foreground">Lo pone el vendedor.</p>
+              {view.shippingCarrier === DINSIDES_CARRIER ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Lima y Callao desde {formatSaleMoney(DINSIDES_MIN_AMOUNT)}.{' '}
+                  <DinsidesRatesPopover />
+                </p>
+              ) : (
+                <p className="mt-1.5 text-xs text-muted-foreground">Lo pone el vendedor.</p>
+              )}
             </FieldRow>
           ) : null}
           <FieldRow label="Dirección">
@@ -517,6 +611,23 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
               <p className="mt-3 rounded-md bg-destructive/5 px-3 py-2 text-sm text-destructive ring-1 ring-destructive/20">
                 {OWN_FLEET_OUT_OF_RANGE_MESSAGE}
               </p>
+            )}
+            {view.shippingCarrier === DINSIDES_CARRIER && view.dinsidesQuote?.covered && (
+              <DinsidesQuoteCard
+                zone={view.dinsidesQuote.zone}
+                amount={view.dinsidesQuote.amount}
+                applied={Number(view.sellerShippingInput) === view.dinsidesQuote.amount}
+                onUse={view.useDinsidesPrice}
+              />
+            )}
+            {view.shippingCarrier === DINSIDES_CARRIER && view.dinsidesQuote && !view.dinsidesQuote.covered && (
+              <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-500/30 dark:text-amber-300">
+                Dinsides no tiene tarifa regular para {view.dinsidesQuote.district || 'esa dirección'}. Envío a agencia
+                Shalom, Olva o Marvisur: {formatSaleMoney(DINSIDES_AGENCY_AMOUNT)}.
+              </p>
+            )}
+            {view.shippingCarrier === DINSIDES_CARRIER && !view.dropoffPlace && (
+              <p className="mt-1.5 text-xs text-muted-foreground">Busca la dirección para ver la tarifa de Dinsides.</p>
             )}
             {view.shippingCarrier === OWN_FLEET_CARRIER && !view.dropoffPlace && (
               <p className="mt-1.5 text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
@@ -563,12 +674,14 @@ export function PagoStep({ view }: { view: SaleFormView }) {
       </FieldRow>
 
       {view.paymentMethod === 'efectivo' && (
-        <FieldRow label="¿Quién cobró?" htmlFor="received-by">
+        <FieldRow label="Recibió el efectivo" htmlFor="received-by">
           <Input
             id="received-by"
             value={view.receivedBy}
             onChange={(event) => view.setReceivedBy(event.target.value)}
-            placeholder="Opcional"
+            placeholder="Nombre de quien recibió el dinero"
+            required
+            maxLength={200}
           />
         </FieldRow>
       )}

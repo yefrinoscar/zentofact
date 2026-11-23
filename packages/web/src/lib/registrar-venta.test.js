@@ -544,10 +544,16 @@ test('el comprobante incompleto bloquea el paso Cliente, no el de Entrega', () =
   assert.equal(firstInvalidSaleStep(sinDni), 'cliente');
 });
 
-test('el paso Pago nunca bloquea: el método siempre trae un valor', () => {
+test('el paso Pago exige el nombre de quien recibió el efectivo', () => {
   assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'despues' })), null);
   assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'yape_plin', paymentProof: null })), null);
-  assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'efectivo', receivedBy: '' })), null);
+  for (const receivedBy of [undefined, '', '   ']) {
+    const sale = validSale({ paymentMethod: 'efectivo', receivedBy });
+    assert.equal(validateSaleStep('pago', sale), 'Escribe el nombre de quien recibió el efectivo.');
+    assert.equal(validateManualSale(sale), 'Escribe el nombre de quien recibió el efectivo.');
+    assert.equal(firstInvalidSaleStep(sale), 'pago');
+  }
+  assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'efectivo', receivedBy: ' Ana ' })), null);
 });
 
 test('el resumen valida la venta completa antes de registrar', () => {

@@ -13,6 +13,7 @@ import {
   summarizeOrders,
   updateManualOrder,
   updateOrderPayment,
+  SALESPERSON_COMMISSION_SQL,
 } from './order-management.js';
 import {
   alignFalabellaHeaderWithClosedFulfillment,
@@ -1566,4 +1567,27 @@ test('recalcula subtotal y total al corregir cantidades y precios', async () => 
   assert.equal(db.items[0].unit_price, 49.9);
   assert.equal(result.subtotal, 149.7);
   assert.equal(result.total, 149.7);
+});
+
+
+test('el efectivo exige un receptor antes de registrar la venta o el pago', async () => {
+  const db = { query: async () => { throw new Error('No debe escribir ni consultar sin receptor'); } };
+  for (const receivedBy of [undefined, '', '   ']) {
+    await assert.rejects(
+      () => updateOrderPayment(91, { paymentMethod: 'efectivo', receivedBy }, db),
+      /Escribe el nombre de quien recibió el efectivo/,
+    );
+    await assert.rejects(
+      () => ingestOrder(manualSale({ source: 'manual', metadata: { paymentMethod: 'efectivo', receivedBy } }), db),
+      /Escribe el nombre de quien recibió el efectivo/,
+    );
+  }
+});
+
+test('la comisión del vendedor cuenta las líneas sin Producto enlazado', () => {
+  const sql = SALESPERSON_COMMISSION_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /sum\(coalesce\(oi\.commission_amount, p\.commission_amount\) \* oi\.quantity\)/);
+  assert.match(sql, /from order_items oi left join products p on p\.id=oi\.product_id/);
+  assert.doesNotMatch(sql, /from order_items oi join products/);
+  assert.match(sql, /u\.commission_percent/);
 });

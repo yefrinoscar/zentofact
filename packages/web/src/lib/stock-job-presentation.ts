@@ -63,6 +63,16 @@ function firstText(...values: Array<string | null | undefined>) {
   return '';
 }
 
+const SHIPPED_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
+
+// Un pedido listo para enviar, enviado o entregado ya salió del almacén: su
+// descuento se aplica siempre, completando antes el stock faltante. Nunca es "sin stock".
+function isShippedStockOrder(input: StockJobForPresentation | StockOrderForPresentation | null | undefined) {
+  if (!input) return false;
+  const record = input as StockJobForPresentation & StockOrderForPresentation;
+  return SHIPPED_FULFILLMENT.has(firstText(record.fulfillment_status, record.fulfillmentStatus));
+}
+
 export function stockTerminalKind(
   input: StockJobForPresentation | StockOrderForPresentation | null | undefined,
 ): StockTerminalKind | null {
@@ -122,7 +132,7 @@ export function visibleStockJobStatus(job: StockJobForPresentation, listenFromAt
   if (terminal) return terminal;
   if (job.status !== 'done') return job.status;
   if (count(job.unmatched_items) > 0) return 'unmatched';
-  if (count(job.insufficient_items) > 0) return 'insufficient';
+  if (count(job.insufficient_items) > 0) return isShippedStockOrder(job) ? 'pending' : 'insufficient';
   if (hasStockState(job, 'skipped_policy') && !isAtOrAfterListenFrom(job.ordered_at, listenFromAt)) {
     return 'outside_window';
   }
@@ -168,6 +178,7 @@ export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: stri
   }
   if (job.last_error) return job.last_error;
   if (unmatched > 0) return `${unmatched} línea${unmatched === 1 ? '' : 's'} sin producto maestro`;
+  if (insufficient > 0 && isShippedStockOrder(job)) return 'Se agrega el stock faltante y se descuenta';
   if (insufficient > 0) return `${insufficient} línea${insufficient === 1 ? '' : 's'} sin stock disponible`;
   if (hasStockState(job, 'skipped_policy') && !isAtOrAfterListenFrom(job.ordered_at, listenFromAt)) {
     const orderedAt = limaDateTime(job.ordered_at);
@@ -237,6 +248,9 @@ export function stockItemReason(
     return 'Volvió al almacén.';
   }
   if (!item.productId && !item.mainSku) return 'No tiene producto maestro.';
+  if (item.stockState === 'skipped_insufficient' && isShippedStockOrder(order)) {
+    return 'Se agrega el stock faltante y se descuenta.';
+  }
   const labels: Record<string, string> = {
     pending: 'Reservado; descuenta al quedar listo para enviar.',
     applied: 'Descontado del almacén.',

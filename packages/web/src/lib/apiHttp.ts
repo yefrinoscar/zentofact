@@ -12,6 +12,21 @@ import type {
   BuyerMessage,
   BuyerUnreadCounts,
 } from './buyer-messages';
+import type {
+  Car,
+  CarExpense,
+  CarExpenseFilter,
+  CarExpenseInput,
+  CarExpensesResponse,
+  CarInput,
+  CarsResponse,
+} from './carros-presentation';
+import type {
+  EarningsSortBy,
+  EarningsSortDir,
+  SalespersonEarningSalesResponse,
+  SalespersonEarningsResponse,
+} from './salesperson-earnings-presentation';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -43,9 +58,11 @@ export type OrderSyncAccountStatus = {
   lastFinishedAt?: string | null;
   lastSuccessfulSyncAt?: string | null;
   lastError?: string | null;
+  lastErrorSource?: string | null;
   pagesProcessed?: number;
   ordersReceived?: number;
   ordersUpserted?: number;
+  ordersFailed?: number;
   syncIntervalMinutes?: number;
   lastRunId?: number | null;
   lastLogId?: string | null;
@@ -65,6 +82,7 @@ export type OrderSyncResult = {
   runId?: number | null;
   logId?: string | null;
   error?: string;
+  errorSource?: string | null;
   pages?: number;
   received?: number;
   upserted?: number;
@@ -409,6 +427,17 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/dashboard/product-sales${qs(filter)}`),
+  listSalespersonEarnings: (filter: {
+    from?: string;
+    to?: string;
+    search?: string;
+    sortBy?: EarningsSortBy;
+    sortDir?: EarningsSortDir;
+    limit?: number;
+    offset?: number;
+  } = {}) => req<SalespersonEarningsResponse>(`/dashboard/salesperson-earnings${qs(filter)}`),
+  listSalespersonEarningSales: (userId: string, filter: { from?: string; to?: string; limit?: number; offset?: number } = {}) =>
+    req<SalespersonEarningSalesResponse>(`/dashboard/salesperson-earnings/${encodeURIComponent(userId)}/sales${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
   listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
     req(`/pagos/imports${qs(filter)}`),
@@ -723,6 +752,16 @@ const apiHttp = {
     method: 'PUT',
     body: JSON.stringify({ emails }),
   }),
+
+  // Carros
+  listCars: (filter: { status?: 'active' | 'archived' | 'all' } = {}) => req<CarsResponse>(`/cars${qs(filter)}`),
+  getCar: (id: number) => req<Car>(`/cars/${id}`),
+  createCar: (data: CarInput) => req<Car>('/cars', { method: 'POST', body: JSON.stringify(data) }),
+  updateCar: (id: number, data: Partial<CarInput>) => req<Car>(`/cars/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  listCarExpenses: (carId: number, filter: CarExpenseFilter = {}) => req<CarExpensesResponse>(`/cars/${carId}/expenses${qs(filter)}`),
+  createCarExpense: (carId: number, data: CarExpenseInput) => req<CarExpense>(`/cars/${carId}/expenses`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCarExpense: (carId: number, expenseId: number, data: Partial<CarExpenseInput>) => req<CarExpense>(`/cars/${carId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteCarExpense: (carId: number, expenseId: number) => req<{ ok: true }>(`/cars/${carId}/expenses/${expenseId}`, { method: 'DELETE' }),
 
   // Empresas
   listCompanies: () => req('/companies'),

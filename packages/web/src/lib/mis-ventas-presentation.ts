@@ -85,6 +85,8 @@ export type SalesSortBy = 'orderedAt' | 'total' | 'commission';
 export type SalesSortDir = 'asc' | 'desc';
 
 export type MisVentasQuery = {
+  from?: string;
+  to?: string;
   limit: number;
   offset: number;
   sortBy: SalesSortBy;
@@ -145,6 +147,51 @@ export function commissionHint(percent?: number | null) {
 
 export function limaTodayKey(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(now);
+}
+
+export function currentSalesMonth(now = new Date()) {
+  return limaTodayKey(now).slice(0, 7);
+}
+
+function parsedSalesMonth(value: string) {
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 1 || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+/** Calendar range for a selectable sales month. Current month stops today; future input falls back to current. */
+export function salesMonthRange(value: string, now = new Date()) {
+  const today = limaTodayKey(now);
+  const currentMonth = today.slice(0, 7);
+  const month = parsedSalesMonth(value) && value <= currentMonth ? value : currentMonth;
+  const parsed = parsedSalesMonth(month);
+  if (!parsed) return { month: currentMonth, from: `${currentMonth}-01`, to: today };
+  const lastDay = new Date(Date.UTC(parsed.year, parsed.month, 0)).getUTCDate();
+  return {
+    month,
+    from: `${month}-01`,
+    to: month === currentMonth ? today : `${month}-${String(lastDay).padStart(2, '0')}`,
+  };
+}
+
+export function salesMonthLabel(value: string) {
+  const parsed = parsedSalesMonth(value);
+  if (!parsed) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(parsed.year, parsed.month - 1, 1)));
+}
+
+export function misVentasQueryIncludesDate(
+  query: Partial<MisVentasQuery> | null | undefined,
+  date: string,
+) {
+  return (!query?.from || date >= query.from) && (!query?.to || date <= query.to);
 }
 
 export function dailySeries(home?: SalespersonHome | null): SalespersonDay[] {

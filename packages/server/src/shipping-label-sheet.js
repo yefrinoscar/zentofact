@@ -88,6 +88,33 @@ function withTimeout(promise, message) {
   ]).finally(() => clearTimeout(timeout));
 }
 
+function longestTrackingCode(values) {
+  return values
+    .flatMap((value) => value.match(/\d{15,30}/g) || [])
+    .sort((left, right) => right.length - left.length)[0] || '';
+}
+
+// El tracking de Falabella va impreso en vertical junto al código de barras.
+// pdf.js puede devolver ese texto girado en trozos ("2401210000" "14992520")
+// o dígito por dígito; se reconstruye uniendo fragmentos numéricos contiguos.
+export function trackingCodeFromTextFragments(fragments) {
+  const direct = longestTrackingCode([...fragments, fragments.join(' ')]);
+  if (direct) return direct;
+  const runs = [];
+  let current = '';
+  for (const fragment of fragments) {
+    const compact = String(fragment).replace(/\s+/g, '');
+    if (/^\d+$/.test(compact)) {
+      current += compact;
+    } else {
+      if (current) runs.push(current);
+      current = '';
+    }
+  }
+  if (current) runs.push(current);
+  return runs.filter((run) => /^\d{15,30}$/.test(run)).sort((left, right) => right.length - left.length)[0] || '';
+}
+
 export async function extractShippingLabelTrackingCodes(pdfBuffer) {
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const document = await getDocument({
@@ -101,9 +128,7 @@ export async function extractShippingLabelTrackingCodes(pdfBuffer) {
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
       const fragments = content.items.map((item) => String(item?.str || '').trim()).filter(Boolean);
-      const candidates = [...fragments, fragments.join(' ')]
-        .flatMap((value) => value.match(/\d{15,30}/g) || []);
-      codes.push(candidates.sort((left, right) => right.length - left.length)[0] || '');
+      codes.push(trackingCodeFromTextFragments(fragments));
       page.cleanup();
     }
   } finally {

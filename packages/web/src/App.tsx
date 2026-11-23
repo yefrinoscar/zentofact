@@ -10,6 +10,7 @@ import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
+import Carros from './routes/Carros';
 import Avisos from './routes/Avisos';
 import { NotificationBell } from './components/NotificationBell';
 import { OperationalAlertBanner } from './components/OperationalAlertBanner';
@@ -24,6 +25,7 @@ import PedidosMulticanal from './routes/PedidosMulticanal';
 import Cancelados from './routes/Cancelados';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
+import Cobertura from './routes/Cobertura';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
@@ -37,6 +39,7 @@ import { isProductionApp } from './lib/runtimeEnv';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
 const VentasProductos = lazy(() => import('./routes/VentasProductos'));
+const GananciasVendedores = lazy(() => import('./routes/GananciasVendedores'));
 const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 const SystemConfig = lazy(() => import('./routes/SystemConfig'));
@@ -53,6 +56,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/ventas': {
     title: 'Desempeño de productos',
     subtitle: 'Ventas, rotación y stock de todo tu catálogo.',
+  },
+  '/vendedores': {
+    title: 'Ganancias de vendedores',
+    subtitle: 'Comisión que ganó cada vendedor con sus ventas.',
   },
   '/pagos': {
     title: 'Pagos',
@@ -85,6 +92,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/mis-ventas': {
     title: 'Mis ventas',
     subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
+  },
+  '/cobertura': {
+    title: 'Cobertura',
+    subtitle: 'Cuánto cobra Dinsides por enviar a cada distrito de Lima y Callao.',
   },
   '/orders/nueva': {
     title: 'Nueva venta',
@@ -121,6 +132,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/insumos': {
     title: 'Insumos',
     subtitle: 'Cuánto comprar para la semana y el mes.',
+  },
+  '/carros': {
+    title: 'Carros',
+    subtitle: 'Mantenimientos, cambios de aceite y gastos.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -297,6 +312,7 @@ function AppLayout() {
               <Route path="/avisos" element={<Avisos />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/ventas" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><VentasProductos /></Suspense></RequirePermission>} />
+              <Route path="/vendedores" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><GananciasVendedores /></Suspense></RequirePermission>} />
               <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<PagosSkeleton />}><Pagos /></Suspense></RequirePermission>} />
               <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
               <Route path="/pedidos" element={isProductionApp() ? <Navigate to="/bandeja" replace /> : <RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
@@ -307,6 +323,7 @@ function AppLayout() {
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/cancelados" element={<RequirePermission permission="order_management" {...permissionState}><Cancelados /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
+              <Route path="/cobertura" element={<Cobertura />} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies/nueva" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
@@ -320,6 +337,7 @@ function AppLayout() {
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
               <Route path="/salidas" element={<Navigate to="/orders" replace />} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
+              <Route path="/carros" element={<RequirePermission permission="carros" {...permissionState}><Carros /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
               <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />

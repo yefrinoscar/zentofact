@@ -8,26 +8,160 @@ on:
       - opened
       - reopened
       - synchronize
+      - edited
       - labeled
       - unlabeled
       - ready_for_review
+  # After every merge into main, open release PRs are re-bumped from the new version.
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: read
-  pull-requests: read
+  contents: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: validate-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOT_NAME: github-actions[bot]
+  BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
 
 jobs:
   validate:
     name: Release version
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      RELEASE_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      PR_BODY: ${{ github.event.pull_request.body }}
     steps:
       - name: Check out pull request
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate label and version increment
+      # Run the release scripts from the merge ref so branches created before
+      # these scripts existed are still handled.
+      - name: Stage release scripts
+        run: cp -r scripts "$RUNNER_TEMP/release-scripts"
+
+      - name: Switch to the pull request branch
+        if: env.SAME_REPO == 'true'
+        run: git checkout -B "$HEAD_REF" "origin/$HEAD_REF"
+
+      - name: Bump version to match the release type
+        id: sync
+        if: env.SAME_REPO == 'true'
+        # A missing release type is reported by the validation step below.
+        continue-on-error: true
+        run: node "$RUNNER_TEMP/release-scripts/sync-release-version.mjs"
+
+      - name: Commit and push version bump
+        id: push
+        if: steps.sync.outputs.changed == 'true'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          RELEASE_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: node scripts/validate-release-version.mjs
+          VERSION: ${{ steps.sync.outputs.version }}
+        run: |
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git add packages/web/package.json package-lock.json
+          git commit -m "chore(release): bump version to $VERSION"
+          git push origin "HEAD:$HEAD_REF"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "::notice::Pushed version $VERSION to $HEAD_REF. Pull before pushing again."
+
+      - name: Resolve latest base commit
+        id: base
+        run: |
+          git fetch --quiet origin "$BASE_REF"
+          echo "sha=$(git rev-parse "origin/$BASE_REF")" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release type and version increment
+        id: release
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: node "$RUNNER_TEMP/release-scripts/validate-release-version.mjs"
+
+      # Pushes made with GITHUB_TOKEN do not start workflows, so mark the bot commit here.
+      - name: Mark bumped commit as validated
+        if: success() && steps.push.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.push.outputs.sha }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA"
+          -f state=success -f context="Release version"
+          -f description="Version bumped and validated automatically"
+
+      # The description checkbox is enough; mirror it as the label the release job expects.
+      - name: Apply release label from description
+        if: >-
+          always() &&
+          steps.release.outputs.source == 'description' &&
+          env.SAME_REPO == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+        run: gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "$RELEASE_TYPE"
+
+  sync-open-prs:
+    name: Re-bump open release PRs
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Stage release scripts
+        run: cp -r scripts "$RUNNER_TEMP/release-scripts"
+
+      - name: Re-bump every open pull request into main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          base_sha=$(git rev-parse origin/main)
+          gh pr list --base main --state open --limit 100 \
+            --json number,headRefName,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.headRefName)"' |
+          while read -r number head_ref; do
+            echo "::group::#$number ($head_ref)"
+            export PR_BODY RELEASE_LABELS
+            PR_BODY=$(gh pr view "$number" --json body --jq .body < /dev/null)
+            RELEASE_LABELS=$(gh pr view "$number" --json labels --jq '[.labels[].name]' < /dev/null)
+            git checkout --quiet -B "$head_ref" "origin/$head_ref"
+            out=$(mktemp)
+            if ! GITHUB_OUTPUT="$out" node "$RUNNER_TEMP/release-scripts/sync-release-version.mjs"; then
+              echo "::warning::#$number has no single release type checked; skipped."
+              echo "::endgroup::"
+              continue
+            fi
+            if grep -q '^changed=true$' "$out"; then
+              version=$(sed -n 's/^version=//p' "$out")
+              git add packages/web/package.json package-lock.json
+              git commit --quiet -m "chore(release): bump version to $version"
+              if ! git push --quiet origin "HEAD:$head_ref"; then
+                echo "::warning::Could not push the bump to $head_ref."
+                echo "::endgroup::"
+                continue
+              fi
+              if BASE_SHA="$base_sha" node "$RUNNER_TEMP/release-scripts/validate-release-version.mjs"; then
+                gh api "repos/$GITHUB_REPOSITORY/statuses/$(git rev-parse HEAD)" \
+                  -f state=success -f context="Release version" \
+                  -f description="Re-bumped to $version after main moved"
+              fi
+              echo "#$number -> $version"
+            fi
+            echo "::endgroup::"
+          done
