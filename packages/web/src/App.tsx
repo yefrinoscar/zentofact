@@ -59,7 +59,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Ventas, rotación y stock de todo tu catálogo.',
   },
   '/vendedores': {
-    title: 'Ganancias de vendedores',
+    title: 'Vendedores',
     subtitle: 'Comisión que ganó cada vendedor con sus ventas.',
   },
   '/pagos': {

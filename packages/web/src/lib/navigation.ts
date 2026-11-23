@@ -2,7 +2,6 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Ban,
   BarChart3,
-  Bell,
   Building2,
   Car,
   ChartNoAxesCombined,
@@ -60,16 +59,9 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'ops',
     label: 'Operación',
     items: [
-      {
-        to: '/avisos',
-        icon: Bell,
-        label: 'Avisos',
-        alwaysVisible: true,
-        description: 'Lo que necesita tu atención ahora.',
-      },
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/ventas', icon: BarChart3, label: 'Ventas', permission: 'dashboard' },
-      { to: '/vendedores', icon: HandCoins, label: 'Ganancias de vendedores', permission: 'dashboard' },
+      { to: '/vendedores', icon: HandCoins, label: 'Vendedores', permission: 'dashboard' },
       { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
       { to: '/carros', icon: Car, label: 'Carros', permission: 'carros' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },

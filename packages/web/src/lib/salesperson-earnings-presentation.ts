@@ -173,44 +173,32 @@ export function saleItemsLabel(items: SalespersonEarningSaleItem[]) {
 }
 
 export type EarningsKpi = {
-  key: 'commission' | 'salesTotal' | 'share' | 'incomplete';
+  key: 'commission' | 'salesTotal' | 'share';
   label: string;
   value: string;
   hint: string;
-  tone: 'default' | 'warning';
 };
 
 export function earningsKpis(totals?: SalespersonEarningTotals | null): EarningsKpi[] {
   if (!totals) return [];
-  const incomplete = totals.incompleteOrders > 0;
   return [
     {
       key: 'commission',
       label: 'Comisiones',
       value: formatEarningMoney(totals.commission),
       hint: `${formatEarningMoney(totals.paidCommission)} de ventas pagadas.`,
-      tone: 'default',
     },
     {
       key: 'salesTotal',
       label: 'Ventas',
       value: formatEarningMoney(totals.salesTotal),
       hint: `${ordersLabel(totals.ordersCount)} · vendieron ${formatEarningCount(totals.withSales)} de ${formatEarningCount(totals.salespeople)}.`,
-      tone: 'default',
     },
     {
       key: 'share',
       label: '% de la venta',
       value: formatCommissionShare(totals.commissionShare),
       hint: 'Comisión sobre lo vendido.',
-      tone: 'default',
-    },
-    {
-      key: 'incomplete',
-      label: 'Sin comisión completa',
-      value: ordersLabel(totals.incompleteOrders),
-      hint: incomplete ? 'Suman de menos. Revisa la comisión.' : 'Todas las ventas tienen comisión.',
-      tone: incomplete ? 'warning' : 'default',
     },
   ];
 }

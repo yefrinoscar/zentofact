@@ -33,16 +33,12 @@ test('el % de la venta usa un decimal y no inventa valor sin ventas', () => {
   assert.equal(formatCommissionShare(43 / 590), '7.3%');
 });
 
-test('los KPIs muestran comisión, ventas y avisan de comisión incompleta', () => {
+test('los KPIs muestran comisión, ventas y % de la venta', () => {
   const kpis = earningsKpis(totals);
-  assert.deepEqual(kpis.map((kpi) => kpi.key), ['commission', 'salesTotal', 'share', 'incomplete']);
+  assert.deepEqual(kpis.map((kpi) => kpi.key), ['commission', 'salesTotal', 'share']);
   assert.match(kpis[0].value, /43\.00/);
   assert.match(kpis[0].hint, /23\.00 de ventas pagadas/);
   assert.match(kpis[1].hint, /5 ventas · vendieron 2 de 3/);
-  assert.equal(kpis[3].tone, 'warning');
-  assert.equal(kpis[3].value, '2 ventas');
-  const complete = earningsKpis({ ...totals, incompleteOrders: 0 });
-  assert.equal(complete[3].tone, 'default');
   assert.equal(earningsKpis(null).length, 0);
 });
 
