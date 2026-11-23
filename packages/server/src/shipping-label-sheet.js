@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { isOwnProductImageUrl, readOwnProductImageUrl } from './catalog/product-image-store.js';
 import {
   PDFDocument,
   StandardFonts,
@@ -190,7 +191,13 @@ function detectSupportedImageMime(bytes, declaredMime = '') {
     : '';
 }
 
-async function fetchPublicProductImage(value) {
+export async function fetchPublicProductImage(value) {
+  if (isOwnProductImageUrl(value)) {
+    const own = await readOwnProductImageUrl(value);
+    const mimeType = detectSupportedImageMime(own.bytes, own.mimeType);
+    if (!mimeType) throw new Error('La imagen no está en formato PNG o JPEG.');
+    return { bytes: own.bytes, mimeType };
+  }
   let url = await validatePublicImageUrl(value);
   for (let redirects = 0; redirects <= 3; redirects += 1) {
     const controller = new AbortController();

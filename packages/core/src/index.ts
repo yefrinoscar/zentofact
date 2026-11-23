@@ -165,6 +165,7 @@ export type { ReportRow } from './services/sunat-report.service';
 export { ActiveOrderDocumentError } from './services/order-document-guard';
 export { MANUAL_REVIEW_STATE } from './services/sunat-reconciliation';
 export { getCorrelatives } from './services/correlative-query.service';
+export { saveStoredObject, readStoredObject } from './services/file.service';
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaCheckReadyToShipStatus, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
   falabellaGetProducts, falabellaGetStock, falabellaCreateProduct, falabellaUpdateStock, falabellaUpdateProductStatus,

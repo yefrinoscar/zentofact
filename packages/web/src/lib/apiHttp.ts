@@ -700,6 +700,7 @@ const apiHttp = {
   } = {}) => req('/catalog/sales/today/refresh', { method: 'POST', body: JSON.stringify(filter) }),
   createCatalogProduct: (data: any) => req('/products', { method: 'POST', body: JSON.stringify(data) }),
   updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  uploadCatalogProductImage: (id: number, dataBase64: string) => req(`/products/${id}/image`, { method: 'POST', body: JSON.stringify({ dataBase64 }) }),
   archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),
   listProductListings: (id: number) => req(`/products/${id}/listings`),
   listProductAssociationCandidates: (filter: { productId: number; search?: string; companyId?: number; channelCode?: string; channelCodes?: string; availability?: 'recommended' | 'all'; limit?: number; offset?: number }) => req<ProductAssociationCandidatesResponse>(`/product-listings/association-candidates${qs(filter)}`),
