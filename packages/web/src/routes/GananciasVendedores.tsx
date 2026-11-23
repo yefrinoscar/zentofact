@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { ArrowDown, ArrowUp, ArrowUpDown, HandCoins, Info, Search, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, HandCoins, Search, TriangleAlert, X } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
@@ -218,16 +218,11 @@ export default function GananciasVendedores() {
 
       <EarningsKpis items={kpis} loading={loading} />
 
-      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-        <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-        <span>
-          Es la comisión de cada vendedor, no la utilidad del negocio. Cuenta ventas en soles,
-          sin cancelados, devueltos ni reembolsados.
-          {totals && totals.otherCurrencyOrders > 0
-            ? ` ${ordersLabel(totals.otherCurrencyOrders)} en otra moneda no se suman.`
-            : ''}
-        </span>
-      </p>
+      {totals && totals.otherCurrencyOrders > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {ordersLabel(totals.otherCurrencyOrders)} en otra moneda no se suman.
+        </p>
+      ) : null}
 
       <TablePanel aria-label="Ganancias por vendedor" aria-busy={loading || fetching}>
         {loading ? (
@@ -376,9 +371,9 @@ function CommissionCell({ row }: { row: SalespersonEarningRow }) {
 }
 
 function EarningsKpis({ items, loading }: { items: EarningsKpi[]; loading: boolean }) {
-  const placeholders: EarningsKpi['key'][] = ['commission', 'salesTotal', 'share', 'incomplete'];
+  const placeholders: EarningsKpi['key'][] = ['commission', 'salesTotal', 'share'];
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-4" aria-label="Resumen de ganancias">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3" aria-label="Resumen de ganancias">
       {loading || items.length === 0
         ? placeholders.map((key) => (
           <div key={key} className="min-w-0 space-y-2">
@@ -388,14 +383,7 @@ function EarningsKpis({ items, loading }: { items: EarningsKpi[]; loading: boole
         ))
         : items.map((item) => (
           <div key={item.key} className="min-w-0">
-            <span
-              className={cn(
-                'block truncate text-2xl font-semibold tabular-nums tracking-tight',
-                item.tone === 'warning' && 'text-amber-700 dark:text-amber-400',
-              )}
-            >
-              {item.value}
-            </span>
+            <span className="block truncate text-2xl font-semibold tabular-nums tracking-tight">{item.value}</span>
             <span className="mt-1 block text-sm font-medium">{item.label}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">{item.hint}</span>
           </div>
