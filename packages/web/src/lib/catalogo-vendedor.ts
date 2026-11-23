@@ -175,3 +175,12 @@ export function productCountLabel(total: number, stock: SalespersonProductStock,
   if (term) parts.push(`para “${term}”`);
   return parts.join(' ');
 }
+
+// Marcas de relleno como "GENERICO" no aportan nada al vendedor: se ocultan.
+const GENERIC_BRAND = /^(gen[eé]ric[oa]s?|sin marca|n\/?a|-+)$/i;
+
+export function visibleBrand(brand: string | null | undefined): string | null {
+  const value = String(brand ?? '').trim();
+  if (!value || GENERIC_BRAND.test(value)) return null;
+  return value;
+}

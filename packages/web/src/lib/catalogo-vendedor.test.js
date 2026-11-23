@@ -93,3 +93,12 @@ test('el conteo describe filtro y búsqueda activos', () => {
   assert.equal(productCountLabel(34, 'inStock', ''), '34 productos con stock');
   assert.equal(productCountLabel(0, 'outOfStock', ' polo '), '0 productos sin stock para “polo”');
 });
+
+test('oculta marcas de relleno como GENERICO y conserva marcas reales', async () => {
+  const { visibleBrand } = await import('./catalogo-vendedor.ts');
+  assert.equal(visibleBrand('GENERICO'), null);
+  assert.equal(visibleBrand(' Genérico '), null);
+  assert.equal(visibleBrand('sin marca'), null);
+  assert.equal(visibleBrand(null), null);
+  assert.equal(visibleBrand('Xiaomi'), 'Xiaomi');
+});
