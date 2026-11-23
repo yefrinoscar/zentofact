@@ -95,7 +95,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
   },
   '/catalogo': {
-    title: 'Catálogo',
+    title: 'Productos',
     subtitle: 'Stock, precio y lo que ganas por cada unidad.',
   },
   '/cobertura': {
@@ -309,7 +309,7 @@ function AppLayout() {
 
         {!scannerMode && normalizedPath !== '/avisos' ? <OperationalAlertBanner /> : null}
 
-        <main className={`flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-4 md:p-6 lg:p-8'}`}>
+        <main className={`relative flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-4 md:p-6 lg:p-8'}`}>
           <div className={`mx-auto w-full ${scannerMode ? 'max-w-none md:max-w-7xl' : 'max-w-7xl'}`}>
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />

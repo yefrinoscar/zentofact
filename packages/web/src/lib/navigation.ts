@@ -81,7 +81,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Pedidos',
     items: [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson', hideForSuperadmin: true },
-      { to: '/catalogo', icon: Tags, label: 'Catálogo', permission: 'salesperson', hideForSuperadmin: true },
+      { to: '/catalogo', icon: Tags, label: 'Productos', permission: 'salesperson', hideForSuperadmin: true },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       // Devoluciones vuelven solas al stock; se oculta hasta que el seguimiento
