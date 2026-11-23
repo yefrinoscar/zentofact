@@ -58,6 +58,9 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.equal(PERMISSIONS[salespersonIndex].section, 'orders');
   assert.ok(salespersonIndex >= 0 && salespersonIndex < ordersIndex);
   assert.equal(pathPermission('/mis-ventas'), 'salesperson');
+  assert.equal(pathPermission('/catalogo'), 'salesperson');
+  assert.equal(pathPermission('/catalogo/'), 'salesperson');
+  assert.equal(pathPermission('/catalogos'), null);
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/ventas'), 'dashboard');
   assert.equal(pathPermission('/vendedores'), 'dashboard');

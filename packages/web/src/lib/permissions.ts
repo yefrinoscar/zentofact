@@ -448,6 +448,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/vendedores')) return 'dashboard';
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
+  if (pathname === '/catalogo' || pathname.startsWith('/catalogo/')) return 'salesperson';
   if (pathname.startsWith('/envio-propio') || pathname.startsWith('/orders/envio')) return 'settings';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/cancelados')) return 'order_management';

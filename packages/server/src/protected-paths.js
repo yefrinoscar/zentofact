@@ -26,6 +26,7 @@ export const PROTECTED_PATHS = [
   '/insumos',
   '/cars',
   '/notifications',
+  '/salesperson',
 ];
 
 export function isProtectedPath(path) {

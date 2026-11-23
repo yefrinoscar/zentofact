@@ -94,7 +94,7 @@ function sellerStockSql() {
   )`;
 }
 
-function inventoryAvailableSql() {
+export function inventoryAvailableSql() {
   return '(i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))';
 }
 
@@ -167,7 +167,7 @@ function catalogOrder(filters = {}) {
   };
 }
 
-function listingStatsSql(productId) {
+export function listingStatsSql(productId) {
   return `select
     count(l.id) filter (where l.status <> 'unlinked') as listings_count,
     count(distinct l.company_id) filter (where l.status <> 'unlinked') as sellers_count,

@@ -14,6 +14,7 @@ const apiPrefixes = [
   '/logistics-inbox',
   '/mercado-libre',
   '/order-management',
+  '/salesperson',
   '/products',
   '/product-listings',
   '/inventory',
