@@ -184,3 +184,31 @@ export function visibleBrand(brand: string | null | undefined): string | null {
   if (!value || GENERIC_BRAND.test(value)) return null;
   return value;
 }
+
+const FALABELLA_GALLERY_PATTERN = /^(https:\/\/media\.falabella\.com\/falabellaPE\/[A-Za-z0-9_-]+?)_0?\d{1,2}(?:[/?#].*)?$/i;
+export const PRODUCT_GALLERY_SIZE = 8;
+
+/**
+ * Fotos candidatas del producto, en orden de publicación. Falabella numera la
+ * galería como `{sku}_01`, `{sku}_02`…; las que no existan se ocultan al cargar.
+ */
+export function productGalleryUrls(imageUrl: string | null | undefined): string[] {
+  const url = String(imageUrl || '').trim();
+  if (!url) return [];
+  const match = url.match(FALABELLA_GALLERY_PATTERN);
+  if (!match) return [url];
+  return Array.from({ length: PRODUCT_GALLERY_SIZE }, (_, index) => `${match[1]}_${String(index + 1).padStart(2, '0')}`);
+}
+
+/** Texto listo para pegar en WhatsApp, Marketplace o estados. */
+export function productPublicationText(product: Pick<SalespersonProduct, 'name' | 'price' | 'brand' | 'available'>) {
+  const brand = visibleBrand(product.brand);
+  return [
+    product.name.trim(),
+    brand ? `Marca: ${brand}` : null,
+    `Precio: ${formatProductMoney(product.price)}`,
+    stockDisplay(product.available).out
+      ? 'Escríbeme para consultar disponibilidad.'
+      : 'Stock disponible. Escríbeme para coordinar la entrega.',
+  ].filter(Boolean).join('\n');
+}

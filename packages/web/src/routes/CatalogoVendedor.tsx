@@ -21,7 +21,7 @@ import {
   type StockTone,
   visibleBrand,
 } from '../lib/catalogo-vendedor';
-import { ProductPhoto } from './registrar-venta/widgets';
+import { ProductPublishDialog } from '../components/ProductPublishDialog';
 import { CopyableSku } from '../components/CopyableSku';
 import { cn } from '../lib/cn';
 import { Button } from '../components/ui/button';
@@ -39,9 +39,9 @@ function fetchProducts(filter: SalespersonProductsFilter) {
 }
 
 const STOCK_TONE_CLASS: Record<StockTone, string> = {
-  ok: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/20',
-  low: 'bg-amber-50 text-amber-800 ring-amber-600/25 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
-  out: 'bg-destructive/10 text-destructive ring-destructive/20',
+  ok: 'text-foreground',
+  low: 'text-amber-700 dark:text-amber-300',
+  out: 'text-destructive',
 };
 const STOCK_DOT_CLASS: Record<StockTone, string> = {
   ok: 'bg-emerald-500',
@@ -58,16 +58,16 @@ function StockPill({ available }: { available: number }) {
   const stock = stockDisplay(available);
   return (
     <span
-      className={cn('relative inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 ring-1 ring-inset', STOCK_TONE_CLASS[stock.tone])}
+      className={cn('inline-flex items-center gap-1.5 whitespace-nowrap', STOCK_TONE_CLASS[stock.tone])}
       title={STOCK_TITLE[stock.tone]}
     >
       <span className={cn('size-2 shrink-0 rounded-full', STOCK_DOT_CLASS[stock.tone])} aria-hidden />
       {stock.out ? (
-        <span className="text-sm font-semibold">Sin stock</span>
+        <span className="text-sm font-medium">Sin stock</span>
       ) : (
         <span className="text-sm">
           <span className="font-semibold tabular-nums">{stock.value}</span>
-          <span className="ml-1 text-xs">{stock.value === 1 ? 'unid.' : 'unids.'}</span>
+          <span className="ml-1 text-xs text-muted-foreground">{stock.value === 1 ? 'unid.' : 'unids.'}</span>
         </span>
       )}
       <span className="sr-only">{STOCK_TITLE[stock.tone]}</span>
@@ -92,7 +92,7 @@ function ProductCell({ product }: { product: SalespersonProduct }) {
   const brand = visibleBrand(product.brand);
   return (
     <div className={cn('flex min-w-0 items-center gap-3', stockDisplay(product.available).out && 'opacity-60')}>
-      <ProductPhoto url={product.imageUrl} sku={product.sku} name={product.name} size="md" />
+      <ProductPublishDialog product={product} />
       <div className="min-w-0 flex-1">
         <p className="line-clamp-2 whitespace-normal text-sm font-medium leading-5" title={product.name}>{product.name}</p>
         <div className="mt-0.5 flex min-w-0 items-center gap-2">
@@ -251,7 +251,7 @@ export default function CatalogoVendedor() {
 
   return (
     <div ref={rootRef} className="pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <div className="sticky -top-4 z-20 -mx-4 -mt-4 mb-3 flex flex-col gap-2 border-b border-border/70 bg-background px-4 py-3 sm:flex-row sm:items-center md:-top-6 md:-mx-6 md:-mt-6 md:px-6 lg:-top-8 lg:-mx-8 lg:-mt-8 lg:px-8">
+      <div className="sticky -top-4 z-20 -mx-4 -mt-4 mb-3 flex flex-col gap-2 bg-background px-4 py-3 sm:flex-row sm:items-center md:-top-6 md:-mx-6 md:-mt-6 md:px-6 lg:-top-8 lg:-mx-8 lg:-mt-8 lg:px-8">
         <div className="relative min-w-0 sm:w-[22rem]">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
