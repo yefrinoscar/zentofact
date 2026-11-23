@@ -266,17 +266,17 @@ export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
   shopSku?: string | null;
   sku?: string | null;
   name: string;
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'lg' | 'fill';
 }) {
   const candidates = [productImageSrc(url), productImageSrc(null, shopSku), productImageSrc(null, null, sku)]
     .filter((src, index, list) => src && list.indexOf(src) === index);
   const [failedCount, setFailedCount] = useState(0);
   const src = candidates[failedCount] || '';
-  const box = size === 'sm' ? 'size-9' : 'size-12';
+  const box = size === 'sm' ? 'size-9' : size === 'lg' ? 'size-16' : size === 'fill' ? 'aspect-square w-full' : 'size-12';
   if (!src) {
     return (
       <span className={cn('grid shrink-0 place-items-center rounded-md bg-muted ring-1 ring-border', box)} aria-hidden="true">
-        <Package className="size-4 text-muted-foreground" />
+        <Package className={size === 'fill' ? 'size-10 text-muted-foreground/60' : size === 'lg' ? 'size-6 text-muted-foreground/70' : 'size-4 text-muted-foreground'} />
       </span>
     );
   }

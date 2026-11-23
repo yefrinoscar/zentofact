@@ -94,6 +94,7 @@ await marketplaceMutationJobs.ensureMarketplaceMutationJobTables(core.pool);
 const dashboard = await import('./dashboard.js');
 const productSalesReport = await import('./catalog/product-sales-report.js');
 const salespersonEarnings = await import('./salesperson-earnings.js');
+const salespersonCatalog = await import('./salesperson-catalog.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -692,6 +693,16 @@ app.get('/order-management/my-sales', requirePermission('salesperson'), async (c
       commissionPercent: full?.commissionPercent ?? 0,
     }));
   } catch (e) { return fail(c, e, 400); }
+});
+// Catálogo de solo lectura para Vendedor: precio, stock y su Comisión por unidad.
+app.get('/salesperson/products', requirePermission('salesperson'), async (c) => {
+  try {
+    const sessionUser = c.get('user');
+    const full = sessionUser?.id ? await users.getUserById(sessionUser.id) : null;
+    return ok(c, await salespersonCatalog.listSalespersonCatalog(c.req.query(), {
+      commissionPercent: full?.commissionPercent ?? 0,
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/order-management/salespeople', requirePermission('order_management'), async (c) => {
   try { return ok(c, await users.listActiveSalespeople()); }
