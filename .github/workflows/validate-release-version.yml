@@ -8,13 +8,18 @@ on:
       - opened
       - reopened
       - synchronize
+      - edited
       - labeled
       - unlabeled
       - ready_for_review
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
+
+concurrency:
+  group: validate-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -26,8 +31,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate label and version increment
+      - name: Validate release type and version increment
+        id: release
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           RELEASE_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: node scripts/validate-release-version.mjs
+
+      # The description checkbox is enough; mirror it as the label the release job expects.
+      - name: Apply release label from description
+        if: >-
+          always() &&
+          steps.release.outputs.source == 'description' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+        run: gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "$RELEASE_TYPE"
