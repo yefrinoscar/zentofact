@@ -47,19 +47,19 @@ export class FalabellaApiClient {
     const query = canonicalizeParameters(baseParameters);
     const path = options.path ? (options.path.startsWith('/') ? options.path : `/${options.path}`) : '';
     const url = `${this.baseUrl.replace(/\/$/, '')}${path}?${query}`;
-    const response = await this.fetchImpl(url, {
+    const response = await fetchOrThrow(this.fetchImpl, url, {
       method: 'GET',
       headers: {
         Accept: options.accept || (format === 'JSON' ? 'application/json' : 'application/xml'),
       },
       signal: options.signal,
-    });
+    }, options.action);
 
     const rawText = await response.text();
     const contentType = response.headers.get('content-type') || '';
     const data = options.allowXmlResponse && rawText.trimStart().startsWith('<')
       ? rawText as T
-      : parseResponseBody<T>(rawText, format, contentType);
+      : parseResponseBody<T>(rawText, format, contentType, { action: options.action, status: response.status });
 
     return {
       url,
@@ -141,14 +141,14 @@ export class FalabellaApiClient {
     parameters.Signature = signParameters(parameters, this.options.apiKey);
 
     const url = `${this.baseUrl.replace(/\/$/, '')}?${canonicalizeParameters(parameters)}`;
-    const response = await this.fetchImpl(url, {
+    const response = await fetchOrThrow(this.fetchImpl, url, {
       method: 'POST',
       headers: {
         Accept: format === 'JSON' ? 'application/json' : 'application/xml',
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       signal: options.signal,
-    });
+    }, String(parameters.Action || 'POST'));
     const rawText = await response.text();
     const contentType = response.headers.get('content-type') || '';
     return {
@@ -156,7 +156,9 @@ export class FalabellaApiClient {
       status: response.status,
       ok: response.ok,
       contentType,
-      data: rawText.trimStart().startsWith('<') ? rawText : parseResponseBody(rawText, format, contentType),
+      data: rawText.trimStart().startsWith('<')
+        ? rawText
+        : parseResponseBody(rawText, format, contentType, { action: String(parameters.Action || 'POST'), status: response.status }),
       rawText,
     };
   }
@@ -323,10 +325,88 @@ export function normalizeGetOrdersResult(document: unknown): NormalizedGetOrders
   return { totalCount, orders };
 }
 
-function parseResponseBody<T>(rawText: string, format: 'JSON' | 'XML', contentType: string): T {
+export type FalabellaApiErrorKind = 'network' | 'invalid_response';
+
+export interface FalabellaApiErrorDetails {
+  source: 'falabella';
+  kind: FalabellaApiErrorKind;
+  action: string;
+  httpStatus?: number;
+  contentType?: string;
+  bodySnippet?: string;
+}
+
+const BODY_SNIPPET_LENGTH = 300;
+
+/**
+ * Error raised when Falabella's Seller Center cannot be reached or answers with
+ * a body that is not the expected JSON (e.g. a proxy page such as
+ * "upstream connect error or disconnect/reset before headers"). The message
+ * names Falabella, the action and the HTTP status so operators can tell a
+ * marketplace outage apart from a local bug. `details` is merged into logs.
+ */
+export class FalabellaApiError extends Error {
+  readonly details: FalabellaApiErrorDetails;
+
+  constructor(message: string, details: FalabellaApiErrorDetails, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'FalabellaApiError';
+    this.details = details;
+  }
+}
+
+export function isFalabellaApiError(error: unknown): error is FalabellaApiError {
+  return error instanceof FalabellaApiError
+    || (Boolean(error) && typeof error === 'object' && (error as any).details?.source === 'falabella');
+}
+
+function bodySnippet(rawText: string): string {
+  const compact = rawText.replace(/\s+/g, ' ').trim();
+  return compact.length > BODY_SNIPPET_LENGTH ? `${compact.slice(0, BODY_SNIPPET_LENGTH)}…` : compact;
+}
+
+async function fetchOrThrow(fetchImpl: typeof fetch, url: string, init: RequestInit, action: string): Promise<Response> {
+  try {
+    return await fetchImpl(url, init);
+  } catch (error) {
+    // Cancellations and timeouts keep their original error so callers can still
+    // classify them (e.g. outcome-unknown for SetStatusToReadyToShip).
+    const name = (error as any)?.name;
+    if (name === 'AbortError' || name === 'TimeoutError' || init.signal?.aborted) throw error;
+    const reason = String((error as any)?.cause?.code || (error as any)?.cause?.message || (error as any)?.message || error);
+    throw new FalabellaApiError(
+      `No se pudo conectar con Falabella (${action}): ${reason}`,
+      { source: 'falabella', kind: 'network', action },
+      { cause: error },
+    );
+  }
+}
+
+function parseResponseBody<T>(
+  rawText: string,
+  format: 'JSON' | 'XML',
+  contentType: string,
+  context: { action: string; status: number },
+): T {
   const shouldParseJson = format === 'JSON' || contentType.includes('application/json');
   if (!shouldParseJson) return rawText as T;
-  return JSON.parse(rawText) as T;
+  try {
+    return JSON.parse(rawText) as T;
+  } catch (error) {
+    const snippet = bodySnippet(rawText);
+    throw new FalabellaApiError(
+      `Falabella respondió HTTP ${context.status} sin JSON válido en ${context.action}: ${snippet || '(respuesta vacía)'}`,
+      {
+        source: 'falabella',
+        kind: 'invalid_response',
+        action: context.action,
+        httpStatus: context.status,
+        contentType: contentType || undefined,
+        bodySnippet: snippet || undefined,
+      },
+      { cause: error },
+    );
+  }
 }
 
 function extractOrders(document: unknown): FalabellaOrderRecord[] {

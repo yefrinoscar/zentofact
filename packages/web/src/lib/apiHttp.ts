@@ -58,9 +58,11 @@ export type OrderSyncAccountStatus = {
   lastFinishedAt?: string | null;
   lastSuccessfulSyncAt?: string | null;
   lastError?: string | null;
+  lastErrorSource?: string | null;
   pagesProcessed?: number;
   ordersReceived?: number;
   ordersUpserted?: number;
+  ordersFailed?: number;
   syncIntervalMinutes?: number;
   lastRunId?: number | null;
   lastLogId?: string | null;
@@ -80,6 +82,7 @@ export type OrderSyncResult = {
   runId?: number | null;
   logId?: string | null;
   error?: string;
+  errorSource?: string | null;
   pages?: number;
   received?: number;
   upserted?: number;
