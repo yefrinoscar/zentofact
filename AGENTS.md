@@ -21,6 +21,7 @@
   - `release:minor` for new backward-compatible functionality that does not require existing users or integrations to change.
   - `release:major` for breaking changes that require users, integrations, configuration, or stored data to change.
 - When a pull request contains more than one change type, use the highest-impact increment: `release:major` over `release:minor` over `release:patch`.
+- Before opening a pull request into `main`, run `npm run release:bump -- patch|minor|major` and commit the result. It computes the next version from `origin/main` and updates `packages/web/package.json` and `package-lock.json` together. Check the matching release type in the pull request description; the `Release version` check reads it and applies the label automatically.
 - Compare the version on the feature branch with the current version on `main` before opening the pull request and update it as follows:
   - Patch: `X.Y.Z` becomes `X.Y.(Z+1)`.
   - Minor: `X.Y.Z` becomes `X.(Y+1).0`.

@@ -1,7 +1,7 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
-import { operationalErrorBody } from './error-log.js';
+import { describeError, operationalErrorBody } from './error-log.js';
 import { isFalabellaSyncEnabled } from './system-config.js';
 import {
   ensureFalabellaOrderAccount,
@@ -975,7 +975,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       sync: await getFalabellaSyncStatus(companyId, db),
     };
   } catch (error) {
-    const message = String(error?.message || error).slice(0, 2000);
+    const message = describeError(error).message.slice(0, 2000);
     if (runId) await db.query(
       `update falabella_sync_runs set status='error', error=$2, finished_at=now() where id=$1`,
       [runId, message],
