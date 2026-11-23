@@ -27,6 +27,16 @@ import type {
   SalespersonEarningSalesResponse,
   SalespersonEarningsResponse,
 } from './salesperson-earnings-presentation';
+import type {
+  SalespersonProductsFilter,
+  SalespersonProductsResponse,
+} from './catalogo-vendedor';
+
+export type {
+  SalespersonProduct,
+  SalespersonProductsFilter,
+  SalespersonProductsResponse,
+} from './catalogo-vendedor';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -649,6 +659,9 @@ const apiHttp = {
     sortBy?: string; sortDir?: 'asc' | 'desc';
     includeArchived?: boolean; limit?: number; offset?: number;
   } = {}) => req(`/products${qs(filter)}`),
+  // Catálogo del vendedor: productos activos con stock, precio y su comisión.
+  listSalespersonProducts: (filter: SalespersonProductsFilter = {}) =>
+    req<SalespersonProductsResponse>(`/salesperson/products${qs(filter)}`),
   getCatalogSummary: (filter: {
     search?: string; status?: string; channelCode?: string;
     companyId?: number; companyIds?: number[];
