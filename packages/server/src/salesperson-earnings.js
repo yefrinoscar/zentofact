@@ -106,11 +106,12 @@ const SALESPEOPLE_SQL = `
 const ORDER_DATE_SQL = `(coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date`;
 
 // Regla de comisión por Pedido, con la misma precedencia que SALESPERSON_COMMISSION_SQL:
-// catalog = todas las líneas tienen comisión (corregida en la línea o del Producto);
-// partial = algunas líneas no la tienen y suman 0; percent = ninguna la tiene y se
-// usa el % del vendedor; missing = no hay ninguna comisión y el Pedido suma 0.
+// catalog = todas las líneas tienen comisión registrada (copiada del Producto al enlazarla
+// o corregida en la línea); partial = algunas líneas no la tienen y suman 0; percent =
+// ninguna la tiene y se usa el % del vendedor registrado en el Pedido; missing = no hay
+// ninguna comisión y el Pedido suma 0.
 // Una fila por Pedido vendido en soles dentro del periodo. `lines` cuenta las
-// líneas que SALESPERSON_COMMISSION_SQL sí suma (con comisión en la línea o en su Producto).
+// líneas que SALESPERSON_COMMISSION_SQL sí suma (con comisión registrada en la línea).
 function salesCte({ fromParam, toParam, userParam = null }) {
   return `
   salespeople as (${SALESPEOPLE_SQL}),
@@ -123,7 +124,7 @@ function salesCte({ fromParam, toParam, userParam = null }) {
       case
         when lines.priced_lines > 0 and lines.priced_lines < lines.lines_count then 'partial'
         when lines.priced_lines > 0 then 'catalog'
-        when s.commission_percent > 0 then 'percent'
+        when coalesce(o.salesperson_commission_percent, 0) > 0 then 'percent'
         else 'missing'
       end as commission_rule
     from orders o
@@ -131,11 +132,10 @@ function salesCte({ fromParam, toParam, userParam = null }) {
     cross join lateral (
       select count(*)::int as lines_count,
         count(*) filter (
-          where coalesce(oi.commission_amount, p.commission_amount) is not null
+          where oi.commission_amount is not null
         )::int as priced_lines,
         coalesce(sum(oi.quantity), 0)::numeric as units
       from order_items oi
-      left join products p on p.id = oi.product_id
       where oi.order_id = o.id
     ) lines
     where ${SALES_EXCLUSIONS}
@@ -306,7 +306,7 @@ export async function listSalespersonEarningSales(userId, input = {}, db) {
          'name', coalesce(nullif(trim(p.name), ''), nullif(trim(oi.description), '')),
          'sku', coalesce(nullif(trim(p.main_sku), ''), nullif(trim(oi.main_sku), ''), nullif(trim(oi.sku), '')),
          'quantity', oi.quantity,
-         'unitCommission', coalesce(oi.commission_amount, p.commission_amount)
+         'unitCommission', oi.commission_amount
        ) order by oi.id), '[]'::json) as items
        from order_items oi
        left join products p on p.id = oi.product_id

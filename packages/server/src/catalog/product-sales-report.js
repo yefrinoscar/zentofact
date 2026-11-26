@@ -151,8 +151,8 @@ function productOrderSql(filters) {
   const days = Math.max(1, Number(filters.dayCount) || 1);
   if (filters.sortBy === 'keepsPerDay') {
     return `(case
-      when wholesale_price is null then arrives
-      else arrives - wholesale_price * units_sold
+      when wholesale_cost is null then arrives
+      else arrives - wholesale_cost
     end) ${direction}`;
   }
   if (filters.sortBy === 'restockQty') {
@@ -356,6 +356,10 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         ) as image_url,
         p.brand,
         p.wholesale_price,
+        -- Costo por mayor registrado en la línea al enlazarla; solo una línea que nunca
+        -- se enlazó (Producto resuelto por la publicación) usa el precio actual.
+        case when oi.pricing_snapshot_at is not null then oi.wholesale_price else p.wholesale_price end
+          as line_unit_cost,
         coalesce(i.quantity_on_hand, 0) - coalesce(i.quantity_reserved, 0) - coalesce(i.quantity_pending_return, 0) as available,
         o.id as order_id,
         o.company_id,
@@ -487,6 +491,7 @@ function mapProductRow(row = {}) {
     returnLoss: Number(row.return_loss || 0),
     visits: row.visits == null ? null : Number(row.visits),
     wholesalePrice: row.wholesale_price == null ? null : Number(row.wholesale_price),
+    wholesaleCost: row.wholesale_cost == null ? null : Number(row.wholesale_cost),
     available: row.available == null ? null : Number(row.available),
     sellers: (Array.isArray(row.sellers) ? row.sellers : []).map(mapSeller),
   };
@@ -656,6 +661,7 @@ export async function listProductSalesReport(input = {}, db) {
            sum(paid_arrives) as paid_arrives,
            sum(pending_arrives) as pending_arrives,
            min(wholesale_price) as wholesale_price,
+           sum(quantity * line_unit_cost) as wholesale_cost,
            min(available) as available,
            ${sellerPublishedSql} as published,
            array_agg(distinct channel_code) filter (where channel_code is not null) as channel_codes,
@@ -684,6 +690,7 @@ export async function listProductSalesReport(input = {}, db) {
          sum(paid_arrives) as paid_arrives,
          sum(pending_arrives) as pending_arrives,
          min(wholesale_price) as wholesale_price,
+         sum(wholesale_cost) as wholesale_cost,
          min(available) as available,
          null::numeric as visits,
          jsonb_agg(jsonb_build_object(
@@ -798,6 +805,7 @@ export async function listProductSalesReport(input = {}, db) {
          coalesce(sum(paid_arrives), 0) as paid_arrives,
          coalesce(sum(pending_arrives), 0) as pending_arrives,
          min(wholesale_price) as wholesale_price,
+         sum(quantity * line_unit_cost) as wholesale_cost,
          min(available) as available
        from priced
        group by product_key`,

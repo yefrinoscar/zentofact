@@ -152,9 +152,10 @@ test('la regla y la comisión por línea no exigen Producto enlazado', async () 
   const sql = calls[1];
   assert.equal(sql.includes('p.id is not null'), false);
   assert.equal(sql.includes('from order_items oi join products'), false);
-  assert.ok(sql.includes('from order_items oi left join products p on p.id=oi.product_id'));
-  assert.ok(sql.includes('where coalesce(oi.commission_amount, p.commission_amount) is not null'));
-  assert.ok(sql.includes("'unitcommission', coalesce(oi.commission_amount, p.commission_amount)"));
+  assert.ok(sql.includes('where oi.commission_amount is not null'));
+  assert.ok(sql.includes("'unitcommission', oi.commission_amount"));
+  assert.equal(sql.includes('p.commission_amount'), false);
+  assert.ok(sql.includes('coalesce(o.salesperson_commission_percent, 0) > 0'));
   assert.equal(sql.includes('case when p.id is null'), false);
   assert.equal(result.sales[0].commissionRule, 'catalog');
   assert.equal(result.sales[0].linesWithoutCommission, 0);

@@ -342,6 +342,11 @@ export async function ensureUserColumns() {
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS commission_percent NUMERIC(5,2) DEFAULT 0;
     UPDATE "user" SET commission_percent = 0 WHERE commission_percent IS NULL;
+    -- Pedidos de vendedor creados antes de copiar el % al Pedido: toma el % de hoy
+    -- una sola vez; desde entonces el trigger de orders lo fija al crear el Pedido.
+    UPDATE orders o SET salesperson_commission_percent = coalesce(u.commission_percent, 0)
+    FROM "user" u
+    WHERE u.id = o.created_by AND o.salesperson_commission_percent IS NULL;
     CREATE TABLE IF NOT EXISTS user_audit_log (
       id BIGSERIAL PRIMARY KEY,
       actor_id TEXT,

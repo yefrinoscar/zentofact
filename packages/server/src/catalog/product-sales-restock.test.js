@@ -36,6 +36,17 @@ test('te deja resta el precio por mayor cuando existe', () => {
   assert.equal(keepsMoney({ arrives: null, unitsSold: 72, wholesalePrice: 10 }).keeps, null);
 });
 
+test('te deja usa el costo registrado en las ventas, no el precio por mayor de hoy', () => {
+  // 72 unidades vendidas a 101 de costo; hoy el catálogo dice 150.
+  const recorded = keepsMoney({ arrives: 1440, unitsSold: 72, wholesalePrice: 150, wholesaleCost: 101 * 72 });
+  assert.equal(recorded.hasWholesaleCost, true);
+  assert.equal(recorded.keeps, 1440 - 101 * 72);
+
+  const noRecordedCost = keepsMoney({ arrives: 1440, unitsSold: 72, wholesalePrice: 150, wholesaleCost: null });
+  assert.equal(noRecordedCost.hasWholesaleCost, false);
+  assert.equal(noRecordedCost.keeps, 1440);
+});
+
 test('la curva llena días vacíos y detecta alza o fin de semana', () => {
   const series = fillDailySeries('2026-08-13', '2026-08-16', [
     { date: '2026-08-13', units: 1 },

@@ -2114,4 +2114,65 @@ const SUNAT_LEDGER_DDL = `
   DROP TRIGGER IF EXISTS trg_sunat_attempts_immutable ON sunat_emission_attempts;
   CREATE TRIGGER trg_sunat_attempts_immutable BEFORE UPDATE OR DELETE ON sunat_emission_attempts
     FOR EACH ROW EXECUTE FUNCTION sunat_ledger_immutable();
+
+  -- Precios registrados en la venta. La comisión y el precio por mayor del
+  -- Producto se copian a la línea cuando se enlaza; cambiar el catálogo después
+  -- solo afecta a las líneas que se enlacen desde entonces. El % del vendedor se
+  -- copia al Pedido por la misma razón.
+  ALTER TABLE order_items ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(14,2);
+  ALTER TABLE order_items ADD COLUMN IF NOT EXISTS commission_overridden BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE order_items ADD COLUMN IF NOT EXISTS pricing_snapshot_at TIMESTAMPTZ;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS salesperson_commission_percent NUMERIC(5,2);
+
+  -- Una sola vez por línea (pricing_snapshot_at): las líneas enlazadas antes de
+  -- esta copia toman el valor que el catálogo tiene hoy, porque el anterior no se
+  -- guardó. Una comisión ya escrita en la línea fue una corrección manual.
+  UPDATE order_items oi SET
+    commission_overridden = (oi.commission_amount IS NOT NULL),
+    commission_amount = coalesce(oi.commission_amount, p.commission_amount),
+    wholesale_price = coalesce(oi.wholesale_price, p.wholesale_price),
+    pricing_snapshot_at = now()
+  FROM products p
+  WHERE p.id = oi.product_id AND oi.pricing_snapshot_at IS NULL;
+
+  CREATE OR REPLACE FUNCTION order_items_pricing_snapshot() RETURNS trigger AS $$
+  DECLARE
+    product RECORD;
+  BEGIN
+    IF NEW.product_id IS NULL THEN RETURN NEW; END IF;
+    IF TG_OP = 'UPDATE' AND OLD.product_id IS NOT DISTINCT FROM NEW.product_id THEN RETURN NEW; END IF;
+    SELECT commission_amount, wholesale_price INTO product FROM products WHERE id = NEW.product_id;
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    IF TG_OP = 'INSERT' AND NEW.commission_amount IS NOT NULL THEN
+      NEW.commission_overridden := TRUE;
+    ELSIF NOT NEW.commission_overridden THEN
+      NEW.commission_amount := product.commission_amount;
+    END IF;
+    NEW.wholesale_price := product.wholesale_price;
+    NEW.pricing_snapshot_at := now();
+    RETURN NEW;
+  END
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_order_items_pricing_snapshot ON order_items;
+  CREATE TRIGGER trg_order_items_pricing_snapshot BEFORE INSERT OR UPDATE OF product_id ON order_items
+    FOR EACH ROW EXECUTE FUNCTION order_items_pricing_snapshot();
+
+  CREATE OR REPLACE FUNCTION orders_salesperson_commission_snapshot() RETURNS trigger AS $$
+  BEGIN
+    IF NEW.created_by IS NULL THEN RETURN NEW; END IF;
+    IF TG_OP = 'UPDATE' AND OLD.created_by IS NOT DISTINCT FROM NEW.created_by
+      AND NEW.salesperson_commission_percent IS NOT NULL THEN
+      RETURN NEW;
+    END IF;
+    BEGIN
+      SELECT coalesce(u.commission_percent, 0) INTO NEW.salesperson_commission_percent
+      FROM "user" u WHERE u.id = NEW.created_by;
+    EXCEPTION WHEN undefined_table OR undefined_column THEN NULL;
+    END;
+    RETURN NEW;
+  END
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_orders_salesperson_commission_snapshot ON orders;
+  CREATE TRIGGER trg_orders_salesperson_commission_snapshot BEFORE INSERT OR UPDATE OF created_by ON orders
+    FOR EACH ROW EXECUTE FUNCTION orders_salesperson_commission_snapshot();
 `;
