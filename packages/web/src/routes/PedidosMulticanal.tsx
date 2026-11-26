@@ -61,6 +61,7 @@ import {
 } from '../components/order-detail/OrderDetailParts';
 import { BuyerConversation } from '../components/buyer-messages/BuyerConversation';
 import { QuantityTag } from '../components/QuantityTag';
+import { DeliveryTag, PaymentMethodTag } from '../components/payment-delivery-tags';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { usePermissions } from '../hooks/usePermissions';
@@ -1469,12 +1470,13 @@ export default function PedidosMulticanal() {
         const delivery = deliveryLabel(row.original);
         return (
           <div className="flex min-w-0 flex-col items-start gap-1">
-            <Badge variant="outline" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
-              {method || <span className="font-medium normal-case text-muted-foreground">Sin método</span>}
-            </Badge>
-            <Badge variant="secondary" className="h-5 max-w-full truncate px-1.5 text-[11px] font-bold uppercase tracking-wide">
-              {deliveryShowsAsTag(delivery) ? delivery : <span className="font-medium normal-case text-muted-foreground">Sin entrega</span>}
-            </Badge>
+            <PaymentMethodTag
+              method={row.original.metadata?.paymentMethod}
+              label={method || <span className="font-medium normal-case text-muted-foreground">Sin método</span>}
+            />
+            <DeliveryTag
+              label={deliveryShowsAsTag(delivery) ? delivery : <span className="font-medium normal-case text-muted-foreground">Sin entrega</span>}
+            />
           </div>
         );
       },
