@@ -23,14 +23,23 @@ export function unitsPerDay(unitsSold, dayCount) {
   return Number(unitsSold || 0) / days;
 }
 
-export function keepsMoney({ arrives, unitsSold, wholesalePrice } = {}) {
+/**
+ * Lo que queda: lo que llega menos el costo por mayor. `wholesaleCost` es el costo
+ * registrado en las ventas (precio por mayor de cada línea × unidades); si no se pasa,
+ * se usa `wholesalePrice` × unidades.
+ */
+export function keepsMoney({ arrives, unitsSold, wholesalePrice, wholesaleCost } = {}) {
   if (arrives == null || !Number.isFinite(Number(arrives))) {
     return { keeps: null, keepsPerUnit: null, hasWholesaleCost: false };
   }
   const units = Number(unitsSold || 0);
   const arrivesNum = Number(arrives);
-  const hasWholesaleCost = wholesalePrice != null && Number.isFinite(Number(wholesalePrice));
-  const keeps = hasWholesaleCost ? arrivesNum - Number(wholesalePrice) * units : arrivesNum;
+  const finite = (value) => value != null && Number.isFinite(Number(value));
+  const cost = wholesaleCost !== undefined
+    ? (finite(wholesaleCost) ? Number(wholesaleCost) : null)
+    : (finite(wholesalePrice) ? Number(wholesalePrice) * units : null);
+  const hasWholesaleCost = cost != null;
+  const keeps = hasWholesaleCost ? arrivesNum - cost : arrivesNum;
   return {
     keeps,
     keepsPerUnit: units > 0 ? keeps / units : null,
@@ -158,6 +167,7 @@ export function productRestock(row, {
     arrives: row.arrives,
     unitsSold: row.unitsSold,
     wholesalePrice: row.wholesalePrice,
+    wholesaleCost: row.wholesaleCost,
   });
   const available = row.available == null ? null : Number(row.available);
   const filled = fillSeries ? fillDailySeries(from, to, series) : [];

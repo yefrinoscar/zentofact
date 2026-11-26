@@ -941,16 +941,15 @@ export async function ingestOrder(input, db) {
 }
 
 /**
- * Comisión de un Pedido de vendedor: la de cada línea (corregida en la línea o, si no, la del
- * catálogo) por unidad, tenga o no Producto enlazado; si ninguna línea la tiene, el % del vendedor.
+ * Comisión de un Pedido de vendedor: la registrada en cada línea (copiada del catálogo al
+ * enlazarla, o corregida a mano) por unidad; si ninguna línea la tiene, el % del vendedor
+ * registrado en el Pedido. Cambiar el catálogo o el % del vendedor no altera Pedidos pasados.
  */
 export const SALESPERSON_COMMISSION_SQL = `coalesce(
-    (select sum(coalesce(oi.commission_amount, p.commission_amount) * oi.quantity)
-     from order_items oi left join products p on p.id=oi.product_id
+    (select sum(oi.commission_amount * oi.quantity)
+     from order_items oi
    where oi.order_id=o.id),
-  round(coalesce(o.total, 0) * coalesce(
-    (select u.commission_percent from "user" u where u.id=o.created_by), 0
-  ) / 100, 2)
+  round(coalesce(o.total, 0) * coalesce(o.salesperson_commission_percent, 0) / 100, 2)
 )`;
 
 const ORDER_CREATOR_SELECT = `nullif(trim(creator.name), '') as created_by_name, creator.role as created_by_role`;
@@ -1891,7 +1890,7 @@ export async function getOrder(orderId, db) {
     target.query(
        `select oi.id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity,
           oi.unit_price, oi.discount_amount, oi.tax_amount, oi.total,
-          coalesce(oi.commission_amount, p.commission_amount) as commission_amount,
+          oi.commission_amount,
           oi.provider_status, oi.metadata, oi.raw_data,
           oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity, oi.stock_revision,
           oi.created_at, oi.updated_at,
@@ -2083,7 +2082,7 @@ export async function updateOrderItemCommission(orderId, itemId, input = {}, db)
   const value = nullableNumber(input.commissionAmount, 'commissionAmount');
   if (value == null || value < 0) throw new Error('La comisión debe ser un monto mayor o igual a cero.');
   const result = await target.query(
-    `update order_items set commission_amount=$3, updated_at=now()
+    `update order_items set commission_amount=$3, commission_overridden=true, updated_at=now()
      where id=$1 and order_id=$2 returning id`,
     [lineId, id, roundMoney(value)],
   );

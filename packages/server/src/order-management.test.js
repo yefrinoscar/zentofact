@@ -1584,10 +1584,10 @@ test('el efectivo exige un receptor antes de registrar la venta o el pago', asyn
   }
 });
 
-test('la comisión del vendedor cuenta las líneas sin Producto enlazado', () => {
+test('la comisión del vendedor usa lo registrado en el Pedido, no el catálogo de hoy', () => {
   const sql = SALESPERSON_COMMISSION_SQL.replace(/\s+/g, ' ');
-  assert.match(sql, /sum\(coalesce\(oi\.commission_amount, p\.commission_amount\) \* oi\.quantity\)/);
-  assert.match(sql, /from order_items oi left join products p on p\.id=oi\.product_id/);
-  assert.doesNotMatch(sql, /from order_items oi join products/);
-  assert.match(sql, /u\.commission_percent/);
+  assert.match(sql, /sum\(oi\.commission_amount \* oi\.quantity\) from order_items oi where oi\.order_id=o\.id/);
+  assert.match(sql, /o\.salesperson_commission_percent/);
+  assert.doesNotMatch(sql, /products/);
+  assert.doesNotMatch(sql, /u\.commission_percent/);
 });
