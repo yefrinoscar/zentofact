@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { A4_HEIGHT, A4_WIDTH } from './shipping-label-sheet.js';
-import { buildManualLabelSheet, deliveryLine, shippingAddressLine } from './manual-shipping-label.js';
+import { buildManualLabelSheet, deliveryLine, shalomLabelData, shippingAddressLine } from './manual-shipping-label.js';
 
 function sampleOrder(overrides = {}) {
   return {
@@ -46,4 +46,37 @@ test('arma una hoja A4 con 4 etiquetas manuales', async () => {
 
 test('exige al menos un pedido manual', async () => {
   await assert.rejects(() => buildManualLabelSheet([]), /al menos un pedido manual/);
+});
+
+const shalomShipping = {
+  type: 'envio',
+  carrier: 'shaloom',
+  address: 'Arequipa',
+  shalom: {
+    name: 'Maribel Vanesa Silva Cama',
+    dni: '40328817',
+    phone: '968784568 / 975141252',
+    sede: 'Arequipa / Alto Selva Alegre / Av Lima',
+  },
+};
+
+test('los pedidos Shaloom usan los datos de agencia guardados', () => {
+  assert.deepEqual(shalomLabelData({ shipping: shalomShipping }), shalomShipping.shalom);
+  assert.equal(shalomLabelData({ shipping: { ...shalomShipping, carrier: 'marvisuar' } }), null);
+  assert.equal(shalomLabelData({ shipping: { type: 'envio', carrier: 'shaloom' } }), null);
+});
+
+test('Shalom va en hojas de 2 y los demás manuales siguen en hojas de 4', async () => {
+  const bytes = await buildManualLabelSheet([
+    sampleOrder({ shipping: shalomShipping }),
+    sampleOrder({ id: 12 }),
+    sampleOrder({ id: 13, shipping: { ...shalomShipping, shalom: { ...shalomShipping.shalom, sede: 'Lima / Los Olivos / Agencia Av. Carlos Izaguirre cuadra 9 frente al mercado' } } }),
+    sampleOrder({ id: 14, shipping: shalomShipping }),
+  ]);
+  const pdf = await PDFDocument.load(bytes);
+  // 1 hoja vertical con la etiqueta manual + 2 hojas horizontales con 3 etiquetas Shalom.
+  assert.equal(pdf.getPageCount(), 3);
+  assert.equal(pdf.getPage(0).getWidth(), A4_WIDTH);
+  assert.equal(pdf.getPage(1).getWidth(), A4_HEIGHT);
+  assert.equal(pdf.getPage(1).getHeight(), A4_WIDTH);
 });

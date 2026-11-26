@@ -14,10 +14,10 @@ import {
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
   limaDeadlineKey, logisticsAddressSummary, logisticsAddressTitle, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
   logisticsReadyActionLabel, logisticsUpdatedClock, mercadoLibreDispatchLabel, remainingReadyToPrint,
-  LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
+  LOGISTICS_URGENCIES, isShalomShipment, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
 import {
-  ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
+  ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag, ShalomTag,
   type BandejaView, type LogisticsOrder,
 } from './bandeja-prototype/shared';
 import { BuyerMessagesButton } from '../components/buyer-messages/BuyerMessagesButton';
@@ -191,6 +191,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                         <div className="min-w-0 self-start pt-1">
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
+                          {isShalomShipment(order) && <ShalomTag className="mt-1.5" />}
                         </div>
                         <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">

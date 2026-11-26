@@ -20,7 +20,7 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'falabella', label: 'Falabella' },
   { value: 'ripley', label: 'Ripley' },
   { value: 'mercado_libre', label: 'Mercado Libre' },
-  { value: 'manual', label: 'Propios' },
+  { value: 'manual', label: 'Tienda' },
 ];
 
 export type LogisticsEnabledChannels = {
@@ -115,7 +115,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   falabella: 'Falabella',
   ripley: 'Ripley',
   mercado_libre: 'Mercado Libre',
-  manual: 'Propios',
+  manual: 'Tienda',
 };
 
 const CARRIER_LABELS: Record<string, string> = {
@@ -150,6 +150,13 @@ export function logisticsChannelDotClass(code?: string | null) {
 export function logisticsQuantityLabel(item: { quantity?: number | null }) {
   const quantity = Math.max(1, Number(item.quantity) || 1);
   return `x${quantity}`;
+}
+
+/** Pedidos de la tienda que salen por agencia Shalom: llevan tag y etiqueta propia. */
+export function isShalomShipment(order: LogisticsOrderLike) {
+  const type = String(order.shipping?.type || order.metadata?.delivery || '').trim().toLowerCase();
+  const carrier = String(order.shipping?.carrier || order.metadata?.shippingCarrier || '').trim().toLowerCase();
+  return type !== 'recojo' && carrier === 'shaloom';
 }
 
 export function logisticsDeliveryLabel(order: LogisticsOrderLike) {

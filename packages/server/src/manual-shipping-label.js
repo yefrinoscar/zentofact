@@ -257,6 +257,97 @@ function drawManualLabel(page, fonts, order, bounds) {
   }
 }
 
+/** Datos de agencia guardados al registrar una venta con Shaloom. */
+export function shalomLabelData(order = {}) {
+  const shipping = order.shipping || {};
+  if (String(shipping.carrier || '').trim().toLowerCase() !== 'shaloom') return null;
+  const raw = shipping.shalom;
+  if (!raw || typeof raw !== 'object') return null;
+  const label = {
+    name: String(raw.name || '').trim(),
+    dni: String(raw.dni || '').trim(),
+    phone: String(raw.phone || '').trim(),
+    sede: String(raw.sede || '').trim(),
+  };
+  return label.name || label.dni || label.phone || label.sede ? label : null;
+}
+
+/** El tamaño más grande en que el texto entra completo en una o dos líneas. */
+function fitPdfLines(font, value, maxWidth, sizes, singleLineMin = Infinity) {
+  const safe = safePdfText(font, value);
+  // Una sola línea mientras la letra no baje de `singleLineMin`.
+  for (const size of sizes) {
+    if (size < singleLineMin) break;
+    if (font.widthOfTextAtSize(safe, size) <= maxWidth) return { size, lines: [safe] };
+  }
+  for (const size of sizes) {
+    const lines = wrapPdfText(font, safe, size, maxWidth, 2);
+    const fits = lines.join(' ') === safe && lines.every((line) => font.widthOfTextAtSize(line, size) <= maxWidth);
+    if (fits) return { size, lines };
+  }
+  const size = sizes.at(-1);
+  return { size, lines: wrapPdfText(font, safe, size, maxWidth, 3) };
+}
+
+/** Dos etiquetas Shalom, una abajo de otra, en una hoja A4 horizontal. */
+export const SHALOM_LABELS_PER_PAGE = 2;
+
+/** Formato de la plantilla de Excel: NOMBRE, DNI, CELULAR y SEDE en dos columnas, sin grilla, dentro de un borde. */
+function drawShalomLabel(page, fonts, order, label, bounds) {
+  const { regular, bold } = fonts;
+  const { x, y, width, height } = bounds;
+  page.drawRectangle({ x, y, width, height, color: PAPER, borderColor: INK, borderWidth: 1.4 });
+
+  const keyWidth = Math.round(width * 0.26);
+  const valueWidth = width - keyWidth - 48;
+  const rows = [
+    ['NOMBRE', label.name.toUpperCase()],
+    ['DNI', label.dni],
+    ['CELULAR', label.phone],
+    ['SEDE', label.sede],
+  ].map(([key, value]) => ({ key, ...fitPdfLines(bold, value || '-', valueWidth, [26, 23, 20, 17, 14, 12], 17) }));
+  const keySize = 18;
+  const rowGap = 12;
+  const rowHeights = rows.map((row) => Math.max(keySize, row.lines.length * row.size * 1.15));
+  const blockHeight = rowHeights.reduce((total, rowHeight) => total + rowHeight, 0) + rowGap * (rows.length - 1);
+  let top = y + height / 2 + blockHeight / 2;
+
+  rows.forEach((row, index) => {
+    const rowHeight = rowHeights[index];
+    const middle = top - rowHeight / 2;
+    page.drawText(row.key, {
+      x: x + 24 + (keyWidth - bold.widthOfTextAtSize(row.key, keySize)) / 2,
+      y: middle - keySize * 0.35,
+      size: keySize,
+      font: bold,
+      color: INK,
+    });
+    const lineHeight = row.size * 1.15;
+    const firstLine = middle + ((row.lines.length - 1) * lineHeight) / 2;
+    row.lines.forEach((line, lineIndex) => {
+      page.drawText(line, {
+        x: x + 24 + keyWidth + (valueWidth - bold.widthOfTextAtSize(line, row.size)) / 2,
+        y: firstLine - lineIndex * lineHeight - row.size * 0.35,
+        size: row.size,
+        font: bold,
+        color: INK,
+      });
+    });
+    top -= rowHeight + rowGap;
+  });
+
+  const footerText = wrapPdfText(regular, `Pedido ${orderNumber(order)}`, 8, width - 24, 1)[0];
+  if (footerText) {
+    page.drawText(footerText, {
+      x: x + width - 12 - regular.widthOfTextAtSize(footerText, 8),
+      y: y + 10,
+      size: 8,
+      font: regular,
+      color: MUTED,
+    });
+  }
+}
+
 export async function buildManualLabelSheet(orders = []) {
   if (!Array.isArray(orders) || !orders.length) {
     throw new Error('Selecciona al menos un pedido manual para imprimir.');
@@ -272,13 +363,28 @@ export async function buildManualLabelSheet(orders = []) {
   };
   const cellWidth = (A4_WIDTH - PAGE_MARGIN * 2 - CELL_GAP) / 2;
   const cellHeight = (A4_HEIGHT - PAGE_MARGIN * 2 - CELL_GAP) / 2;
+  // Shalom usa la hoja acostada: ancho y alto del A4 intercambiados.
+  const shalomHeight = (A4_WIDTH - PAGE_MARGIN * 2 - CELL_GAP) / SHALOM_LABELS_PER_PAGE;
+  const newPage = (landscape = false) => {
+    const [pageWidth, pageHeight] = landscape ? [A4_HEIGHT, A4_WIDTH] : [A4_WIDTH, A4_HEIGHT];
+    const page = pdf.addPage([pageWidth, pageHeight]);
+    page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    return page;
+  };
 
-  orders.forEach((order, index) => {
+  // Shalom va en su propia hoja de 2; el resto de pedidos manuales sigue en la hoja de 4.
+  const shalom = [];
+  const regular = [];
+  for (const order of orders) {
+    const label = shalomLabelData(order);
+    if (label) shalom.push({ order, label });
+    else regular.push(order);
+  }
+
+  let page = null;
+  regular.forEach((order, index) => {
     const slot = index % LABELS_PER_PAGE;
-    const page = slot === 0 ? pdf.addPage([A4_WIDTH, A4_HEIGHT]) : pdf.getPages().at(-1);
-    if (slot === 0) {
-      page.drawRectangle({ x: 0, y: 0, width: A4_WIDTH, height: A4_HEIGHT, color: PAPER });
-    }
+    if (slot === 0) page = newPage();
     const column = slot % 2;
     const row = Math.floor(slot / 2);
     drawManualLabel(page, fonts, order, {
@@ -286,6 +392,17 @@ export async function buildManualLabelSheet(orders = []) {
       y: A4_HEIGHT - PAGE_MARGIN - (row + 1) * cellHeight - row * CELL_GAP,
       width: cellWidth,
       height: cellHeight,
+    });
+  });
+
+  shalom.forEach(({ order, label }, index) => {
+    const slot = index % SHALOM_LABELS_PER_PAGE;
+    if (slot === 0) page = newPage(true);
+    drawShalomLabel(page, fonts, order, label, {
+      x: PAGE_MARGIN,
+      y: A4_WIDTH - PAGE_MARGIN - (slot + 1) * shalomHeight - slot * CELL_GAP,
+      width: A4_HEIGHT - PAGE_MARGIN * 2,
+      height: shalomHeight,
     });
   });
 

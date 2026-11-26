@@ -8,6 +8,7 @@ import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
 import falabellaLogo from '../../assets/falabella.png';
+import shalomLogo from '../../assets/shalom.png';
 import ripleyLogo from '../../assets/logo-blanco.svg';
 import mercadoLibreLogo from '../../assets/mercado-libre.svg';
 import {
@@ -380,8 +381,21 @@ export function ChannelMark({ code, className }: { code?: string | null; classNa
     return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
   }
   return (
-    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Propios" aria-label="Propios">
-      P
+    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Tienda" aria-label="Tienda">
+      T
+    </span>
+  );
+}
+
+/** Tag de los pedidos de la tienda que se despachan por agencia Shalom. */
+export function ShalomTag({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-50 pl-0.5 pr-1.5 text-[11px] font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300', className)}
+      title="Envío por agencia Shalom"
+    >
+      <img src={shalomLogo} alt="" className="size-4 rounded-[3px]" />
+      Shalom
     </span>
   );
 }

@@ -66,7 +66,7 @@ test('la bandeja inicia mostrando todos los plazos', () => {
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
-  assert.equal(logisticsChannelLabel('manual'), 'Propios');
+  assert.equal(logisticsChannelLabel('manual'), 'Tienda');
   assert.equal(logisticsChannelLabel('mercado_libre'), 'Mercado Libre');
   assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'mercado_libre', 'manual']);
   assert.equal(visibleLogisticsChannels().some((item) => item.value === 'ripley'), true);
@@ -524,4 +524,12 @@ test('resume la dirección de entrega para la fila de la bandeja', () => {
   );
   assert.equal(logisticsAddressSummary({}), '');
   assert.equal(logisticsAddressSummary(null), '');
+});
+
+test('marca como Shalom solo los envíos de la tienda por Shaloom', async () => {
+  const { isShalomShipment } = await import('./logistics-inbox.ts');
+  assert.equal(isShalomShipment({ channelCode: 'manual', shipping: { type: 'envio', carrier: 'shaloom' } }), true);
+  assert.equal(isShalomShipment({ channelCode: 'manual', metadata: { delivery: 'envio', shippingCarrier: 'shaloom' } }), true);
+  assert.equal(isShalomShipment({ channelCode: 'manual', shipping: { type: 'envio', carrier: 'marvisuar' } }), false);
+  assert.equal(isShalomShipment({ channelCode: 'manual', shipping: { type: 'recojo', carrier: 'shaloom' } }), false);
 });
