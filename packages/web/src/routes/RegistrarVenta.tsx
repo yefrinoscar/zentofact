@@ -51,6 +51,12 @@ import { readPaymentProof } from '../lib/payment-proof';
 import { isSellerPricedShipping, type ShippingCarrier } from '../lib/shipping-carrier';
 import { DINSIDES_CARRIER, dinsidesAmountInput, quoteDinsidesShipping } from '../lib/dinsides-coverage';
 import type { MapPlace } from '../components/PlacePicker';
+import {
+  SHALOM_CARRIER,
+  printShalomLabels,
+  resolveShalomLabel,
+  type ShalomLabelDraft,
+} from '../lib/shalom-label';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
@@ -98,6 +104,7 @@ export default function RegistrarVenta() {
   const [autoShippingInput, setAutoShippingInput] = useState('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
   const [shippingNote, setShippingNote] = useState('');
+  const [shalomLabel, setShalomLabel] = useState<ShalomLabelDraft>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
   const [receivedBy, setReceivedBy] = useState('');
   const [paidTo, setPaidTo] = useState<PaymentRecipient | ''>('');
@@ -171,6 +178,12 @@ export default function RegistrarVenta() {
   );
   const profit = saleProfit(lines);
 
+  const resolvedShalomLabel = resolveShalomLabel(shalomLabel, {
+    name: customerName,
+    phone: customerPhone,
+    dni: documentRequest === 'boleta' && boletaIdentity === 'dni' ? customerDocumentNumber : '',
+  });
+
   const saleInput: ManualSaleInput = {
     channelAccountId: manualAccount?.id,
     salespersonId,
@@ -183,6 +196,7 @@ export default function RegistrarVenta() {
     sellerShippingAmount,
     dropoffPlace,
     shippingNote,
+    shalomLabel: shippingCarrier === SHALOM_CARRIER ? resolvedShalomLabel : null,
     paymentMethod,
     receivedBy,
     paidTo,
@@ -357,6 +371,19 @@ export default function RegistrarVenta() {
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
       ]);
+      const savedShalomLabel = payload.shipping.shalom;
+      if (savedShalomLabel) {
+        // El pedido ya existe: la etiqueta se imprime aquí o luego desde la bandeja.
+        showSnackbar({
+          message: `Pedido ${registered.number} confirmado. Imprime la etiqueta Shalom.`,
+          tone: 'success',
+          duration: null,
+          action: {
+            label: 'Imprimir etiqueta',
+            onClick: () => printShalomLabels([{ ...savedShalomLabel, orderNumber: registered.number }]),
+          },
+        });
+      }
     } catch (error: any) {
       for (const [key, data] of customDate ? [] : previousHomes) {
         if (data) queryClient.setQueryData(key, data);
@@ -479,6 +506,8 @@ export default function RegistrarVenta() {
     },
     shippingNote,
     setShippingNote,
+    shalomLabel,
+    setShalomLabel,
     paymentMethod,
     setPaymentMethod,
     receivedBy,

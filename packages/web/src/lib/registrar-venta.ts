@@ -10,6 +10,7 @@ import {
   saleTotals,
 } from './own-fleet-shipping.ts';
 import { isSellerPricedShipping, type ShippingCarrier } from './shipping-carrier.ts';
+import { SHALOM_CARRIER, shalomLabelError, shalomShippingPayload, type ShalomLabel } from './shalom-label.ts';
 
 export const PAYMENT_METHODS = [
   { value: 'despues', label: 'Después' },
@@ -111,6 +112,8 @@ export type ManualSaleInput = {
   sellerShippingAmount?: number | null;
   dropoffPlace: DropoffPlace | null;
   shippingNote?: string;
+  /** Datos de la etiqueta de agencia. Obligatorio con Shaloom. */
+  shalomLabel?: ShalomLabel | null;
   paymentMethod: PaymentMethod;
   receivedBy?: string;
   paidTo?: PaymentRecipient | '';
@@ -350,6 +353,10 @@ function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeo
     const quote = quoteOwnFleetShipping(input.dropoffPlace, fleetConfig);
     if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
   }
+  if (input.shippingCarrier === SHALOM_CARRIER) {
+    const labelError = shalomLabelError(input.shalomLabel ?? { name: '', dni: '', phone: '', sede: '' });
+    if (labelError) return labelError;
+  }
   return validateSellerShipping(input);
 }
 
@@ -451,6 +458,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       zoneKind: shippingQuote?.zone.kind,
       zoneLabel: shippingQuote?.zoneLabel,
       priceZone: shippingQuote?.priceZoneName,
+      shalom: input.delivery === 'envio' && input.shippingCarrier === SHALOM_CARRIER && input.shalomLabel
+        ? shalomShippingPayload(input.shalomLabel)
+        : undefined,
     },
     metadata: {
       origin: 'manual_ui',

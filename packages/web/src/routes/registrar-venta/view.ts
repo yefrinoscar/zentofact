@@ -12,6 +12,7 @@ import type { MapPlace } from '../../components/PlacePicker';
 import type { DinsidesQuote } from '../../lib/dinsides-coverage';
 import type { OwnFleetOrigin, OwnFleetQuote } from '../../lib/own-fleet-shipping';
 import type { SaleTotals } from '../../lib/sale-summary';
+import type { ShalomLabelDraft } from '../../lib/shalom-label';
 
 export type PaymentProof = { name: string; type: string; dataUrl: string };
 export type SalespersonOption = { id: string; name: string };
@@ -62,6 +63,9 @@ export type SaleFormView = {
   useDinsidesPrice: (amount: number) => void;
   shippingNote: string;
   setShippingNote: (value: string) => void;
+  /** Datos de la etiqueta Shalom que el vendedor editó. Solo se imprimen; no se guardan en el pedido. */
+  shalomLabel: ShalomLabelDraft;
+  setShalomLabel: Dispatch<SetStateAction<ShalomLabelDraft>>;
   paymentMethod: PaymentMethod;
   setPaymentMethod: (value: PaymentMethod) => void;
   receivedBy: string;

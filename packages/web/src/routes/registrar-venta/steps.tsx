@@ -42,6 +42,7 @@ import {
   DINSIDES_PACKAGE_LIMIT,
   DINSIDES_ZONE_LIST,
 } from '../../lib/dinsides-coverage';
+import { SHALOM_CARRIER, resolveShalomLabel, type ShalomLabel } from '../../lib/shalom-label';
 import { copyText } from '../../lib/clipboard';
 import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
 import {
@@ -499,6 +500,75 @@ function DinsidesRatesPopover() {
   );
 }
 
+/** Shalom entrega en agencia: el paquete va con una etiqueta impresa con los datos de quien recoge. */
+function ShalomLabelFields({ view }: { view: SaleFormView }) {
+  const label = resolveShalomLabel(view.shalomLabel, {
+    name: view.customerName,
+    phone: view.customerPhone,
+    dni: view.documentRequest === 'boleta' && view.boletaIdentity === 'dni' ? view.customerDocumentNumber : '',
+  });
+  const set = (field: keyof ShalomLabel) => (value: string) =>
+    view.setShalomLabel((current) => ({ ...current, [field]: value }));
+
+  return (
+    <FieldRow label="Etiqueta Shalom">
+      <div className="space-y-3 rounded-md bg-muted/50 p-3 ring-1 ring-border">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1 sm:col-span-2">
+            <Label htmlFor="shalom-name" className="text-[11px] text-muted-foreground">Nombre completo</Label>
+            <Input
+              id="shalom-name"
+              value={label.name}
+              onChange={(event) => set('name')(event.target.value)}
+              placeholder="Como figura en su DNI"
+              autoComplete="off"
+              className="bg-background"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="shalom-dni" className="text-[11px] text-muted-foreground">DNI</Label>
+            <Input
+              id="shalom-dni"
+              value={label.dni}
+              onChange={(event) => set('dni')(event.target.value.replace(/\D/g, '').slice(0, 8))}
+              placeholder="12345678"
+              inputMode="numeric"
+              autoComplete="off"
+              className={cn('bg-background tabular-nums', NUMBER_INPUT)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="shalom-phone" className="text-[11px] text-muted-foreground">Celular</Label>
+            <Input
+              id="shalom-phone"
+              value={label.phone}
+              onChange={(event) => set('phone')(event.target.value.replace(/[^\d /]/g, '').slice(0, 40))}
+              placeholder="999 999 999 / 988 888 888"
+              inputMode="tel"
+              autoComplete="off"
+              className="bg-background tabular-nums"
+            />
+          </div>
+          <div className="space-y-1 sm:col-span-2">
+            <Label htmlFor="shalom-sede" className="text-[11px] text-muted-foreground">Sede</Label>
+            <Input
+              id="shalom-sede"
+              value={label.sede}
+              onChange={(event) => set('sede')(event.target.value)}
+              placeholder="Arequipa / Alto Selva Alegre / Av Lima"
+              autoComplete="off"
+              className="bg-background"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Toma los datos del cliente; puedes cambiarlos. La etiqueta se imprime al confirmar el pedido y desde la bandeja.
+        </p>
+      </div>
+    </FieldRow>
+  );
+}
+
 export function EntregaStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel title="Entrega" hint="Cómo y cuándo lo recibe." icon={Truck}>
@@ -584,6 +654,7 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
               )}
             </FieldRow>
           ) : null}
+          {view.shippingCarrier === SHALOM_CARRIER ? <ShalomLabelFields view={view} /> : null}
           <FieldRow label="Dirección">
             <PlacePicker
               value={view.dropoffPlace}

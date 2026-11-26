@@ -52,6 +52,7 @@ function validSale(overrides = {}) {
       lng: -77.0,
     },
     shippingNote: 'Tocar timbre',
+    shalomLabel: { name: 'Ana Torres', dni: '40328817', phone: '999111222', sede: 'Arequipa / Av Lima' },
     paymentMethod: 'despues',
     orderedAt: '2026-08-24T15:00:00.000Z',
     orderNumber: '2608241500',
@@ -615,4 +616,27 @@ test('el vendedor gana la comisión fija y lo que sube sobre su precio', () => {
     { catalogPrice: 10, unitPrice: 10, quantity: 1, commissionAmount: 2 },
   ]), 10);
   assert.equal(saleProfit([{ catalogPrice: 25, unitPrice: 25, quantity: 1 }]), null);
+});
+
+test('Shaloom exige la etiqueta completa y la guarda en el envío', () => {
+  assert.equal(
+    validateManualSale(validSale({ shalomLabel: { name: 'Ana', dni: '4032', phone: '999111222', sede: '' } })),
+    'Completa la etiqueta Shalom: falta DNI, sede.',
+  );
+  assert.equal(validateManualSale(validSale({ shalomLabel: null })), 'Completa la etiqueta Shalom: falta nombre, DNI, celular, sede.');
+  const payload = buildManualSaleOrderPayload(validSale({
+    shalomLabel: { name: ' Ana Torres ', dni: '40328817', phone: '999111222', sede: ' Arequipa / Av Lima ' },
+  }));
+  assert.deepEqual(payload.shipping.shalom, {
+    name: 'Ana Torres',
+    dni: '40328817',
+    phone: '999111222',
+    sede: 'Arequipa / Av Lima',
+  });
+});
+
+test('otros repartos no piden ni guardan etiqueta Shalom', () => {
+  const sale = validSale({ shippingCarrier: 'marvisuar', shalomLabel: null });
+  assert.equal(validateManualSale(sale), null);
+  assert.equal(buildManualSaleOrderPayload(sale).shipping.shalom, undefined);
 });
