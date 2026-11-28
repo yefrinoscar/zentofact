@@ -2159,6 +2159,11 @@ const STORE_INTEGRATION_DDL = `
     PRIMARY KEY (order_id, document_key)
   );
 
+  CREATE TABLE IF NOT EXISTS integration_document_checks (
+    order_id BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
   -- Productos cuyo disponible cambió; el worker los agrupa en ráfagas antes
   -- de publicar inventory.updated.
   CREATE TABLE IF NOT EXISTS integration_inventory_changes (

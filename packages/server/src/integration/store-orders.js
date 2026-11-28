@@ -113,19 +113,21 @@ export async function storeOrderDocuments(db, orderRow) {
   const docs = await listOrderDocuments(order, db);
   const creditNoteIds = docs.filter((doc) => doc.kind === 'credit_note').map((doc) => doc.id);
   const affects = new Map();
+  const cancellations = new Set();
   if (creditNoteIds.length) {
     const rows = (await db.query(
-      'select id, affected_boleta_id, affected_factura_id from credit_notes where id = any($1::int[])',
+      'select id, affected_boleta_id, affected_factura_id, cod_motivo from credit_notes where id = any($1::int[])',
       [creditNoteIds],
     )).rows;
     for (const row of rows) {
+      if (row.cod_motivo === '01') cancellations.add(Number(row.id));
       affects.set(Number(row.id), row.affected_boleta_id
         ? documentKey('boleta', row.affected_boleta_id)
         : row.affected_factura_id ? documentKey('factura', row.affected_factura_id) : null);
     }
   }
   const voided = new Set(docs
-    .filter((doc) => doc.kind === 'credit_note' && doc.status === 'ACEPTADO')
+    .filter((doc) => doc.kind === 'credit_note' && doc.status === 'ACEPTADO' && cancellations.has(doc.id))
     .map((doc) => affects.get(doc.id))
     .filter(Boolean));
   return docs
@@ -142,6 +144,7 @@ export async function storeOrderDocuments(db, orderRow) {
         issuedAt: doc.issuedAt || null,
         total: Number.isFinite(doc.total) ? Math.round(doc.total * 100) / 100 : null,
         affects: doc.kind === 'credit_note' ? affects.get(doc.id) || null : null,
+        cancels: doc.kind === 'credit_note' && cancellations.has(doc.id),
         reason: doc.status === 'RECHAZADO' ? doc.reason || null : undefined,
       };
     })
@@ -165,7 +168,7 @@ export async function toOrderResource(db, row) {
       trackingNumber: progress.trackingNumber || null,
       trackingUrl: progress.trackingUrl || null,
     },
-    documents: documents.map(({ reason: _reason, ...doc }) => doc),
+    documents: documents.map(({ reason: _reason, cancels: _cancels, ...doc }) => doc),
     updatedAt: iso(row.updated_at),
   };
 }

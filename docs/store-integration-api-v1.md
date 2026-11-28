@@ -89,7 +89,15 @@ Body `{ "reason": "customer_request" | "payment_issue" | "out_of_stock" | "other
 | document.voided | credit note accepted for a document | documentId, creditNoteId, number |
 | inventory.updated | available changed for a SKU | sku, available |
 
-Store email rule: send the comprobante to the customer once per document: boleta on `document.issued` (or accepted if issued was missed), factura on `document.accepted`.
+Send each boleta or factura once SUNAT accepts it (`document.accepted`). The PDF endpoint returns `409 document_not_accepted` until the document is accepted. A credit note only voids the original document when SUNAT accepts a cancellation note (reason `01`).
 
 ## Key/endpoint provisioning (Zentofact)
 CLI `npm run integration:provision -- --account <channelAccountId> --webhook-url <url>` creates the key (printed once) and the endpoint secret (printed once). Store sets env `ZENTOFACT_API_URL`, `ZENTOFACT_API_KEY`, `ZENTOFACT_WEBHOOK_SECRET`.
+
+Change the issuance mode on an existing account while keeping its API key and webhook secret:
+
+```sh
+npm run integration:provision -- --account <channelAccountId> --policy-only --issuance-mode on_request
+```
+
+Use `always` to automatically issue for paid orders pending a document. Existing orders with no document request stay in that state. In `on_request`, an operator enters the fiscal data and issues the document.

@@ -194,7 +194,8 @@ test('eventos de comprobante: emitido, aceptado, rechazado y anulado por nota de
   assert.deepEqual(rejected.events[0], { type: 'document.rejected', data: { documentId: 'boleta:1', kind: 'boleta', number: 'B001-1', reason: '2800' } });
   const voided = documentTransitions([
     { id: 'boleta:1', kind: 'boleta', number: 'B001-1', status: 'voided' },
-    { id: 'credit_note:9', kind: 'credit_note', number: 'BC01-9', status: 'accepted', affects: 'boleta:1' },
+    { id: 'credit_note:9', kind: 'credit_note', number: 'BC01-9', status: 'accepted', affects: 'boleta:1', cancels: true },
+    { id: 'credit_note:10', kind: 'credit_note', number: 'BC01-10', status: 'accepted', affects: 'boleta:2', cancels: false },
   ], new Map([['boleta:1', 'accepted'], ['credit_note:9', 'issued']]));
   assert.deepEqual(voided.events, [{ type: 'document.voided', data: { documentId: 'boleta:1', creditNoteId: 'credit_note:9', number: 'BC01-9' } }]);
   const unchanged = documentTransitions([{ id: 'boleta:1', kind: 'boleta', number: 'B001-1', status: 'accepted' }], new Map([['boleta:1', 'accepted']]));

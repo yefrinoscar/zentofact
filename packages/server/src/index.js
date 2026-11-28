@@ -890,8 +890,7 @@ for (const action of ['emit', 'refresh', 'reissue', 'pdf', 'xml']) {
       const result = await orderDocuments.actOnOrderDocument(order.id, action, input, c.get('user')?.id, core);
       if (order.channelCode === 'external' && ['emit', 'refresh', 'reissue'].includes(action)) {
         // Publica document.* a la tienda sin esperar al reconciliador.
-        core.pool.query('select * from orders where id=$1', [order.id])
-          .then(({ rows }) => rows[0] && integrationEvents.reconcileOrderDocuments(core.pool, rows[0]))
+        integrationEvents.reconcileOrderDocuments(core.pool, order.id)
           .catch((error) => console.error('[integracion:documentos]', order.id, error?.message || error));
       }
       return ok(c, result);

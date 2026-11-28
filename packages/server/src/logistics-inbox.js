@@ -18,6 +18,10 @@ const CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre', 'manual']);
 // En la bandeja se muestran juntos como "Tienda".
 export const OWN_STORE_CHANNELS = ['manual', 'external'];
 const OWN_STORE_SQL = `ch.code in ('manual', 'external')`;
+const SHIPPED_WINDOW_SQL = `(
+  (ch.code = 'external' and a.settings->>'integration' = 'true' and o.fulfillment_status = 'shipped')
+  or coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
+)`;
 
 export function isOwnStoreChannel(code) {
   return OWN_STORE_CHANNELS.includes(String(code || '').trim().toLowerCase());
@@ -297,7 +301,7 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     values.push(fulfillmentFilter(forStage));
     where.push(`o.fulfillment_status = any($${values.length}::text[])`);
     if (forStage === 'shipped') {
-      where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
+      where.push(SHIPPED_WINDOW_SQL);
     } else {
       where.push(`not (${MARKETPLACE_ALREADY_SENT_SQL})`);
       if (ignoreDeadline) {
@@ -408,7 +412,7 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
        )::int as ready_unprinted_count,
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
-           and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
+           and ${SHIPPED_WINDOW_SQL}
        )::int as shipped_count,
        count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.overdue})::int as overdue_count,
        count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.today})::int as today_count,

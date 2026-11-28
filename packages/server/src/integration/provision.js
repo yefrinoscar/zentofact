@@ -5,7 +5,7 @@
 // hash de la llave y el secreto cifrado.
 
 import { encryptSecret, generateApiKey, generateWebhookSecret, serverKeyEnv } from './crypto.js';
-import { DEFAULT_STORE_SETTINGS, documentRequirementForIssuance } from './settings.js';
+import { DEFAULT_STORE_SETTINGS, ISSUANCE_MODES, documentRequirementForIssuance, storeSettings } from './settings.js';
 import { SCOPES } from './auth.js';
 
 export function parseProvisionArgs(argv) {
@@ -26,6 +26,7 @@ export function parseProvisionArgs(argv) {
     else if (arg === '--display-name') options.displayName = next();
     else if (arg === '--external-account-id') options.externalAccountId = next();
     else if (arg === '--issuance-mode') options.issuanceMode = next();
+    else if (arg === '--policy-only') options.policyOnly = true;
     else if (arg === '--scopes') options.scopes = next().split(',').map((scope) => scope.trim()).filter(Boolean);
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Opción desconocida: ${arg}`);
@@ -38,8 +39,11 @@ export function parseProvisionArgs(argv) {
   }
   if (options.webhookUrl && !/^https?:\/\//i.test(options.webhookUrl)) throw new Error('--webhook-url debe empezar con http:// o https://.');
   if (options.env && !['live', 'test'].includes(options.env)) throw new Error('--env debe ser live o test.');
-  if (options.issuanceMode && !['on_request', 'always'].includes(options.issuanceMode)) {
+  if (options.issuanceMode && !ISSUANCE_MODES.includes(options.issuanceMode)) {
     throw new Error('--issuance-mode debe ser on_request o always.');
+  }
+  if (options.policyOnly && (!options.issuanceMode || options.createAccount || options.webhookUrl || options.env)) {
+    throw new Error('--policy-only requiere --account <id> y --issuance-mode on_request|always; no crea credenciales.');
   }
   const unknownScope = options.scopes.find((scope) => !SCOPES.includes(scope));
   if (unknownScope) throw new Error(`Scope desconocido: ${unknownScope}`);
@@ -47,6 +51,12 @@ export function parseProvisionArgs(argv) {
 }
 
 export async function provisionIntegration(db, options, { env = process.env } = {}) {
+  if (options.issuanceMode && !ISSUANCE_MODES.includes(options.issuanceMode)) {
+    throw new Error('Modo de emisión inválido.');
+  }
+  if (options.policyOnly && (!options.accountId || !options.issuanceMode || options.createAccount || options.webhookUrl || options.env)) {
+    throw new Error('Indica una cuenta existente y su nuevo modo de emisión.');
+  }
   const client = typeof db.connect === 'function' ? await db.connect() : db;
   const owns = client !== db;
   try {
@@ -82,7 +92,7 @@ export async function provisionIntegration(db, options, { env = process.env } = 
       accountId = Number(row.id);
     }
     const account = (await client.query(
-      `select a.id, a.settings, ch.code as channel_code from order_channel_accounts a
+      `select a.id, a.settings, a.document_requirement, ch.code as channel_code from order_channel_accounts a
        join order_channels ch on ch.id=a.channel_id where a.id=$1 for update of a`,
       [accountId],
     )).rows[0];
@@ -90,12 +100,23 @@ export async function provisionIntegration(db, options, { env = process.env } = 
     if (!['external'].includes(account.channel_code)) {
       throw new Error(`La cuenta ${accountId} es del canal ${account.channel_code}; la integración es para el canal external.`);
     }
-    if (account.settings?.integration !== true) {
-      const settings = { ...DEFAULT_STORE_SETTINGS, ...(account.settings || {}), integration: true };
+    if (options.policyOnly && account.settings?.integration !== true) {
+      throw new Error(`La cuenta ${accountId} aún no tiene una integración configurada.`);
+    }
+    const issuanceMode = options.issuanceMode || storeSettings(account).issuanceMode;
+    const documentRequirement = documentRequirementForIssuance(issuanceMode);
+    if (account.settings?.integration !== true ||
+        account.settings.issuanceMode !== issuanceMode ||
+        account.document_requirement !== documentRequirement) {
+      const settings = { ...DEFAULT_STORE_SETTINGS, ...(account.settings || {}), integration: true, issuanceMode };
       await client.query(
         `update order_channel_accounts set settings=$2, document_requirement=$3, updated_at=now() where id=$1`,
-        [accountId, JSON.stringify(settings), documentRequirementForIssuance(settings.issuanceMode)],
+        [accountId, JSON.stringify(settings), documentRequirement],
       );
+    }
+    if (options.policyOnly) {
+      if (owns) await client.query('commit');
+      return { accountId, issuanceMode };
     }
     const keyEnv = options.env || serverKeyEnv(env);
     const key = generateApiKey(keyEnv);
@@ -130,6 +151,7 @@ export async function provisionIntegration(db, options, { env = process.env } = 
 const HELP = `Uso:
   npm run integration:provision -- --account <channelAccountId> --webhook-url <url>
   npm run integration:provision -- --company <companyId> --create-account --webhook-url <url>
+  npm run integration:provision -- --account <channelAccountId> --policy-only --issuance-mode on_request|always
 Opciones: --env live|test, --issuance-mode on_request|always, --display-name, --external-account-id, --scopes a,b`;
 
 async function main() {
@@ -146,6 +168,10 @@ async function main() {
   await core.runMigrations(core.pool);
   try {
     const result = await provisionIntegration(core.pool, options);
+    if (options.policyOnly) {
+      console.log(`Cuenta de canal: ${result.accountId} (modo de emisión: ${result.issuanceMode})`);
+      return;
+    }
     console.log(`Cuenta de canal: ${result.accountId} (entorno de la llave: ${result.env})`);
     console.log('Guarda estos valores ahora; no se vuelven a mostrar.');
     console.log(`ZENTOFACT_API_KEY=${result.apiKey}`);

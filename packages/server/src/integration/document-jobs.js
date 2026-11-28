@@ -10,8 +10,10 @@ import {
   listOrderDocuments,
   orderBillingDefaults,
   prepareOrderEmission,
+  STORE_AUTO_EMIT_DISABLED,
 } from '../order-documents.js';
 import { ANONYMOUS_BOLETA_MAX, ANONYMOUS_NAME } from './fiscal-id.js';
+import { storeSettings } from './settings.js';
 
 export const CREDIT_NOTE_COMMAND = 'integration.credit_note';
 export const EMIT_COMMAND = 'integration.emit';
@@ -101,7 +103,7 @@ async function linkCreditNote(pool, orderId, creditNoteId) {
 async function existingCreditNote(pool, doc) {
   const column = doc.kind === 'factura' ? 'affected_factura_id' : 'affected_boleta_id';
   return (await pool.query(
-    `select id, estado_sunat from credit_notes where ${column}=$1 order by id desc limit 1`,
+    `select id, estado_sunat, cod_motivo from credit_notes where ${column}=$1 order by id desc limit 1`,
     [doc.id],
   )).rows[0] || null;
 }
@@ -124,8 +126,22 @@ export async function processCreditNoteCommand(command, deps = {}) {
   const existing = await existingCreditNote(pool, active);
   if (existing) {
     await linkCreditNote(pool, orderId, existing.id);
+    if (existing.cod_motivo !== '01') {
+      return {
+        status: 'failed',
+        error: `El comprobante ${active.number} tiene una nota de crédito por otro motivo. Revisa la anulación manualmente.`,
+        response: { creditNoteId: Number(existing.id) },
+      };
+    }
     if (String(existing.estado_sunat).toUpperCase() === 'ACEPTADO') {
       return { status: 'succeeded', response: { creditNoteId: Number(existing.id), linked: true } };
+    }
+    if (['RECHAZADO', 'ANULADO'].includes(String(existing.estado_sunat).toUpperCase())) {
+      return {
+        status: 'failed',
+        error: `La nota de crédito de ${active.number} requiere revisión manual.`,
+        response: { creditNoteId: Number(existing.id) },
+      };
     }
     // La nota existe pero SUNAT no la confirmó: se reconcilia, nunca se crea otra.
     const refreshed = await core.refreshCreditNoteStatus(Number(existing.id)).catch((error) => ({ error: error.message }));
@@ -147,10 +163,10 @@ export async function processCreditNoteCommand(command, deps = {}) {
   const outcome = active.kind === 'factura'
     ? await core.createAndSendCreditNoteFromFactura(active.id, options)
     : await core.createAndSendCreditNoteFromBoleta(active.id, options);
-  if (outcome?.creditNoteId && !outcome.rejected) await linkCreditNote(pool, orderId, outcome.creditNoteId);
+  if (outcome?.creditNoteId) await linkCreditNote(pool, orderId, outcome.creditNoteId);
   if (outcome?.success) return { status: 'succeeded', response: { creditNoteId: outcome.creditNoteId } };
   if (outcome?.rejected) {
-    return { status: 'pending', delaySeconds: 30 * 60, error: outcome.error?.message || 'SUNAT rechazó la nota de crédito.' };
+    return { status: 'failed', error: outcome.error?.message || 'SUNAT rechazó la nota de crédito.' };
   }
   return {
     status: 'pending',
@@ -176,7 +192,9 @@ export async function enqueueAlwaysEmissions(pool) {
        and o.items_status='complete'
        and o.order_status not in ('cancelled', 'failed')
        and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
-     on conflict (order_id, idempotency_key) do nothing
+     on conflict (order_id, idempotency_key) do update set
+       status='pending', attempts=0, next_attempt_at=now(), processed_at=null, response_payload='{}'::jsonb
+     where order_commands.status='succeeded' and order_commands.response_payload->>'skipped'='mode_on_request'
      returning id`,
     [EMIT_COMMAND, SYSTEM_ACTOR],
   );
@@ -204,6 +222,14 @@ export async function processEmitCommand(command, deps = {}) {
   const act = deps.actOnOrderDocument || actOnOrderDocument;
   const order = await getOrder(Number(command.order_id), pool);
   if (!order) return { status: 'failed', error: 'Pedido no encontrado.' };
+  const account = (await pool.query(
+    'select settings, document_requirement, active from order_channel_accounts where id=$1',
+    [order.channelAccountId],
+  )).rows[0];
+  const settings = storeSettings(account);
+  if (!account?.active || !settings.integration || settings.issuanceMode !== 'always') {
+    return { status: 'succeeded', response: { skipped: 'mode_on_request' } };
+  }
   if (order.orderStatus === 'cancelled' || ['cancelled', 'returned', 'failed'].includes(order.fulfillmentStatus)) {
     return { status: 'succeeded', response: { skipped: 'pedido cancelado' } };
   }
@@ -215,9 +241,12 @@ export async function processEmitCommand(command, deps = {}) {
       : await prepareOrderEmission(order, core);
     const input = automaticEmissionInput(order, { ...orderBillingDefaults(order), ...prepared });
     const paidAt = order.metadata?.paidAt;
-    const result = await act(order.id, 'emit', { ...input, issueDate: paidAt ? limaDate(paidAt) : undefined }, SYSTEM_ACTOR, core);
+    const result = await act(order.id, 'emit', { ...input, automatic: true, issueDate: paidAt ? limaDate(paidAt) : undefined }, SYSTEM_ACTOR, core);
     return { status: 'succeeded', response: { documentId: result?.documentId || null, numero: result?.numeroCompleto || null } };
   } catch (error) {
+    if (error?.code === STORE_AUTO_EMIT_DISABLED) {
+      return { status: 'succeeded', response: { skipped: 'mode_on_request' } };
+    }
     const kind = classifyEmissionError(error);
     if (kind === 'reconcile') {
       const docs = await listOrderDocuments(order, pool);

@@ -4,7 +4,7 @@
 // e inventario.
 
 import { syncOrderDocuments } from '../order-documents.js';
-import { storeOrderDocuments } from './store-orders.js';
+import { storeOrderDocuments, withTransaction } from './store-orders.js';
 
 let corePromise;
 function loadCore() {
@@ -31,7 +31,7 @@ export function documentTransitions(documents, previous) {
     const before = previous.get(doc.id) || null;
     if (doc.kind === 'credit_note') {
       if (before !== doc.status) states.push({ key: doc.id, status: doc.status });
-      if (doc.status === 'accepted' && before !== 'accepted' && doc.affects) {
+      if (doc.status === 'accepted' && before !== 'accepted' && doc.cancels && doc.affects) {
         events.push({
           type: 'document.voided',
           data: { documentId: doc.affects, creditNoteId: doc.id, number: doc.number },
@@ -51,13 +51,21 @@ export function documentTransitions(documents, previous) {
 }
 
 /** Re-sincroniza los comprobantes de un pedido de integración y publica sus cambios. */
-export async function reconcileOrderDocuments(db, orderRow) {
+async function publishOrderDocuments(db, orderRow) {
   await syncOrderDocuments({
     id: Number(orderRow.id),
     companyId: Number(orderRow.company_id),
     externalOrderNumber: orderRow.external_order_number,
     documentStatus: orderRow.document_status,
   }, db);
+  await db.query(
+    `insert into order_documents (order_id, document_kind, credit_note_id)
+     select od.order_id, 'credit_note', cn.id
+     from order_documents od join credit_notes cn
+       on cn.affected_boleta_id=od.boleta_id or cn.affected_factura_id=od.factura_id
+     where od.order_id=$1 on conflict do nothing`,
+    [orderRow.id],
+  );
   const documents = await storeOrderDocuments(db, orderRow);
   const previousRows = (await db.query(
     'select document_key, status from integration_document_state where order_id=$1',
@@ -84,43 +92,60 @@ export async function reconcileOrderDocuments(db, orderRow) {
   return events;
 }
 
-// Pedidos de integración cuyo comprobante todavía puede cambiar: pendientes,
-// emitidos sin aceptar, rechazados, o cancelados con nota de crédito en curso.
+export function reconcileOrderDocuments(pool, orderId) {
+  return withTransaction(pool, async (db) => {
+    const row = (await db.query(
+      `select o.* from orders o join order_channel_accounts a on a.id=o.channel_account_id
+       where o.id=$1 and a.active and a.settings->>'integration' = 'true' for update of o`,
+      [orderId],
+    )).rows[0];
+    return row ? publishOrderDocuments(db, row) : [];
+  });
+}
+
+// Volvemos a revisar los comprobantes por orden de última consulta, incluidos
+// los que SUNAT aceptó antes de su primer evento.
 export async function reconcileIntegrationDocuments({ db, limit = 50 } = {}) {
   const pool = db || (await loadCore()).pool;
   const rows = (await pool.query(
-    `select o.* from orders o
+    `select o.id from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
+     left join integration_document_checks c on c.order_id=o.id
      where a.active and a.settings->>'integration' = 'true'
-       and o.updated_at >= now() - interval '60 days'
        and (
          o.document_status in ('pending', 'issued', 'rejected')
+         or (
+           o.document_status = 'accepted' and (
+             o.updated_at >= now() - interval '60 days'
+             or not exists (select 1 from integration_document_state s where s.order_id=o.id)
+           )
+         )
          or exists (
-           select 1 from order_commands c
-           where c.order_id=o.id and c.command_type='integration.credit_note'
-             and (c.status in ('pending', 'processing') or c.processed_at >= now() - interval '1 day')
+           select 1 from order_commands cmd
+           where cmd.order_id=o.id and cmd.command_type='integration.credit_note'
+             and (cmd.status in ('pending', 'processing') or cmd.processed_at >= now() - interval '1 day')
          )
          or exists (
            select 1 from integration_document_state s
            where s.order_id=o.id and s.status not in ('accepted', 'voided')
          )
        )
-     order by o.updated_at desc
+     order by coalesce(c.checked_at, o.created_at), o.id
      limit $1`,
     [limit],
   )).rows;
   let published = 0;
-  for (const row of rows) {
-    const client = typeof pool.connect === 'function' ? await pool.connect() : pool;
+  for (const { id } of rows) {
     try {
-      if (client !== pool) await client.query('begin');
-      published += (await reconcileOrderDocuments(client, row)).length;
-      if (client !== pool) await client.query('commit');
+      published += (await reconcileOrderDocuments(pool, id)).length;
     } catch (error) {
-      if (client !== pool) await client.query('rollback').catch(() => {});
-      console.error('[integracion:documentos]', row.id, error?.message || error);
+      console.error('[integracion:documentos]', id, error?.message || error);
     } finally {
-      if (client !== pool) client.release();
+      await pool.query(
+        `insert into integration_document_checks (order_id) values ($1)
+         on conflict (order_id) do update set checked_at=now()`,
+        [id],
+      );
     }
   }
   return { checked: rows.length, published };

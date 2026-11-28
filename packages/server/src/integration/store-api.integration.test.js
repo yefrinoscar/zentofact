@@ -65,6 +65,8 @@ test('PostgreSQL real: API v1 de tienda (PUT, cancel, eventos, webhooks, Bandeja
     const { processCreditNoteCommand, processDocumentCommands } = await import('./document-jobs.js');
     const { markStoreOrderStep } = await import('./store-fulfillment.js');
     const { updateExternalOrderBilling } = await import('./store-orders.js');
+    const { actOnOrderDocument, prepareOrderEmission } = await import('../order-documents.js');
+    const { getOrder } = await import('../order-management.js');
     const { verifyWebhookSignature } = await import('./crypto.js');
 
     const company = (await db.query(
@@ -220,6 +222,9 @@ test('PostgreSQL real: API v1 de tienda (PUT, cancel, eventos, webhooks, Bandeja
       assert.deepEqual(events.map((event) => event.type), ['document.issued']);
       assert.equal(events[0].payload.documentId, `boleta:${boleta.id}`);
       assert.equal(events[0].payload.number, 'B001-1');
+      const pendingPdf = await call('GET', `/documents/boleta:${boleta.id}/pdf`);
+      assert.equal(pendingPdf.status, 409);
+      assert.equal((await pendingPdf.json()).code, 'document_not_accepted');
 
       const blocked = await call('PUT', '/orders/order_01', sampleOrder({
         updatedAt: '2026-11-28T15:20:00Z',
@@ -330,6 +335,11 @@ test('PostgreSQL real: API v1 de tienda (PUT, cancel, eventos, webhooks, Bandeja
       assert.equal(resource.fulfillment.carrier, 'shaloom');
       assert.equal(resource.fulfillment.trackingNumber, 'SH-1');
       assert.ok(resource.fulfillment.readyAt && resource.fulfillment.shippedAt && resource.fulfillment.confirmedAt);
+      await db.query("update orders set updated_at=now()-interval '10 days' where id=$1", [id]);
+      const { listLogisticsInbox } = await import('../logistics-inbox.js');
+      const shippedInbox = await listLogisticsInbox({ stage: 'shipped', channel: 'manual' }, db, { ripleyEnabled: false });
+      assert.ok(shippedInbox.orders.some((order) => order.id === id));
+      assert.equal(shippedInbox.counts.shipped, 1);
       const cancel = await call('POST', '/orders/order_03/cancel', { reason: 'other' }, { headers: { 'idempotency-key': 'cancel-3' } });
       assert.equal(cancel.status, 409);
       assert.equal((await cancel.json()).code, 'order_already_shipped');
@@ -396,6 +406,124 @@ test('PostgreSQL real: API v1 de tienda (PUT, cancel, eventos, webhooks, Bandeja
            document_requirement='optional' where id=$1`,
         [accountId],
       );
+    });
+
+    await t.test('cambiar el modo conserva las credenciales y pausa los comandos en cola', async () => {
+      const { enqueueAlwaysEmissions } = await import('./document-jobs.js');
+      const changeMode = (issuanceMode) => provisionIntegration(db, { accountId, issuanceMode, policyOnly: true });
+      const credentialCount = async () => (await db.query(
+        `select (select count(*)::integer from integration_keys where channel_account_id=$1) as keys,
+          (select count(*)::integer from integration_endpoints where channel_account_id=$1) as endpoints`,
+        [accountId],
+      )).rows[0];
+      const credentials = await credentialCount();
+      await changeMode('always');
+      assert.equal((await (await call('GET', '/policy')).json()).issuance.mode, 'always');
+      const created = await call('PUT', '/orders/order_policy', sampleOrder({ orderNumber: 'L-POLICY' }));
+      const { zentofactId: id } = await created.json();
+      await enqueueAlwaysEmissions(db);
+      await changeMode('on_request');
+      assert.equal((await (await call('GET', '/policy')).json()).issuance.mode, 'on_request');
+      assert.deepEqual(await credentialCount(), credentials);
+      await processDocumentCommands({
+        db,
+        core: {},
+        actOnOrderDocument: () => assert.fail('La emisión automática quedó desactivada'),
+      });
+      const { response_payload } = (await db.query(
+        `select response_payload from order_commands where order_id=$1 and command_type='integration.emit'`,
+        [id],
+      )).rows[0];
+      assert.equal(response_payload.skipped, 'mode_on_request');
+      await changeMode('always');
+      await enqueueAlwaysEmissions(db);
+      const { status } = (await db.query(
+        `select status from order_commands where order_id=$1 and command_type='integration.emit'`,
+        [id],
+      )).rows[0];
+      assert.equal(status, 'pending');
+      const fakeCore = {
+        pool: db,
+        listBranches: async () => (await db.query('select id, codigo, activo from branches where company_id=$1', [company.id])).rows,
+        createBoleta() { assert.fail('El modo cambió antes de tomar el bloqueo del pedido'); },
+      };
+      await processDocumentCommands({
+        db,
+        core: fakeCore,
+        async prepareOrderEmission(order) {
+          const input = await prepareOrderEmission(order, fakeCore);
+          await changeMode('on_request');
+          return input;
+        },
+      });
+      const afterLock = (await db.query(
+        `select status, response_payload from order_commands where order_id=$1 and command_type='integration.emit'`,
+        [id],
+      )).rows[0];
+      assert.equal(afterLock.status, 'succeeded');
+      assert.equal(afterLock.response_payload.skipped, 'mode_on_request');
+    });
+
+    await t.test('aceptación en primera pasada y cola documental con cupo de un pedido', async () => {
+      const created = await call('PUT', '/orders/order_first_accepted', sampleOrder({ orderNumber: 'L-ACCEPTED' }));
+      const { zentofactId: id } = await created.json();
+      const refs = (await db.query(`select branch_id, client_id from boletas where company_id=$1 limit 1`, [company.id])).rows[0];
+      const factura = (await db.query(
+        `insert into facturas (company_id, branch_id, client_id, serie, correlativo, numero_completo, fecha_emision, detalles,
+           estado_sunat, mto_imp_venta, order_number)
+         values ($1, $2, $3, 'F001', '9', 'F001-9', '2026-11-28', '[]', 'ACEPTADO', '144.8', 'L-ACCEPTED') returning id`,
+        [company.id, refs.branch_id, refs.client_id],
+      )).rows[0];
+      await db.query("update orders set document_status='accepted' where id=$1", [id]);
+      for (let i = 0; i < 6; i++) await reconcileIntegrationDocuments({ db, limit: 1 });
+      const events = (await db.query(
+        `select type from integration_events where order_id=$1 and type like 'document.%' order by id`,
+        [id],
+      )).rows;
+      assert.deepEqual(events.map(({ type }) => type), ['document.issued', 'document.accepted']);
+
+      const note = (await db.query(
+        `insert into credit_notes (company_id, branch_id, client_id, affected_factura_id, serie, correlativo, numero_completo,
+           tipo_doc_afectado, num_doc_afectado, cod_motivo, des_motivo, fecha_emision, detalles, estado_sunat, mto_imp_venta)
+         values ($1, $2, $3, $4, 'FC01', '9', 'FC01-9', '01', 'F001-9', '04', 'DESCUENTO GLOBAL',
+           '2026-11-28', '[]', 'ACEPTADO', '20') returning id`,
+        [company.id, refs.branch_id, refs.client_id, factura.id],
+      )).rows[0];
+      await reconcileIntegrationDocuments({ db });
+      const resource = await (await call('GET', '/orders/order_first_accepted')).json();
+      assert.equal(resource.documents.find(({ kind }) => kind === 'factura').status, 'accepted');
+      assert.equal(resource.documents.find(({ id }) => id === `credit_note:${note.id}`).affects, `factura:${factura.id}`);
+      const canceled = await call('POST', '/orders/order_first_accepted/cancel', { reason: 'customer_request' }, {
+        headers: { 'idempotency-key': 'cancel-with-partial-credit' },
+      });
+      assert.equal(canceled.status, 200);
+      const command = (await db.query(
+        "select * from order_commands where order_id=$1 and command_type='integration.credit_note'", [id],
+      )).rows[0];
+      const result = await processCreditNoteCommand(command, { db, core: {} });
+      assert.equal(result.status, 'failed');
+      assert.match(result.error, /otro motivo/);
+      const voided = await db.query("select 1 from integration_events where order_id=$1 and type='document.voided'", [id]);
+      assert.equal(voided.rowCount, 0);
+    });
+
+    await t.test('la emisión que espera detrás de una cancelación no crea comprobante', async () => {
+      const created = await call('PUT', '/orders/order_cancel_race', sampleOrder({ orderNumber: 'L-CANCEL-RACE' }));
+      const { zentofactId: id } = await created.json();
+      await updateExternalOrderBilling(id, { kind: 'boleta', documentType: '1', documentNumber: '12345678', name: 'Ana' }, { db });
+      const branches = async () => (await db.query('select id, codigo, activo from branches where company_id=$1', [company.id])).rows;
+      const input = await prepareOrderEmission(await getOrder(id, db), { listBranches: branches });
+      await assert.rejects(actOnOrderDocument(id, 'emit', input, 'test', {
+        pool: db,
+        async listBranches() {
+          const canceled = await call('POST', '/orders/order_cancel_race/cancel', { reason: 'customer_request' }, {
+            headers: { 'idempotency-key': 'cancel-racing-emission' },
+          });
+          assert.equal(canceled.status, 200);
+          return branches();
+        },
+        createBoleta() { assert.fail('Se intentó emitir un pedido cancelado'); },
+      }), /cancelado/);
     });
 
     await t.test('inventario: GET por SKU y un inventory.updated por SKU por ráfaga', async () => {

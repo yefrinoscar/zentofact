@@ -118,7 +118,8 @@ paths:
   /documents/{documentId}/pdf:
     get:
       operationId: getDocumentPdf
-      summary: PDF de un comprobante del pedido de la cuenta
+      summary: PDF de un comprobante aceptado por SUNAT
+      description: Disponible para boletas, facturas y notas de crédito aceptadas por SUNAT.
       x-required-scope: documents:read
       parameters:
         - name: documentId
