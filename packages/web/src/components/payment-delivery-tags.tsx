@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Banknote } from 'lucide-react';
+import { Banknote, CreditCard } from 'lucide-react';
 import shalomLogo from '../assets/shalom.png';
 import { cn } from '../lib/cn';
 
@@ -32,12 +32,21 @@ function CashLogo() {
   );
 }
 
+function CardLogo() {
+  return (
+    <span aria-hidden="true" className="inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] bg-slate-700 text-white">
+      <CreditCard className="size-3" strokeWidth={2.4} />
+    </span>
+  );
+}
+
 function ShalomLogo() {
   return <img src={shalomLogo} alt="" className="size-4 shrink-0 rounded-[3px]" />;
 }
 
 const PAYMENT_LOGOS: Record<string, ReactNode> = {
   efectivo: <CashLogo />,
+  tarjeta: <CardLogo />,
   yape_plin: (
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <YapeLogo />
@@ -46,7 +55,7 @@ const PAYMENT_LOGOS: Record<string, ReactNode> = {
   ),
 };
 
-/** Método de pago con el logo de la marca cuando existe (efectivo, Yape / Plin). */
+/** Método de pago con el logo de la marca cuando existe (efectivo, tarjeta, Yape / Plin). */
 export function PaymentMethodTag({ method, label }: { method?: string | null; label: ReactNode }) {
   const logo = PAYMENT_LOGOS[String(method || '').trim()];
   return (

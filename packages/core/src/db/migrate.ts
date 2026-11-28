@@ -2062,7 +2062,235 @@ export async function runMigrations(pool: Pool): Promise<void> {
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
   await pool.query(SUNAT_LEDGER_DDL);
+  await pool.query(STORE_INTEGRATION_DDL);
 }
+
+// API de integración de tiendas (v1). Llaves por cuenta de canal, endpoints de
+// webhook, outbox de eventos con entregas firmadas e idempotencia del cancel.
+// Los trabajos de comprobante (emisión en modo "always" y nota de crédito al
+// cancelar) reutilizan order_commands, que ya es la cola de comandos por pedido.
+const STORE_INTEGRATION_DDL = `
+  CREATE TABLE IF NOT EXISTS integration_keys (
+    id BIGSERIAL PRIMARY KEY,
+    key_id TEXT NOT NULL UNIQUE,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    env TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    scopes TEXT[] NOT NULL DEFAULT '{}',
+    label TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    CHECK (env IN ('live', 'test')),
+    CHECK (key_id ~ '^[a-z0-9]{8,40}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_integration_keys_account ON integration_keys(channel_account_id);
+
+  CREATE TABLE IF NOT EXISTS integration_endpoints (
+    id BIGSERIAL PRIMARY KEY,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    secret_encrypted TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    disabled_reason TEXT,
+    disabled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (url ~ '^https?://')
+  );
+  CREATE INDEX IF NOT EXISTS idx_integration_endpoints_account
+    ON integration_endpoints(channel_account_id) WHERE active;
+
+  CREATE SEQUENCE IF NOT EXISTS integration_event_sequence;
+  CREATE TABLE IF NOT EXISTS integration_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_id UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+    external_id TEXT,
+    sequence BIGINT NOT NULL DEFAULT nextval('integration_event_sequence'),
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_integration_events_account ON integration_events(channel_account_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_integration_events_order ON integration_events(order_id, id DESC);
+
+  CREATE TABLE IF NOT EXISTS integration_deliveries (
+    id BIGSERIAL PRIMARY KEY,
+    event_id BIGINT NOT NULL REFERENCES integration_events(id) ON DELETE CASCADE,
+    endpoint_id BIGINT NOT NULL REFERENCES integration_endpoints(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    locked_until TIMESTAMPTZ,
+    last_status_code INTEGER,
+    last_error TEXT,
+    delivered_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (event_id, endpoint_id),
+    CHECK (status IN ('pending', 'delivered', 'failed', 'disabled'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_integration_deliveries_due
+    ON integration_deliveries(next_attempt_at, id) WHERE status = 'pending';
+
+  CREATE TABLE IF NOT EXISTS integration_idempotency (
+    id BIGSERIAL PRIMARY KEY,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    response_status INTEGER,
+    response JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (channel_account_id, key),
+    CHECK (status IN ('in_progress', 'completed'))
+  );
+
+  -- Último estado publicado de cada comprobante de un pedido de integración:
+  -- el reconciliador solo emite document.* cuando cambia.
+  CREATE TABLE IF NOT EXISTS integration_document_state (
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    document_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (order_id, document_key)
+  );
+
+  CREATE TABLE IF NOT EXISTS integration_document_checks (
+    order_id BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  -- Productos cuyo disponible cambió; el worker los agrupa en ráfagas antes
+  -- de publicar inventory.updated.
+  CREATE TABLE IF NOT EXISTS integration_inventory_changes (
+    product_id BIGINT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+    first_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  ALTER TABLE order_commands ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ALTER TABLE order_commands ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+  ALTER TABLE order_commands ADD COLUMN IF NOT EXISTS last_error TEXT;
+  ALTER TABLE order_commands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  CREATE INDEX IF NOT EXISTS idx_order_commands_due
+    ON order_commands(command_type, next_attempt_at) WHERE status IN ('pending', 'processing');
+
+  CREATE OR REPLACE FUNCTION integration_account_enabled(p_account BIGINT) RETURNS BOOLEAN AS $$
+    SELECT EXISTS (
+      SELECT 1 FROM order_channel_accounts a
+      WHERE a.id = p_account AND a.active AND a.settings->>'integration' = 'true'
+    );
+  $$ LANGUAGE sql STABLE;
+
+  CREATE OR REPLACE FUNCTION integration_emit_event(
+    p_account BIGINT, p_type TEXT, p_order BIGINT, p_external TEXT, p_payload JSONB
+  ) RETURNS BIGINT AS $$
+  DECLARE
+    v_id BIGINT;
+  BEGIN
+    INSERT INTO integration_events (channel_account_id, type, order_id, external_id, payload)
+    VALUES (p_account, p_type, p_order, p_external, coalesce(p_payload, '{}'::jsonb))
+    RETURNING id INTO v_id;
+    INSERT INTO integration_deliveries (event_id, endpoint_id)
+    SELECT v_id, e.id FROM integration_endpoints e
+    WHERE e.channel_account_id = p_account AND e.active;
+    RETURN v_id;
+  END
+  $$ LANGUAGE plpgsql;
+
+  -- Outbox de pedidos: solo cuentas con settings.integration=true. Los
+  -- document.* los publica el reconciliador de comprobantes (necesita el id y
+  -- número del comprobante, que no vive en orders).
+  CREATE OR REPLACE FUNCTION integration_orders_events() RETURNS trigger AS $$
+  DECLARE
+    v_type TEXT;
+    v_payload JSONB;
+    v_was_cancelled BOOLEAN;
+    v_is_cancelled BOOLEAN;
+    v_old_rank INT;
+    v_new_rank INT;
+    v_rank INT;
+  BEGIN
+    IF NOT integration_account_enabled(NEW.channel_account_id) THEN
+      RETURN NULL;
+    END IF;
+    v_payload := jsonb_build_object('orderNumber', NEW.external_order_number);
+    IF TG_OP = 'INSERT' THEN
+      PERFORM integration_emit_event(NEW.channel_account_id, 'order.received', NEW.id, NEW.external_order_id, v_payload);
+      RETURN NULL;
+    END IF;
+    v_was_cancelled := OLD.order_status = 'cancelled' OR OLD.fulfillment_status = 'cancelled';
+    v_is_cancelled := NEW.order_status = 'cancelled' OR NEW.fulfillment_status = 'cancelled';
+    IF v_is_cancelled AND NOT v_was_cancelled THEN
+      v_type := 'order.cancelled';
+    ELSIF NOT v_is_cancelled AND NEW.fulfillment_status IS DISTINCT FROM OLD.fulfillment_status THEN
+      -- Avance monótono: si la Bandeja salta pasos, se publican los intermedios en orden.
+      v_old_rank := CASE OLD.fulfillment_status
+        WHEN 'pending' THEN 0 WHEN 'preparing' THEN 1 WHEN 'ready_to_ship' THEN 2
+        WHEN 'shipped' THEN 3 WHEN 'delivered' THEN 4 ELSE NULL END;
+      v_new_rank := CASE NEW.fulfillment_status
+        WHEN 'pending' THEN 0 WHEN 'preparing' THEN 1 WHEN 'ready_to_ship' THEN 2
+        WHEN 'shipped' THEN 3 WHEN 'delivered' THEN 4 ELSE NULL END;
+      IF v_old_rank IS NOT NULL AND v_new_rank IS NOT NULL AND v_new_rank > v_old_rank THEN
+        FOR v_rank IN (v_old_rank + 1)..v_new_rank LOOP
+          v_type := (ARRAY['order.confirmed', 'order.ready', 'order.shipped', 'order.delivered'])[v_rank];
+          IF v_type = 'order.shipped' THEN
+            IF coalesce(NEW.shipping->>'type', '') = 'recojo' THEN
+              CONTINUE;
+            END IF;
+            PERFORM integration_emit_event(NEW.channel_account_id, v_type, NEW.id, NEW.external_order_id,
+              v_payload || jsonb_build_object(
+                'carrier', NEW.metadata->'storeFulfillment'->'carrier',
+                'trackingNumber', NEW.metadata->'storeFulfillment'->'trackingNumber',
+                'trackingUrl', NEW.metadata->'storeFulfillment'->'trackingUrl'
+              ));
+          ELSE
+            PERFORM integration_emit_event(NEW.channel_account_id, v_type, NEW.id, NEW.external_order_id, v_payload);
+          END IF;
+        END LOOP;
+      END IF;
+      RETURN NULL;
+    END IF;
+    IF v_type IS NOT NULL THEN
+      PERFORM integration_emit_event(NEW.channel_account_id, v_type, NEW.id, NEW.external_order_id, v_payload);
+    END IF;
+    RETURN NULL;
+  END
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_integration_orders_events ON orders;
+  CREATE TRIGGER trg_integration_orders_events
+    AFTER INSERT OR UPDATE OF order_status, fulfillment_status ON orders
+    FOR EACH ROW EXECUTE FUNCTION integration_orders_events();
+
+  CREATE OR REPLACE FUNCTION integration_inventory_changed() RETURNS trigger AS $$
+  BEGIN
+    IF TG_OP = 'UPDATE' AND (
+      NEW.quantity_on_hand - NEW.quantity_reserved - coalesce(NEW.quantity_pending_return, 0)
+    ) IS NOT DISTINCT FROM (
+      OLD.quantity_on_hand - OLD.quantity_reserved - coalesce(OLD.quantity_pending_return, 0)
+    ) THEN
+      RETURN NULL;
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM order_channel_accounts a
+      WHERE a.active AND a.settings->>'integration' = 'true'
+    ) THEN
+      RETURN NULL;
+    END IF;
+    INSERT INTO integration_inventory_changes (product_id) VALUES (NEW.product_id)
+    ON CONFLICT (product_id) DO UPDATE SET changed_at = NOW();
+    RETURN NULL;
+  END
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_integration_inventory_changed ON product_inventory;
+  CREATE TRIGGER trg_integration_inventory_changed
+    AFTER INSERT OR UPDATE ON product_inventory
+    FOR EACH ROW EXECUTE FUNCTION integration_inventory_changed();
+`;
 
 // Historial SUNAT inmutable. sunat_document_xml fija el único XML firmado de
 // cada número en producción; sunat_emission_attempts guarda cada envío,

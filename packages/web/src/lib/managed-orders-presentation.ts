@@ -58,7 +58,7 @@ export function deliveryLabel(order: ManagedOrderDeliveryInput) {
   if (carrier) return carrier;
   if (type === 'envio') return 'Envío';
   if (order.shipping?.trackingCode) return 'Envío';
-  if (order.channelCode !== 'manual') return 'Marketplace';
+  if (order.channelCode !== 'manual' && order.channelCode !== 'external') return 'Marketplace';
   return '—';
 }
 

@@ -2306,13 +2306,19 @@ async function updateManualOrderWithDb(orderId, input, db) {
   });
 }
 
-export async function cancelManualOrder(orderId, input = {}, db) {
-  if (db) return cancelManualOrderWithDb(orderId, input, db);
+export const OWN_STORE_CHANNELS = ['manual', 'external'];
+
+export function isOwnStoreChannel(code) {
+  return OWN_STORE_CHANNELS.includes(String(code || '').trim().toLowerCase());
+}
+
+async function inOrderTransaction(db, work) {
+  if (db) return work(db);
   const { pool } = await loadCore();
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const result = await cancelManualOrderWithDb(orderId, input, client);
+    const result = await work(client);
     await client.query('commit');
     return result;
   } catch (error) {
@@ -2323,7 +2329,38 @@ export async function cancelManualOrder(orderId, input = {}, db) {
   }
 }
 
-async function cancelManualOrderWithDb(orderId, input, db) {
+export async function cancelManualOrder(orderId, input = {}, db) {
+  return inOrderTransaction(db, (client) => cancelOwnStoreOrderWithDb(orderId, input, client, {
+    channels: ['manual'],
+    source: 'manual',
+    idempotencyKey: `order.manual_cancel:${positiveInt(orderId, 'orderId')}`,
+    payload: { reason: 'manual_cancel' },
+  }));
+}
+
+/**
+ * Cancela un Pedido de canal propio (tienda) y reintegra su stock. La tienda
+ * externa (canal `external`) cancela por la API; nunca después de despachar.
+ */
+export async function cancelExternalStoreOrder(orderId, input = {}, db) {
+  return inOrderTransaction(db, (client) => cancelOwnStoreOrderWithDb(orderId, input, client, {
+    channels: ['external'],
+    source: 'api',
+    rejectShipped: true,
+    idempotencyKey: `order.store_cancel:${positiveInt(orderId, 'orderId')}`,
+    payload: { reason: optionalText(input.reason, 100) || 'other', note: optionalText(input.note, 1000) },
+  }));
+}
+
+export class OrderAlreadyShippedError extends Error {
+  constructor() {
+    super('El pedido ya salió del almacén; no se puede cancelar.');
+    this.name = 'OrderAlreadyShippedError';
+    this.code = 'order_already_shipped';
+  }
+}
+
+async function cancelOwnStoreOrderWithDb(orderId, input, db, options) {
   const id = positiveInt(orderId, 'orderId');
   const existing = (await db.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
@@ -2335,11 +2372,14 @@ async function cancelManualOrderWithDb(orderId, input, db) {
     [id],
   )).rows[0];
   if (!existing) return null;
-  if (existing.channel_code !== 'manual') {
+  if (!options.channels.includes(existing.channel_code)) {
     throw new Error('Solo se pueden cancelar pedidos de tienda.');
   }
   if (existing.order_status === 'cancelled' || existing.fulfillment_status === 'cancelled') {
     return normalizeOrderRow(existing);
+  }
+  if (options.rejectShipped && ['shipped', 'delivered'].includes(existing.fulfillment_status)) {
+    throw new OrderAlreadyShippedError();
   }
   if (existing.order_status === 'failed' || ['returned', 'failed'].includes(existing.fulfillment_status)) {
     throw new Error('No se puede cancelar un pedido devuelto o fallido.');
@@ -2354,7 +2394,7 @@ async function cancelManualOrderWithDb(orderId, input, db) {
   await stockPhase({
     db, persisted, existing,
     account: await accountWithChannel(db, existing.channel_account_id),
-    source: 'manual', actorUserId,
+    source: options.source, actorUserId,
   });
   const changes = changeSet(existing, persisted);
   await db.query(
@@ -2362,9 +2402,9 @@ async function cancelManualOrderWithDb(orderId, input, db) {
        order_id, event_type, source, actor_user_id, idempotency_key,
        previous_values, new_values, payload
      ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [id, 'order.cancelled', 'manual', actorUserId, `order.manual_cancel:${id}`,
+    [id, 'order.cancelled', options.source, actorUserId, options.idempotencyKey,
       JSON.stringify(changes.before), JSON.stringify(changes.after),
-      JSON.stringify({ reason: 'manual_cancel' })],
+      JSON.stringify(options.payload || {})],
   );
   return normalizeOrderRow({
     ...persisted, channel_code: existing.channel_code,

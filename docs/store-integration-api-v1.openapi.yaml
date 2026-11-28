@@ -1,0 +1,425 @@
+openapi: 3.1.0
+info:
+  title: Zentofact Store Integration API
+  version: 1.0.0
+  description: |
+    Contrato v1 compartido por Zentofact y la tienda (Limbo). Fuente: docs/store-integration-api-v1.md.
+    Dinero en PEN con 2 decimales e IGV incluido. Fechas ISO-8601 UTC.
+    Errores RFC 9457 (`application/problem+json`).
+servers:
+  - url: '{ZENTOFACT_API_URL}/api/v1'
+    variables:
+      ZENTOFACT_API_URL:
+        default: https://zentofact-api-production.up.railway.app
+security:
+  - bearerKey: []
+paths:
+  /policy:
+    get:
+      operationId: getPolicy
+      summary: Política de comprobantes de la tienda
+      x-required-scope: policy:read
+      responses:
+        '200':
+          description: Política vigente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Policy' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /orders/{externalId}:
+    parameters:
+      - $ref: '#/components/parameters/ExternalId'
+    put:
+      operationId: upsertOrder
+      summary: Crea o actualiza un pedido (versionado por updatedAt)
+      x-required-scope: orders:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderInput' }
+      responses:
+        '200':
+          description: Pedido actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '201':
+          description: Pedido creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: '`stale_update` (versión más nueva) o `document_already_issued`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+    get:
+      operationId: getOrder
+      summary: Estado actual del pedido
+      x-required-scope: orders:read
+      responses:
+        '200':
+          description: Pedido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /orders/{externalId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ExternalId'
+    post:
+      operationId: cancelOrder
+      summary: Cancela el pedido y libera stock
+      x-required-scope: orders:write
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  enum: [customer_request, payment_issue, out_of_stock, other]
+                note: { type: string }
+      responses:
+        '200':
+          description: Cancelado (o repetición de la respuesta guardada para la misma Idempotency-Key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: '`order_already_shipped` o `idempotency_in_progress`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: '`idempotency_key_reused`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /documents/{documentId}/pdf:
+    get:
+      operationId: getDocumentPdf
+      summary: PDF de un comprobante aceptado por SUNAT
+      description: Disponible para boletas, facturas y notas de crédito aceptadas por SUNAT.
+      x-required-scope: documents:read
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^(boleta|factura|credit_note):[0-9]+$' }
+          example: boleta:456
+      responses:
+        '200':
+          description: PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: '`document_not_accepted` (Zentofact): el PDF existe cuando SUNAT acepta el comprobante'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /inventory:
+    get:
+      operationId: listInventory
+      summary: Disponible por SKU principal
+      x-required-scope: inventory:read
+      parameters:
+        - name: sku
+          in: query
+          description: Lista separada por comas. Sin `sku` devuelve todos los productos con SKU principal, paginado.
+          schema: { type: string }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: Página de inventario
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [sku, available, updatedAt]
+                      properties:
+                        sku: { type: string }
+                        available:
+                          type: number
+                          description: on_hand − reserved − pending_return. Puede ser negativo; la tienda lo recorta a 0.
+                        updatedAt: { type: string, format: date-time }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+webhooks:
+  storeEvent:
+    post:
+      summary: Evento Zentofact → tienda (Standard Webhooks v1.0)
+      description: |
+        Headers `webhook-id`, `webhook-timestamp` (unix s) y `webhook-signature: v1,<base64(HMAC-SHA256(key, "{id}.{timestamp}.{rawBody}"))>`
+        (lista separada por espacios durante la rotación). Secreto `whsec_<base64>`; la clave HMAC es la parte base64 decodificada.
+        Reintentos ante no-2xx: 5s, 5m, 30m, 2h, 5h, 10h, 14h, 20h, 24h. Un 410 desactiva el endpoint.
+      parameters:
+        - { name: webhook-id, in: header, required: true, schema: { type: string } }
+        - { name: webhook-timestamp, in: header, required: true, schema: { type: string } }
+        - { name: webhook-signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookEvent' }
+      responses:
+        '2XX': { description: Recibido (procesar en segundo plano) }
+        '410': { description: Desactiva el endpoint }
+components:
+  securitySchemes:
+    bearerKey:
+      type: http
+      scheme: bearer
+      description: '`zf_<env>_<keyId>_<secret>`; `live` en producción, `test` en otros entornos.'
+  parameters:
+    ExternalId:
+      name: externalId
+      in: path
+      required: true
+      description: Id inmutable del pedido en la tienda (Medusa `order_...`).
+      schema: { type: string, maxLength: 300 }
+  responses:
+    Problem:
+      description: Error RFC 9457
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, detail, code, retryable]
+      properties:
+        type: { type: string, format: uri, example: 'https://zentofact.app/problems/stale_update' }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code:
+          type: string
+          enum:
+            - unauthorized
+            - forbidden_scope
+            - not_found
+            - validation_failed
+            - stale_update
+            - document_already_issued
+            - order_already_shipped
+            - idempotency_key_reused
+            - idempotency_in_progress
+            - internal
+            - payload_too_large
+            - document_not_accepted
+        retryable: { type: boolean }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [path, message]
+            properties:
+              path: { type: string }
+              message: { type: string }
+    Policy:
+      type: object
+      required: [version, issuance, documentTypes, boletaIdRequired, anonymousMaxAmount, creditNoteOnCancel, series]
+      properties:
+        version: { type: string, example: '2026-11-28T15:00:00Z#3' }
+        issuance:
+          type: object
+          required: [mode]
+          properties:
+            mode: { type: string, enum: [on_request, always] }
+        documentTypes:
+          type: array
+          items: { type: string, enum: [boleta, factura] }
+        boletaIdRequired: { type: boolean }
+        anonymousMaxAmount: { type: number, example: 700 }
+        creditNoteOnCancel: { type: string, enum: [auto, manual] }
+        series:
+          type: object
+          required: [boleta, factura]
+          properties:
+            boleta: { type: string, example: B001 }
+            factura: { type: string, example: F001 }
+    Money:
+      type: number
+      description: PEN, 2 decimales, IGV incluido.
+    OrderInput:
+      type: object
+      required: [orderNumber, orderedAt, updatedAt, customer, fulfillment, items, total]
+      properties:
+        orderNumber: { type: string, example: L-DHZ2A7 }
+        orderedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        currency: { type: string, enum: [PEN], default: PEN }
+        payment:
+          type: [object, 'null']
+          properties:
+            status: { type: string, example: paid }
+            paidAt: { type: [string, 'null'], format: date-time }
+            method: { type: string, example: card }
+            provider: { type: string, example: mercado_pago }
+            reference: { type: string }
+        customer:
+          type: object
+          properties:
+            name: { type: [string, 'null'] }
+            email: { type: [string, 'null'] }
+            phone: { type: [string, 'null'] }
+        document:
+          type: [object, 'null']
+          required: [type, customer]
+          properties:
+            type: { type: string, enum: [boleta, factura] }
+            customer:
+              type: object
+              required: [docType, docNumber, name]
+              properties:
+                docType: { type: string, enum: [DNI, CE, PASSPORT, RUC] }
+                docNumber: { type: string }
+                name: { type: string }
+                address: { type: [string, 'null'] }
+        fulfillment:
+          type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [delivery, pickup] }
+            zone: { type: [string, 'null'], enum: [lima, provincia, null] }
+            address:
+              type: object
+              properties:
+                recipient: { type: string }
+                line1: { type: string }
+                line2: { type: string }
+                district: { type: string }
+                department: { type: string }
+                reference: { type: string }
+                phone: { type: string }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [id, quantity, unitPrice, total]
+            properties:
+              id: { type: string }
+              sku: { type: [string, 'null'], description: SKU desconocido → aceptado y marcado sin coincidencia. }
+              description: { type: string }
+              quantity: { type: number, exclusiveMinimum: 0 }
+              unitPrice: { $ref: '#/components/schemas/Money' }
+              discount: { $ref: '#/components/schemas/Money' }
+              total:
+                allOf: [{ $ref: '#/components/schemas/Money' }]
+                description: Debe ser > 0.
+        shipping:
+          type: object
+          properties:
+            description: { type: string }
+            total: { $ref: '#/components/schemas/Money' }
+        discountTotal:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: Informativo.
+        total:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: Debe ser Σ items[].total + shipping.total (±0.005).
+    Order:
+      type: object
+      required: [externalId, orderNumber, zentofactId, fulfillment, documents, updatedAt]
+      properties:
+        externalId: { type: string }
+        orderNumber: { type: string }
+        zentofactId: { type: integer }
+        fulfillment:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [pending, confirmed, ready, shipped, delivered, cancelled] }
+            confirmedAt: { type: [string, 'null'], format: date-time }
+            readyAt: { type: [string, 'null'], format: date-time }
+            shippedAt: { type: [string, 'null'], format: date-time }
+            deliveredAt: { type: [string, 'null'], format: date-time }
+            carrier: { type: [string, 'null'], example: shaloom }
+            trackingNumber: { type: [string, 'null'] }
+            trackingUrl: { type: [string, 'null'] }
+        documents:
+          type: array
+          items:
+            type: object
+            required: [id, kind, number, status, issuedAt, total, affects]
+            properties:
+              id: { type: string, example: 'boleta:456' }
+              kind: { type: string, enum: [boleta, factura, credit_note] }
+              number: { type: string, example: B001-123 }
+              status: { type: string, enum: [issued, accepted, rejected, voided] }
+              issuedAt: { type: [string, 'null'] }
+              total: { type: [number, 'null'] }
+              affects: { type: [string, 'null'], description: 'Para credit_note: id del comprobante anulado.' }
+        updatedAt: { type: string, format: date-time }
+    WebhookEvent:
+      type: object
+      required: [type, timestamp, data]
+      properties:
+        type:
+          type: string
+          enum:
+            - order.received
+            - order.confirmed
+            - order.ready
+            - order.shipped
+            - order.delivered
+            - order.cancelled
+            - document.issued
+            - document.accepted
+            - document.rejected
+            - document.voided
+            - inventory.updated
+        timestamp: { type: string, format: date-time }
+        data:
+          type: object
+          required: [sequence]
+          properties:
+            externalId: { type: string }
+            orderNumber: { type: string }
+            sequence: { type: integer }
+            carrier: { type: [string, 'null'] }
+            trackingNumber: { type: [string, 'null'] }
+            trackingUrl: { type: [string, 'null'] }
+            documentId: { type: string }
+            creditNoteId: { type: string }
+            kind: { type: string }
+            number: { type: string }
+            reason: { type: [string, 'null'] }
+            sku: { type: string }
+            available: { type: number }

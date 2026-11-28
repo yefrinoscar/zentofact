@@ -1,4 +1,8 @@
+import { isDeepStrictEqual } from "node:util";
 import { getOrder } from "./order-management.js";
+import { storeSettings } from "./integration/settings.js";
+
+export const STORE_AUTO_EMIT_DISABLED = "STORE_AUTO_EMIT_DISABLED";
 
 const TABLES = {
   factura: "facturas",
@@ -93,6 +97,17 @@ function billingAttributes(value) {
   return nested ? billingAttributes(nested) : value;
 }
 
+// La política fija de la cuenta (boleta/factura) manda, igual que en
+// resolveDocumentDecision; luego lo que pidió el cliente y, solo si no hay
+// nada explícito, la pista del marketplace (factura pedida o RUC de 11).
+export function defaultDocumentKind(order, { invoiceRequired = false, number = "" } = {}) {
+  const policy = String(order.documentTypePolicy || "").trim().toLowerCase();
+  if (policy === "boleta" || policy === "factura") return policy;
+  const requested = String(order.requestedDocumentType || "").trim().toLowerCase();
+  if (requested === "boleta" || requested === "factura") return requested;
+  return invoiceRequired || String(number || "").length === 11 ? "factura" : "boleta";
+}
+
 export function orderBillingDefaults(order) {
   const payload = order.snapshots?.[0]?.rawPayload || {};
   const raw = payload.Order || payload;
@@ -112,13 +127,7 @@ export function orderBillingDefaults(order) {
   const invoiceRequired =
     [true, 1, "1", "true"].includes(raw.InvoiceRequired) ||
     [true, 1, "1", "true"].includes(order.metadata?.invoiceRequired);
-  const kind =
-    order.documentTypePolicy === "factura" ||
-    order.requestedDocumentType === "factura" ||
-    (order.documentTypePolicy !== "boleta" &&
-      (invoiceRequired || number.length === 11))
-      ? "factura"
-      : "boleta";
+  const kind = defaultDocumentKind(order, { invoiceRequired, number });
   return {
     kind,
     serie: kind === "factura" ? "F001" : "B001",
@@ -167,7 +176,12 @@ export async function prepareOrderEmission(order, core) {
   const branch = branches.find((b) => b.codigo === "0000") || branches[0];
   if (!branch)
     throw new Error("La empresa no tiene una sucursal emisora configurada.");
-  return { ...orderBillingDefaults(order), branchId: branch.id };
+  const defaults = orderBillingDefaults(order);
+  return {
+    ...defaults,
+    branchId: branch.id,
+    ...(order.channelCode === "external" ? { expectedBilling: defaults } : {}),
+  };
 }
 
 export function buildOrderDocumentInput(order, input) {
@@ -260,9 +274,11 @@ export function buildOrderDocumentInput(order, input) {
     branch_id: branchId,
     order_number: order.externalOrderNumber,
     serie,
-    fecha_emision: new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Lima",
-    }).format(new Date()),
+    fecha_emision: /^\d{4}-\d{2}-\d{2}$/.test(String(input.issueDate || ""))
+      ? String(input.issueDate)
+      : new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Lima",
+        }).format(new Date()),
     moneda: order.currency || "PEN",
     metodo_envio: "individual",
     client: {
@@ -304,13 +320,13 @@ export async function syncOrderDocuments(order, db) {
     ? "accepted"
     : active.some((d) => d.status === "RECHAZADO")
       ? "rejected"
-      : active.length
-        ? "issued"
-        : order.documentStatus;
-  await db.query(
-    "update orders set document_status=$2, updated_at=now() where id=$1",
-    [order.id, status],
-  );
+      : "issued";
+  if (active.length) {
+    await db.query(
+      "update orders set document_status=$2, updated_at=now() where id=$1 and document_status is distinct from $2",
+      [order.id, status],
+    );
+  }
 }
 
 export async function actOnOrderDocument(
@@ -336,17 +352,41 @@ export async function actOnOrderDocument(
       throw new Error(
         "El pedido ya tiene un comprobante. Consulta SUNAT o reemítelo.",
       );
-    const built = buildOrderDocumentInput(order, input);
     const branches = await core.listBranches(order.companyId);
-    if (!branches.some((b) => b.id === built.branch_id && b.activo))
-      throw new Error("Sucursal no válida para esta empresa.");
     const client = await core.pool.connect();
     try {
       await client.query("begin");
       await client.query("select pg_advisory_xact_lock(hashtext($1))", [
         `managed-order-emission:${order.companyId}:${order.externalOrderNumber}`,
       ]);
-      const fresh = await listOrderDocuments(order, client);
+      let sourceOrder = order;
+      let emission = input;
+      if (order.channelCode === "external") {
+        // Cancelación, recarga de la tienda y edición fiscal bloquean esta misma fila.
+        const locked = (await client.query(
+          `select a.settings, a.document_requirement, a.active
+           from orders o join order_channel_accounts a on a.id=o.channel_account_id
+           where o.id=$1 for update of o for share of a`,
+          [order.id],
+        )).rows[0];
+        if (!locked) throw new Error("Pedido no encontrado.");
+        const settings = storeSettings(locked);
+        if (input.automatic && (!locked.active || !settings.integration || settings.issuanceMode !== "always")) {
+          const error = new Error("La cuenta ya no emite automáticamente.");
+          error.code = STORE_AUTO_EMIT_DISABLED;
+          throw error;
+        }
+        sourceOrder = await getOrder(order.id, client);
+        const currentBilling = orderBillingDefaults(sourceOrder);
+        if (input.expectedBilling && !isDeepStrictEqual(input.expectedBilling, currentBilling)) {
+          throw new Error("Los datos fiscales del pedido cambiaron. Revisa los datos e inténtalo de nuevo.");
+        }
+        if (input.kind === "boleta" && input.client?.documentType === "0" && settings.boletaIdRequired) {
+          throw new Error("Esta cuenta requiere identificar al cliente en la boleta.");
+        }
+        emission = { ...input, serie: settings.series[input.kind] };
+      }
+      const fresh = await listOrderDocuments(sourceOrder, client);
       if (
         fresh.some(
           (d) =>
@@ -355,6 +395,9 @@ export async function actOnOrderDocument(
         )
       )
         throw new Error("El pedido ya tiene un comprobante.");
+      const built = buildOrderDocumentInput(sourceOrder, emission);
+      if (!branches.some((b) => b.id === built.branch_id && b.activo))
+        throw new Error("Sucursal no válida para esta empresa.");
       const created =
         input.kind === "factura"
           ? await core.createFactura({
@@ -365,7 +408,7 @@ export async function actOnOrderDocument(
               ...built,
               usuario_creacion: actorUserId,
             });
-      await syncOrderDocuments(order, client);
+      await syncOrderDocuments(sourceOrder, client);
       await client.query("commit");
       const result =
         input.kind === "factura"

@@ -28,6 +28,7 @@
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
     "verify:order-sync": "node scripts/verify-unified-order-sync.mjs",
     "sunat:reconcile": "node scripts/reconcile-sunat-documents.mjs",
+    "integration:provision": "node packages/server/src/integration/provision.js",
     "r2:pull": "node scripts/pull-r2-to-minio.mjs",
     "worktree:setup": "bash scripts/setup-worktree.sh",
     "release:bump": "node scripts/release-bump.mjs",

@@ -143,6 +143,7 @@ export {
   createAndSendCreditNoteFromFactura,
   createAndSendCreditNotesFromBoletas,
   generatePreviewCreditNoteHtml,
+  generateAcceptedCreditNotePdfBase64,
   reEmitCreditNote,
   refreshCreditNoteStatus,
 } from './services/credit-note.service';

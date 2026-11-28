@@ -11,8 +11,8 @@ import { CLOSED_STATES, MAX_NEW_NUMBERS_PER_ORDER } from './sunat-reconciliation
 import { reconcileAndReemit, refreshStatusFromSunat } from './reemission.service';
 import type { ReemissionAdapter } from './reemission.service';
 import { numeroALetras } from '../utils/number-to-words';
-import { generateBoletaPreviewHtml } from './pdf.service';
-import type { PdfFormat } from './pdf.service';
+import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
+import type { PdfBoletaData, PdfFormat } from './pdf.service';
 import {
   resolveCreditNoteBatchIssueDate,
   resolveCreditNoteIssueDate,
@@ -407,7 +407,7 @@ export async function createAndSendCreditNotesFromBoletas(
 }
 
 
-export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFormat = 'A4') {
+async function loadCreditNotePdfData(id: number) {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, id)).limit(1))[0];
   if (!note) throw new Error('Nota de crédito no encontrada');
 
@@ -438,7 +438,7 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
     throw new Error('Datos incompletos para previsualizar la nota de crédito');
   }
 
-  const html = await generateBoletaPreviewHtml({
+  const data: PdfBoletaData = {
     company: {
       ruc: companyData.ruc,
       razonSocial: companyData.razonSocial,
@@ -482,7 +482,13 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
       { label: 'Doc. afectado', value: note.numDocAfectado },
       { label: 'Motivo', value: note.desMotivo },
     ],
-  }, pdfFormat);
+  };
+  return { note, data, affectedDocument, affectedBoleta, affectedFactura, isFactura };
+}
+
+export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFormat = 'A4') {
+  const { note, data, affectedDocument, affectedBoleta, affectedFactura, isFactura } = await loadCreditNotePdfData(id);
+  const html = await generateBoletaPreviewHtml(data, pdfFormat);
 
   const affectedMetadata = {
     id: affectedDocument.id,
@@ -506,6 +512,16 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
     affectedBoleta: affectedBoleta ? affectedMetadata : undefined,
     affectedFactura: affectedFactura ? affectedMetadata : undefined,
   };
+}
+
+/** PDF de una nota de crédito aceptada por SUNAT (mismo formato que la vista previa). */
+export async function generateAcceptedCreditNotePdfBase64(id: number, pdfFormat: PdfFormat = 'A4') {
+  const { note, data } = await loadCreditNotePdfData(id);
+  if (String(note.estadoSunat || '').toUpperCase() !== 'ACEPTADO') {
+    throw new Error('Solo se puede generar PDF de notas de crédito aceptadas');
+  }
+  const pdf = await generateBoletaPdf({ ...data, codigoHash: note.codigoHash || undefined }, pdfFormat);
+  return pdf.toString('base64');
 }
 
 function resolveCreditNoteSerie(rawSeries: unknown, affectedSerie: string, requiredPrefix?: 'F'): string {
