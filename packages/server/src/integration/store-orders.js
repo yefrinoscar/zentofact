@@ -173,6 +173,12 @@ export async function toOrderResource(db, row) {
   };
 }
 
+async function lockStoreOrder(db, accountId, externalId) {
+  await db.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [
+    `store-order:${accountId}:${externalId}`,
+  ]);
+}
+
 async function findOrderRow(db, accountId, externalId, { lock = false } = {}) {
   const result = await db.query(
     `select * from orders where channel_account_id=$1 and external_order_id=$2 ${lock ? 'for update' : ''}`,
@@ -218,10 +224,7 @@ export async function upsertStoreOrder(account, externalIdInput, body, db) {
   if (errors.length) throw validationProblem(errors);
   const settings = storeSettings(account);
   return withTransaction(db, async (client) => {
-    // Bloquea primero por identidad para serializar PUTs concurrentes del mismo pedido.
-    await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [
-      `store-order:${account.id}:${value.externalId}`,
-    ]);
+    await lockStoreOrder(client, account.id, value.externalId);
     const existing = await findOrderRow(client, account.id, value.externalId, { lock: true });
     if (existing?.provider_updated_at
       && new Date(value.updatedAt).getTime() < new Date(existing.provider_updated_at).getTime()) {
@@ -277,6 +280,7 @@ export async function cancelStoreOrder(account, externalIdInput, body = {}, db) 
   }
   const settings = storeSettings(account);
   return withTransaction(db, async (client) => {
+    await lockStoreOrder(client, account.id, externalId);
     const row = await findOrderRow(client, account.id, externalId);
     if (!row) throw new ProblemError('not_found', 'Pedido no encontrado.');
     const wasCancelled = row.order_status === 'cancelled' || row.fulfillment_status === 'cancelled';
