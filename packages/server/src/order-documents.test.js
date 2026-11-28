@@ -5,6 +5,7 @@ import {
   sunatReason,
   listOrderDocuments,
   orderBillingDefaults,
+  defaultDocumentKind,
 } from "./order-documents.js";
 const order = {
   id: 1,
@@ -108,6 +109,29 @@ test("billing data and document type come from the order without operator input"
     }).kind,
     "boleta",
   );
+});
+test("la política fija de la cuenta manda sobre lo pedido, como resolveDocumentDecision", () => {
+  const base = { ...order, customer: { documentNumber: "12345678", name: "Cliente" } };
+  assert.equal(orderBillingDefaults({ ...base, documentTypePolicy: "boleta", requestedDocumentType: "factura" }).kind, "boleta");
+  assert.equal(orderBillingDefaults({ ...base, documentTypePolicy: "factura" }).kind, "factura");
+  assert.equal(orderBillingDefaults({ ...base, documentTypePolicy: "automatic", requestedDocumentType: "factura" }).kind, "factura");
+  assert.equal(
+    defaultDocumentKind({ documentTypePolicy: "customer_choice", requestedDocumentType: "boleta" }, { number: "20123456789" }),
+    "boleta",
+  );
+  assert.equal(defaultDocumentKind({ documentTypePolicy: "automatic" }, { invoiceRequired: true }), "factura");
+  assert.equal(defaultDocumentKind({ documentTypePolicy: "boleta" }, { invoiceRequired: true }), "boleta");
+  const ce = orderBillingDefaults({
+    ...order,
+    documentTypePolicy: "automatic",
+    requestedDocumentType: "boleta",
+    customer: { documentType: "4", documentNumber: "001234567", legalName: "Ana Pérez", address: "Av. Lima 1" },
+  });
+  assert.deepEqual(ce.client, { documentType: "4", documentNumber: "001234567", name: "Ana Pérez", address: "Av. Lima 1" });
+});
+test("la fecha de emisión acepta un override de fecha de pago", () => {
+  assert.equal(buildOrderDocumentInput(order, { ...input, issueDate: "2026-11-20" }).fecha_emision, "2026-11-20");
+  assert.match(buildOrderDocumentInput(order, { ...input, issueDate: "ayer" }).fecha_emision, /^\d{4}-\d{2}-\d{2}$/);
 });
 test("documents resolve live replacements and preserve linked history", async () => {
   const queries = [];

@@ -93,6 +93,17 @@ function billingAttributes(value) {
   return nested ? billingAttributes(nested) : value;
 }
 
+// La política fija de la cuenta (boleta/factura) manda, igual que en
+// resolveDocumentDecision; luego lo que pidió el cliente y, solo si no hay
+// nada explícito, la pista del marketplace (factura pedida o RUC de 11).
+export function defaultDocumentKind(order, { invoiceRequired = false, number = "" } = {}) {
+  const policy = String(order.documentTypePolicy || "").trim().toLowerCase();
+  if (policy === "boleta" || policy === "factura") return policy;
+  const requested = String(order.requestedDocumentType || "").trim().toLowerCase();
+  if (requested === "boleta" || requested === "factura") return requested;
+  return invoiceRequired || String(number || "").length === 11 ? "factura" : "boleta";
+}
+
 export function orderBillingDefaults(order) {
   const payload = order.snapshots?.[0]?.rawPayload || {};
   const raw = payload.Order || payload;
@@ -112,13 +123,7 @@ export function orderBillingDefaults(order) {
   const invoiceRequired =
     [true, 1, "1", "true"].includes(raw.InvoiceRequired) ||
     [true, 1, "1", "true"].includes(order.metadata?.invoiceRequired);
-  const kind =
-    order.documentTypePolicy === "factura" ||
-    order.requestedDocumentType === "factura" ||
-    (order.documentTypePolicy !== "boleta" &&
-      (invoiceRequired || number.length === 11))
-      ? "factura"
-      : "boleta";
+  const kind = defaultDocumentKind(order, { invoiceRequired, number });
   return {
     kind,
     serie: kind === "factura" ? "F001" : "B001",
@@ -260,9 +265,11 @@ export function buildOrderDocumentInput(order, input) {
     branch_id: branchId,
     order_number: order.externalOrderNumber,
     serie,
-    fecha_emision: new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Lima",
-    }).format(new Date()),
+    fecha_emision: /^\d{4}-\d{2}-\d{2}$/.test(String(input.issueDate || ""))
+      ? String(input.issueDate)
+      : new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Lima",
+        }).format(new Date()),
     moneda: order.currency || "PEN",
     metodo_envio: "individual",
     client: {
