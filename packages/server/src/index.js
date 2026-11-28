@@ -109,6 +109,12 @@ const {
 const { combineFalabellaManifestPdfDocuments } = await import('./falabella-manifest-pdf.js');
 // Cola persistente: el request HTTP sólo encola y el worker procesa fuera del ciclo de respuesta.
 const manifestJobs = await import('./falabella-manifest-jobs.js');
+const { redactRequestPath } = await import('./request-log.js');
+const { createIntegrationApp } = await import('./integration/app.js');
+const integrationWorkers = await import('./integration/workers.js');
+const storeFulfillment = await import('./integration/store-fulfillment.js');
+const storeOrders = await import('./integration/store-orders.js');
+const integrationEvents = await import('./integration/events.js');
 
 const app = new Hono();
 
@@ -123,7 +129,7 @@ app.use('*', cors({
 app.use('*', async (c, next) => {
   const t = Date.now();
   await next();
-  console.log(`[REQ] ${c.req.method} ${c.req.path} → ${c.res.status} (${Date.now() - t}ms)`);
+  console.log(`[REQ] ${c.req.method} ${redactRequestPath(c.req.path)} → ${c.res.status} (${Date.now() - t}ms)`);
 });
 
 // Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
@@ -184,6 +190,11 @@ app.get('/integrations/mercado-libre/callback', async (c) => {
   const location = await mercadoLibreOauth.finishMercadoLibreConnect(c.req.query());
   return c.redirect(location);
 });
+// API de integración de tiendas v1: autenticada con llave Bearer propia, no con
+// la sesión web. Va antes del guard de sesión (no está en PROTECTED_PATHS) y
+// antes del fallback SPA de SERVE_WEB.
+app.route('/api/v1', createIntegrationApp());
+
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 app.use('*', requireCsrf());
@@ -540,6 +551,21 @@ app.post('/logistics-inbox/:orderId/delivered', async (c) => {
   }
 });
 
+// Avance de despacho de pedidos de la tienda web: confirmar, listo, enviado, entregado.
+app.post('/logistics-inbox/:orderId/store-step', async (c) => {
+  try {
+    const user = c.get('user');
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await storeFulfillment.markStoreOrderStep({
+      ...body,
+      orderId: c.req.param('orderId'),
+      markedBy: user?.email || user?.name || null,
+    }));
+  } catch (e) {
+    return fail(c, e, 400, { operation: 'logistics.store-step' });
+  }
+});
+
 // ── Conversaciones posventa de Mercado Libre (chat desde la bandeja) ──
 app.get('/mercado-libre/conversations/:orderId', async (c) => {
   try {
@@ -861,10 +887,28 @@ for (const action of ['emit', 'refresh', 'reissue', 'pdf', 'xml']) {
       if (!['factura', 'boleta'].includes(input.kind)) return fail(c, new Error('Tipo de comprobante inválido.'), 400);
       const permission = input.kind === 'factura' ? 'facturas' : 'boletas';
       if (!userHasPermission(c.get('user'), permission)) return c.json({ error: 'No tienes permiso para este comprobante.' }, 403);
-      return ok(c, await orderDocuments.actOnOrderDocument(order.id, action, input, c.get('user')?.id, core));
+      const result = await orderDocuments.actOnOrderDocument(order.id, action, input, c.get('user')?.id, core);
+      if (order.channelCode === 'external' && ['emit', 'refresh', 'reissue'].includes(action)) {
+        // Publica document.* a la tienda sin esperar al reconciliador.
+        core.pool.query('select * from orders where id=$1', [order.id])
+          .then(({ rows }) => rows[0] && integrationEvents.reconcileOrderDocuments(core.pool, rows[0]))
+          .catch((error) => console.error('[integracion:documentos]', order.id, error?.message || error));
+      }
+      return ok(c, result);
     } catch (e) { return fail(c, e, 400); }
   });
 }
+// Datos fiscales que el operador carga en un pedido de la tienda web antes de emitir.
+app.patch('/order-management/orders/:id/billing', requireAnyPermission(['boletas', 'facturas']), async (c) => {
+  try {
+    const body = await c.req.json();
+    const kindPermission = body?.kind === 'factura' ? 'facturas' : 'boletas';
+    if (!userHasPermission(c.get('user'), kindPermission)) return c.json({ error: 'No tienes permiso para este comprobante.' }, 403);
+    const updated = await storeOrders.updateExternalOrderBilling(c.req.param('id'), body, { actorUserId: c.get('user')?.id });
+    if (!updated) return c.json({ error: 'Pedido no encontrado.' }, 404);
+    return ok(c, await orderManagement.getOrder(Number(c.req.param('id'))));
+  } catch (e) { return fail(c, e, 400); }
+});
 app.post('/order-management/orders/:id/cancel', requirePermission('order_management'), async (c) => {
   try {
     const order = await orderManagement.cancelManualOrder(Number(c.req.param('id')), {
@@ -2387,4 +2431,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   stockJobs.startStockReconciliationCron();
   stockJobs.startStockJobWorker();
   marketplaceMutationJobs.startMarketplaceMutationWorker();
+  integrationWorkers.startIntegrationWorkers();
 });
