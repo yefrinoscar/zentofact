@@ -531,6 +531,20 @@ const apiHttp = {
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderDelivered: (data: { orderId: number }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/delivered`, { method: 'POST', body: JSON.stringify(data) }),
+  /** Avance de despacho de un pedido de la tienda web (canal external). */
+  markStoreOrderStep: (data: {
+    orderId: number;
+    step: 'confirm' | 'ready' | 'ship' | 'deliver';
+    carrier?: string;
+    trackingNumber?: string;
+    trackingUrl?: string;
+  }) => {
+    const { orderId, ...body } = data;
+    return req<{ ok: boolean; orderId: number; fulfillmentStatus: string; alreadyDone: boolean }>(
+      `/logistics-inbox/${encodeURIComponent(String(orderId))}/store-step`,
+      { method: 'POST', body: JSON.stringify(body) },
+    );
+  },
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;
@@ -602,6 +616,14 @@ const apiHttp = {
     req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateManagedOrderDate: (id: number, orderDate: string) => req(`/order-management/orders/${id}/date`, { method: 'PATCH', body: JSON.stringify({ orderDate, dateConfirmed: true, dateFinalConfirmed: true }) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  /** Datos fiscales que carga el operador antes de emitir el comprobante de un pedido web. */
+  updateManagedOrderBilling: (id: number, data: {
+    kind: 'boleta' | 'factura';
+    documentType: '0' | '1' | '4' | '7' | '6';
+    documentNumber: string;
+    name: string;
+    address: string;
+  }) => req(`/order-management/orders/${id}/billing`, { method: 'PATCH', body: JSON.stringify(data) }),
   cancelManagedOrder: (id: number) => req(`/order-management/orders/${id}/cancel`, { method: 'POST' }),
   actOnManagedOrderDocument: (id: number, action: string, input: { kind?: 'factura' | 'boleta'; documentId?: number; branchId?: number; serie?: string; client?: { documentType: string; documentNumber: string; name: string; address: string } }) => req(`/order-management/orders/${id}/document/${action}`, { method: 'POST', body: JSON.stringify(input) }),
   updateManagedOrderItemCommission: (orderId: number, itemId: number, commissionAmount: number) =>

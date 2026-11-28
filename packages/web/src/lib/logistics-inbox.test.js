@@ -58,6 +58,18 @@ import {
   productImageCandidates,
   productImageSrc,
   visibleLogisticsChannels,
+  canConfirmStoreOrder,
+  canMarkStoreDelivered,
+  canMarkStoreReady,
+  canMarkStoreShipped,
+  isOwnStoreChannel,
+  logisticsChannelDotClass,
+  nextStoreStep,
+  STORE_SHIPPING_CARRIERS,
+  storeDeliverLabel,
+  storeReadyLabel,
+  storeShipInputError,
+  storeStepSuccessCopy,
 } from './logistics-inbox.ts';
 
 test('la bandeja inicia mostrando todos los plazos', () => {
@@ -532,4 +544,71 @@ test('marca como Shalom solo los envíos de la tienda por Shaloom', async () => 
   assert.equal(isShalomShipment({ channelCode: 'manual', metadata: { delivery: 'envio', shippingCarrier: 'shaloom' } }), true);
   assert.equal(isShalomShipment({ channelCode: 'manual', shipping: { type: 'envio', carrier: 'marvisuar' } }), false);
   assert.equal(isShalomShipment({ channelCode: 'manual', shipping: { type: 'recojo', carrier: 'shaloom' } }), false);
+});
+
+test('la tienda propia agrupa venta manual y pedidos web', () => {
+  assert.equal(isOwnStoreChannel('manual'), true);
+  assert.equal(isOwnStoreChannel('external'), true);
+  assert.equal(isOwnStoreChannel('falabella'), false);
+  assert.equal(logisticsChannelLabel('external'), 'Tienda');
+  assert.equal(logisticsChannelClass('external'), logisticsChannelClass('manual'));
+  assert.equal(logisticsChannelDotClass('external'), logisticsChannelDotClass('manual'));
+});
+
+test('los pedidos web imprimen guía pero no heredan el entregado manual', () => {
+  const order = { channelCode: 'external', fulfillmentStatus: 'pending', shipping: { type: 'envio' } };
+  assert.equal(canPrintLogisticsLabel(order), true);
+  assert.equal(canMarkLogisticsDelivered(order), false);
+  assert.equal(canPrintLogisticsLabel({ ...order, fulfillmentStatus: 'shipped' }), false);
+});
+
+test('pasos de despacho de un pedido web con envío', () => {
+  const base = { channelCode: 'external', shipping: { type: 'envio' } };
+  assert.deepEqual(nextStoreStep({ ...base, fulfillmentStatus: 'pending' }), { step: 'confirm', label: 'Confirmar' });
+  assert.deepEqual(nextStoreStep({ ...base, fulfillmentStatus: 'preparing' }), { step: 'ready', label: 'Listo' });
+  assert.deepEqual(nextStoreStep({ ...base, fulfillmentStatus: 'ready_to_ship' }), { step: 'ship', label: 'Enviado' });
+  assert.deepEqual(nextStoreStep({ ...base, fulfillmentStatus: 'shipped' }), { step: 'deliver', label: 'Entregado' });
+  assert.equal(nextStoreStep({ ...base, fulfillmentStatus: 'delivered' }), null);
+  assert.equal(nextStoreStep({ ...base, fulfillmentStatus: 'cancelled' }), null);
+  assert.equal(canConfirmStoreOrder({ ...base, fulfillmentStatus: 'pending' }), true);
+  assert.equal(canMarkStoreReady({ ...base, fulfillmentStatus: 'preparing' }), true);
+  assert.equal(canMarkStoreShipped({ ...base, fulfillmentStatus: 'ready_to_ship' }), true);
+  assert.equal(canMarkStoreDelivered({ ...base, fulfillmentStatus: 'ready_to_ship' }), false);
+});
+
+test('el recojo salta Enviado y usa Listo para recoger / Recogido', () => {
+  const base = { channelCode: 'external', shipping: { type: 'recojo' } };
+  assert.equal(storeReadyLabel(base), 'Listo para recoger');
+  assert.equal(storeDeliverLabel(base), 'Recogido');
+  assert.equal(canMarkStoreShipped({ ...base, fulfillmentStatus: 'ready_to_ship' }), false);
+  assert.deepEqual(nextStoreStep({ ...base, fulfillmentStatus: 'ready_to_ship' }), { step: 'deliver', label: 'Recogido' });
+  assert.equal(storeStepSuccessCopy('ready', { ...base, externalOrderNumber: 'L-1' }), 'L-1 está listo para recoger.');
+  assert.deepEqual(logisticsFlowSteps({ ...base, fulfillmentStatus: 'ready_to_ship' }).map((step) => step.label), ['Confirmar', 'Preparar', 'Recoger']);
+});
+
+test('los pasos de tienda no aplican a otros canales', () => {
+  for (const channelCode of ['manual', 'falabella', 'ripley', 'mercado_libre']) {
+    assert.equal(nextStoreStep({ channelCode, fulfillmentStatus: 'pending' }), null);
+  }
+});
+
+test('la siguiente acción de bandeja de un pedido web es su paso de tienda', () => {
+  const order = { channelCode: 'external', fulfillmentStatus: 'shipped', shipping: { type: 'envio' } };
+  assert.deepEqual(logisticsNextStep(order), { kind: 'store', step: 'deliver', label: 'Entregado' });
+  assert.deepEqual(logisticsNextStep({ ...order, fulfillmentStatus: 'delivered' }), { kind: 'view', label: 'Ver detalle' });
+  assert.deepEqual(logisticsNextStep({ ...order, fulfillmentStatus: 'pending' }), { kind: 'store', step: 'confirm', label: 'Confirmar' });
+  assert.deepEqual(
+    logisticsFlowSteps({ ...order, fulfillmentStatus: 'ready_to_ship' }).map((step) => [step.label, step.state]),
+    [['Confirmar', 'done'], ['Preparar', 'done'], ['Enviar', 'current'], ['Entregar', 'todo']],
+  );
+  assert.match(logisticsFlowCopy({ ...order, fulfillmentStatus: 'pending' }), /Confírmalo/);
+  assert.match(logisticsFlowCopy({ ...order, fulfillmentStatus: 'ready_to_ship' }), /seguimiento/);
+});
+
+test('el formulario de enviado exige transportista y URL válida', () => {
+  assert.deepEqual(STORE_SHIPPING_CARRIERS.map((carrier) => carrier.value), ['shaloom', 'olva', 'marvisuar', 'dinsides', 'nosotros', 'otro']);
+  assert.equal(storeShipInputError({ carrier: '', trackingNumber: '', trackingUrl: '' }), 'Elige el transportista.');
+  assert.match(storeShipInputError({ carrier: 'olva', trackingNumber: '1', trackingUrl: 'olva.pe/x' }), /http/);
+  assert.equal(storeShipInputError({ carrier: 'shaloom', trackingNumber: 'ABC', trackingUrl: 'https://shalom.pe/t/ABC' }), null);
+  assert.equal(storeShipInputError({ carrier: 'nosotros', trackingNumber: '', trackingUrl: '' }), null);
 });

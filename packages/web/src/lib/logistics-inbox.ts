@@ -1,5 +1,17 @@
 export type LogisticsStage = 'pending' | 'ready' | 'shipped';
 export type LogisticsChannel = 'falabella' | 'ripley' | 'mercado_libre' | 'manual';
+
+/** Canales propios de la tienda: venta manual y pedidos que llegan por API desde la web. */
+export const OWN_STORE_CHANNELS = ['manual', 'external'] as const;
+
+export function isOwnStoreChannel(code?: string | null) {
+  return (OWN_STORE_CHANNELS as readonly string[]).includes(String(code || '').trim().toLowerCase());
+}
+
+/** Pedido de la tienda web (canal `external`): el avance de despacho lo marca Zentofact. */
+export function isStoreApiOrder(order: { channelCode?: string | null }) {
+  return String(order.channelCode || '').trim().toLowerCase() === 'external';
+}
 export type LogisticsUrgency = 'overdue' | 'today' | 'tomorrow' | 'later';
 
 export const DEFAULT_BANDEJA_URGENCY: LogisticsUrgency | null = null;
@@ -11,8 +23,26 @@ export type LogisticsOrderLike = {
   externalOrderId?: string | null;
   promisedShippingAt?: string | null;
   shipping?: { type?: string | null; carrier?: string | null; trackingCode?: string | null } | null;
-  metadata?: { delivery?: string | null; shippingCarrier?: string | null; shippingId?: string | null; logisticType?: string | null; shippingMode?: string | null; shippingSubstatus?: string | null } | null;
+  metadata?: {
+    delivery?: string | null;
+    shippingCarrier?: string | null;
+    shippingId?: string | null;
+    logisticType?: string | null;
+    shippingMode?: string | null;
+    shippingSubstatus?: string | null;
+    storeFulfillment?: StoreFulfillment | null;
+  } | null;
   labelPrint?: { printCount?: number | null; lastPrintedAt?: string | null } | null;
+};
+
+export type StoreFulfillment = {
+  confirmedAt?: string | null;
+  readyAt?: string | null;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  carrier?: string | null;
+  trackingNumber?: string | null;
+  trackingUrl?: string | null;
 };
 
 export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label: string }> = [
@@ -116,6 +146,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   ripley: 'Ripley',
   mercado_libre: 'Mercado Libre',
   manual: 'Tienda',
+  external: 'Tienda',
 };
 
 const CARRIER_LABELS: Record<string, string> = {
@@ -123,6 +154,8 @@ const CARRIER_LABELS: Record<string, string> = {
   shaloom: 'Shaloom',
   dinsides: 'Dinsides',
   nosotros: 'Express',
+  olva: 'Olva',
+  otro: 'Otro',
 };
 
 export function logisticsChannelLabel(code?: string | null) {
@@ -134,7 +167,7 @@ export function logisticsChannelClass(code?: string | null) {
   if (value === 'falabella') return 'border-lime-200 bg-lime-50 text-lime-800';
   if (value === 'ripley') return 'border-violet-200 bg-violet-50 text-violet-800';
   if (value === 'mercado_libre') return 'border-amber-200 bg-amber-50 text-amber-800';
-  if (value === 'manual') return 'border-teal-200 bg-teal-50 text-teal-800';
+  if (isOwnStoreChannel(value)) return 'border-teal-200 bg-teal-50 text-teal-800';
   return 'border-slate-200 bg-slate-100 text-slate-700';
 }
 
@@ -143,7 +176,7 @@ export function logisticsChannelDotClass(code?: string | null) {
   if (value === 'falabella') return 'bg-lime-500';
   if (value === 'ripley') return 'bg-violet-500';
   if (value === 'mercado_libre') return 'bg-amber-500';
-  if (value === 'manual') return 'bg-teal-500';
+  if (isOwnStoreChannel(value)) return 'bg-teal-500';
   return 'bg-slate-400';
 }
 
@@ -186,7 +219,7 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
   const channel = String(order.channelCode || '');
   const status = String(order.fulfillmentStatus || '');
   if (!logisticsPrintableStatus(order)) return false;
-  if (channel === 'manual') return true;
+  if (isOwnStoreChannel(channel)) return true;
   if (channel === 'falabella') return status === 'ready_to_ship' && order.companyId != null;
   if (channel === 'mercado_libre') {
     const shippingId = String(order.metadata?.shippingId || '').trim();
@@ -269,6 +302,77 @@ export function canMarkLogisticsDelivered(order: LogisticsOrderLike) {
   if (String(order.channelCode || '') !== 'manual') return false;
   const status = String(order.fulfillmentStatus || '');
   return status === 'pending' || status === 'preparing' || status === 'ready_to_ship';
+}
+
+export function isStorePickup(order: LogisticsOrderLike) {
+  return String(order.shipping?.type || order.metadata?.delivery || '').trim().toLowerCase() === 'recojo';
+}
+
+/** Pedido web nuevo: el operador lo confirma antes de prepararlo. */
+export function canConfirmStoreOrder(order: LogisticsOrderLike) {
+  return isStoreApiOrder(order) && String(order.fulfillmentStatus || '') === 'pending';
+}
+
+export function canMarkStoreReady(order: LogisticsOrderLike) {
+  return isStoreApiOrder(order) && String(order.fulfillmentStatus || '') === 'preparing';
+}
+
+/** Solo los envíos pasan por "Enviado"; el recojo va de listo a recogido. */
+export function canMarkStoreShipped(order: LogisticsOrderLike) {
+  return isStoreApiOrder(order) && !isStorePickup(order) && String(order.fulfillmentStatus || '') === 'ready_to_ship';
+}
+
+export function canMarkStoreDelivered(order: LogisticsOrderLike) {
+  if (!isStoreApiOrder(order)) return false;
+  const status = String(order.fulfillmentStatus || '');
+  return isStorePickup(order) ? status === 'ready_to_ship' : status === 'shipped';
+}
+
+export type StoreStep = 'confirm' | 'ready' | 'ship' | 'deliver';
+
+export function storeReadyLabel(order: LogisticsOrderLike) {
+  return isStorePickup(order) ? 'Listo para recoger' : 'Listo';
+}
+
+export function storeDeliverLabel(order: LogisticsOrderLike) {
+  return isStorePickup(order) ? 'Recogido' : 'Entregado';
+}
+
+/** Siguiente paso del pedido web, o null si no queda ninguno en Zentofact. */
+export function nextStoreStep(order: LogisticsOrderLike): { step: StoreStep; label: string } | null {
+  if (canConfirmStoreOrder(order)) return { step: 'confirm', label: 'Confirmar' };
+  if (canMarkStoreReady(order)) return { step: 'ready', label: storeReadyLabel(order) };
+  if (canMarkStoreShipped(order)) return { step: 'ship', label: 'Enviado' };
+  if (canMarkStoreDelivered(order)) return { step: 'deliver', label: storeDeliverLabel(order) };
+  return null;
+}
+
+export function storeStepSuccessCopy(step: StoreStep, order: LogisticsOrderLike & { externalOrderNumber?: string | null }) {
+  const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
+  if (step === 'confirm') return `${number} quedó confirmado.`;
+  if (step === 'ready') return isStorePickup(order) ? `${number} está listo para recoger.` : `${number} está listo para enviar.`;
+  if (step === 'ship') return `${number} quedó enviado.`;
+  return isStorePickup(order) ? `${number} quedó recogido.` : `${number} quedó entregado.`;
+}
+
+export const STORE_SHIPPING_CARRIERS: Array<{ value: string; label: string }> = [
+  { value: 'shaloom', label: 'Shalom' },
+  { value: 'olva', label: 'Olva' },
+  { value: 'marvisuar', label: 'Marvisuar' },
+  { value: 'dinsides', label: 'Dinsides' },
+  { value: 'nosotros', label: 'Express' },
+  { value: 'otro', label: 'Otro' },
+];
+
+export type StoreShipInput = { carrier: string; trackingNumber: string; trackingUrl: string };
+
+/** Valida el formulario de "Enviado". Devuelve el mensaje de error o null. */
+export function storeShipInputError(input: StoreShipInput) {
+  if (!STORE_SHIPPING_CARRIERS.some((carrier) => carrier.value === input.carrier)) return 'Elige el transportista.';
+  const url = String(input.trackingUrl || '').trim();
+  if (url && !/^https?:\/\/\S+$/i.test(url)) return 'La URL de seguimiento debe empezar con http:// o https://.';
+  if (String(input.trackingNumber || '').trim().length > 120) return 'El número de seguimiento es muy largo.';
+  return null;
 }
 
 export function canMarkFalabellaReady(order: LogisticsOrderLike) {
@@ -370,13 +474,16 @@ export type LogisticsNextStep =
   | { kind: 'soon'; label: 'Imprimir' }
   | { kind: 'ready'; label: 'Marcar listo' | 'Agendar recojo' }
   | { kind: 'deliver'; label: 'Marcar entregado' }
+  | { kind: 'store'; step: StoreStep; label: string }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
 
 export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep {
   const status = String(order.fulfillmentStatus || '');
-  if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
+  if (status === 'delivered' || (status === 'shipped' && !canMarkStoreDelivered(order))) return { kind: 'view', label: 'Ver detalle' };
   if (canMarkLogisticsDelivered(order)) return { kind: 'deliver', label: 'Marcar entregado' };
+  const store = nextStoreStep(order);
+  if (store) return { kind: 'store', step: store.step, label: store.label };
   if (canMarkLogisticsReady(order)) return { kind: 'ready', label: logisticsReadyActionLabel(order) };
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
@@ -428,6 +535,22 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
     ];
   }
+  if (isStoreApiOrder(order)) {
+    const storeSequence = ['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered'];
+    const at = storeSequence.indexOf(status);
+    const stateFor = (index: number): LogisticsFlowStep['state'] => (at > index ? 'done' : at === index ? 'current' : 'todo');
+    const steps: LogisticsFlowStep[] = [
+      { label: 'Confirmar', state: stateFor(0) },
+      { label: 'Preparar', state: stateFor(1) },
+    ];
+    if (isStorePickup(order)) {
+      steps.push({ label: 'Recoger', state: status === 'delivered' ? 'done' : at >= 2 ? 'current' : 'todo' });
+    } else {
+      steps.push({ label: 'Enviar', state: stateFor(2) });
+      steps.push({ label: 'Entregar', state: status === 'delivered' ? 'done' : status === 'shipped' ? 'current' : 'todo' });
+    }
+    return steps;
+  }
   return [
     { label: 'Empacar', state: shipped ? 'done' : 'current' },
     { label: 'Entregar', state: shipped ? 'done' : 'todo' },
@@ -436,7 +559,7 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
 
 export function logisticsFlowCopy(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
-  if (status === 'shipped' || status === 'delivered') return 'El pedido ya salió del almacén. No hace falta volver a imprimir.';
+  if (!isStoreApiOrder(order) && (status === 'shipped' || status === 'delivered')) return 'El pedido ya salió del almacén. No hace falta volver a imprimir.';
   if (order.channelCode === 'falabella') {
     if (canPrintLogisticsLabel(order)) return 'Falabella confirmó el pedido como listo. Imprime la etiqueta.';
     if (canMarkFalabellaReady(order)) return 'Empaca todos los productos y confirma que está listo para habilitar la etiqueta de Falabella.';
@@ -452,6 +575,20 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     if (canPrintLogisticsLabel(order)) return 'Mercado Envíos habilitó la etiqueta. Imprímela y pégala en el bulto.';
     return 'Mercado Libre confirma el pago automáticamente. Espera a que Mercado Envíos habilite la etiqueta.';
   }
+  if (isStoreApiOrder(order)) {
+    if (canConfirmStoreOrder(order)) return 'Pedido de la tienda web. Confírmalo para avisar al cliente que lo estás preparando.';
+    if (canMarkStoreReady(order)) {
+      return isStorePickup(order)
+        ? 'Empaca el pedido y márcalo listo para recoger: la tienda avisa al cliente.'
+        : 'Empaca el pedido y márcalo listo. Si necesitas guía, puedes imprimirla.';
+    }
+    if (canMarkStoreShipped(order)) return 'Entrega el bulto al transportista y registra el número de seguimiento.';
+    if (canMarkStoreDelivered(order)) {
+      return isStorePickup(order) ? 'Marca recogido cuando el cliente se lleve el pedido.' : 'Marca entregado cuando el cliente reciba el pedido.';
+    }
+    if (status === 'delivered') return 'El pedido ya se entregó.';
+  }
+  if (status === 'shipped' || status === 'delivered') return 'El pedido ya salió del almacén. No hace falta volver a imprimir.';
   if (canMarkLogisticsDelivered(order)) {
     return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';
   }

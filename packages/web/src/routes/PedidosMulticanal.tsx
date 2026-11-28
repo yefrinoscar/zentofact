@@ -1,5 +1,6 @@
 import { OrderDateDialog, orderDateKey, formatRegistrationDate } from '../components/OrderDateDialog';
 import OrderDocumentPanel from '../components/OrderDocumentPanel';
+import { StoreStepButton } from '../components/StoreStepButton';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -70,6 +71,8 @@ import { saveBase64File } from '../lib/download-file';
 import { canCancelManualOrder } from '../lib/manual-order-cancellation';
 import {
   canMarkLogisticsDelivered,
+  isOwnStoreChannel,
+  nextStoreStep,
   logisticsDeliverConfirmCopy,
   logisticsDeliverSuccessCopy,
   mercadoLibreDispatchCopy,
@@ -329,6 +332,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   efectivo: 'Efectivo',
   yape_plin: 'Yape / Plin',
   transferencia: 'Transferencia',
+  tarjeta: 'Tarjeta',
 };
 
 const RECORD_PAYMENT_METHODS = [
@@ -890,6 +894,7 @@ export default function PedidosMulticanal() {
   const queryClient = useQueryClient();
   const { isAdmin, canWrite } = usePermissions();
   const canCancelOrders = canWrite('order_management');
+  const canDispatchStoreOrders = canWrite('orders_inbox') || canWrite('order_management');
 
   const focusDetailSection = (id: string) => {
     setDetailTab('summary');
@@ -1465,7 +1470,7 @@ export default function PedidosMulticanal() {
       header: 'Pago y entrega',
       size: 132,
       cell: ({ row }) => {
-        if (row.original.channelCode !== 'manual') return null;
+        if (!isOwnStoreChannel(row.original.channelCode)) return null;
         const method = row.original.metadata?.paymentMethod ? paymentMethodLabel(row.original) : '';
         const delivery = deliveryLabel(row.original);
         return (
@@ -1781,7 +1786,7 @@ export default function PedidosMulticanal() {
                         label: 'Pago',
                         value: PAYMENT_LABELS[detail.paymentStatus] || 'Sin dato',
                         tone: paymentTone(detail.paymentStatus),
-                        hint: detail.channelCode === 'manual' && detail.metadata?.paymentMethod ? paymentMethodHint(detail) : undefined,
+                        hint: isOwnStoreChannel(detail.channelCode) && detail.metadata?.paymentMethod ? paymentMethodHint(detail) : undefined,
                         onSelect: canRecordPayment(detail) ? () => setPaymentOrder(detail) : undefined,
                       },
                       {
@@ -1794,8 +1799,22 @@ export default function PedidosMulticanal() {
                     ]}
                   />
                 </div>
-                {(canRecordPayment(detail) || canDeliver) && (
+                {(canRecordPayment(detail) || canDeliver || nextStoreStep(detail)) && (
                   <div className="mt-5 flex flex-wrap gap-2">
+                    {nextStoreStep(detail) && (
+                      <StoreStepButton
+                        order={detail}
+                        disabled={!canDispatchStoreOrders}
+                        onDone={({ fulfillmentStatus }) => {
+                          if (fulfillmentStatus) {
+                            setDetail((current) => (
+                              current && current.id === detail.id ? { ...current, fulfillmentStatus } : current
+                            ));
+                          }
+                          void refreshDetailWhenIdle(detail.id);
+                        }}
+                      />
+                    )}
                     {canRecordPayment(detail) && <Button type="button" size="sm" onClick={() => setPaymentOrder(detail)}><Banknote data-icon="inline-start" /> Registrar pago</Button>}
                     {canDeliver && (
                       <Button type="button" size="sm" variant="outline" onClick={() => { deliverMutation.reset(); setDeliverOrder(detail); }}>

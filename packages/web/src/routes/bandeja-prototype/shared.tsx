@@ -42,6 +42,7 @@ import {
   type LogisticsEnabledChannels,
   type LogisticsStage,
   type LogisticsUrgency,
+  type StoreFulfillment,
 } from '../../lib/logistics-inbox';
 import type { InboxNotice } from '../../lib/inbox-notice';
 import { useOperatorSnackbar } from '../../components/OperatorSnackbar';
@@ -49,6 +50,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { QuantityTag as QuantityTagBase } from '../../components/QuantityTag';
+import { StoreStepButton } from '../../components/StoreStepButton';
 
 export type LogisticsItem = {
   id: number;
@@ -76,7 +78,7 @@ export type LogisticsOrder = {
   total: number | null;
   customer?: { name?: string; phone?: string; documentNumber?: string };
   shipping?: { type?: string; carrier?: string; address?: string; district?: string; city?: string; region?: string; trackingCode?: string };
-  metadata?: { delivery?: string; shippingCarrier?: string; logisticType?: string; shippingMode?: string; shippingSubstatus?: string };
+  metadata?: { delivery?: string; shippingCarrier?: string; logisticType?: string; shippingMode?: string; shippingSubstatus?: string; paymentMethod?: string; storeFulfillment?: StoreFulfillment | null };
   promisedShippingAt?: string | null;
   orderedAt?: string | null;
   createdAt?: string | null;
@@ -347,6 +349,9 @@ export function ActionButton({
         <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
       </Tooltip>
     );
+  }
+  if (step.kind === 'store') {
+    return <StoreStepButton order={order} size={size} className={width} disabled={!view.canDispatch} />;
   }
   if (step.kind === 'ready') {
     return (
