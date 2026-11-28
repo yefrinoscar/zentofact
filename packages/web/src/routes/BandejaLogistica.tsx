@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,6 +14,8 @@ import { BandejaVersionPicker } from './BandejaVersionPicker';
 import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
+import { WorkLoader } from '../components/WorkLoader';
+import OrderDocumentPanel, { type OrderDocumentData } from '../components/OrderDocumentPanel';
 import {
   applyLogisticsDeliveredToInbox,
   applyLogisticsReadyToInbox,
@@ -58,6 +60,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import {
   BANDEJA_PROTOTYPE_VARIANTS,
   BANDEJA_STAGE_FILTERS,
@@ -129,6 +132,7 @@ export default function BandejaLogistica() {
   const { can, canWrite, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && (canWrite('orders_inbox') || canWrite('order_management'));
   const canSync = !permissionsLoading && can('order_management');
+  const canViewDocuments = canSync && (can('boletas') || can('facturas'));
 
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
@@ -144,6 +148,8 @@ export default function BandejaLogistica() {
   const [bulkDeliver, setBulkDeliver] = useState<LogisticsOrder[] | null>(null);
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [conversationOrder, setConversationOrder] = useState<LogisticsOrder | null>(null);
+  const [documentOrder, setDocumentOrder] = useState<LogisticsOrder | null>(null);
+  const documentsTrigger = useRef<HTMLButtonElement | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
   const printPreviewRef = useRef<Window | null>(null);
@@ -164,6 +170,10 @@ export default function BandejaLogistica() {
     placeholderData: keepPreviousData,
     staleTime: 15_000,
     refetchInterval: 60_000,
+  });
+  const documentQuery = useQuery<OrderDocumentData>({
+    queryKey: ['order-documents', documentOrder?.id],
+    queryFn: documentOrder && canViewDocuments ? () => api.getManagedOrder(documentOrder.id) : skipToken,
   });
 
   const now = new Date();
@@ -472,6 +482,10 @@ export default function BandejaLogistica() {
     toggleLabel,
     unreadMessages: unreadQuery.data?.counts || {},
     openConversation: (order) => setConversationOrder(order),
+    openDocuments: canViewDocuments ? (order, trigger) => {
+      documentsTrigger.current = trigger;
+      setDocumentOrder(order);
+    } : undefined,
     emptyCopy: logisticsEmptyCopy(
       stage,
       stage === 'shipped' ? null : bandejaDeadlineFilter(urgency),
@@ -489,6 +503,31 @@ export default function BandejaLogistica() {
     <div>
       {notice && <InboxStatusNotice notice={notice} />}
       {body}
+      <Sheet open={Boolean(documentOrder) && canViewDocuments} onOpenChange={(open) => !open && setDocumentOrder(null)}>
+        <SheetContent
+          className="overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            if (documentsTrigger.current?.isConnected) {
+              event.preventDefault();
+              documentsTrigger.current.focus();
+            }
+          }}
+        >
+          <SheetHeader className="border-b px-6 py-5 pr-12">
+            <SheetTitle>Comprobantes</SheetTitle>
+            <SheetDescription>Pedido {documentOrder?.externalOrderNumber}</SheetDescription>
+          </SheetHeader>
+          <div className="p-6">
+            {documentQuery.isPending ? (
+              <WorkLoader label="Cargando comprobantes" />
+            ) : documentQuery.isError ? (
+              <p role="alert" className="text-sm text-destructive">{documentQuery.error.message}</p>
+            ) : (
+              <OrderDocumentPanel key={documentQuery.data.id} order={documentQuery.data} onUpdated={invalidate} />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
       {import.meta.env.DEV && !['A', 'B', 'C'].includes(variant) && (
         <BandejaVersionPicker current={visualVariant?.key || layout} />
       )}

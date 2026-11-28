@@ -18,7 +18,7 @@ import {
 } from '../lib/logistics-inbox';
 import { StoreStepButton } from '../components/StoreStepButton';
 import {
-  ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag, ShalomTag,
+  ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag, ShalomTag, StoreDocumentButton,
   type BandejaView, type LogisticsOrder,
 } from './bandeja-prototype/shared';
 import { BuyerMessagesButton } from '../components/buyer-messages/BuyerMessagesButton';
@@ -26,6 +26,7 @@ import { BuyerMessagesButton } from '../components/buyer-messages/BuyerMessagesB
 const STAGE_TABS = [
   { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
   { stage: 'ready', label: 'Confirmado', mobileLabel: 'Confirmado', icon: Printer },
+  { stage: 'shipped', label: 'Enviados', mobileLabel: 'Enviados', icon: Truck },
 ] as const;
 
 function syncStepDetail(step: BandejaView['syncStep']) {
@@ -71,7 +72,7 @@ function StageTabBar({ view }: { view: BandejaView }) {
     <div className="relative border-b">
       <div
         ref={listRef}
-        className="grid grid-cols-2 items-stretch gap-1 sm:flex"
+        className="grid grid-cols-3 items-stretch gap-1 sm:flex"
         aria-label="Etapa del pedido"
       >
         {STAGE_TABS.map(({ stage, label, mobileLabel, icon: Icon }) => (
@@ -193,6 +194,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
                           {isShalomShipment(order) && <ShalomTag className="mt-1.5" />}
+                          <StoreDocumentButton order={order} view={view} />
                         </div>
                         <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
@@ -219,7 +221,9 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                           )}
                         </div>
                         <div className={cn("flex items-center justify-between gap-2 sm:col-start-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
-                          <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
+                          <span className={cn('text-xs font-medium', tone)}>
+                            {view.stage === 'shipped' ? (order.fulfillmentStatus === 'delivered' ? 'Entregado' : 'Enviado') : logisticsDeadlineLabel(order, view.now)}
+                          </span>
                           {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span>
                             : <span className="flex flex-wrap items-center justify-end gap-2">
                               {order.channelCode === 'mercado_libre' && (
@@ -350,7 +354,17 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
           </button>)}
         </div>
         <section className="min-w-0">
-          <div className="mb-5 flex flex-wrap justify-between gap-3 border-b pb-4"><div><p className="mb-1 text-xs text-muted-foreground">{isPending ? 'PEDIDO EN PREPARACIÓN' : isReady ? 'PEDIDO PARA IMPRIMIR' : 'PEDIDO ENVIADO'}</p><CopyableOrderNumber value={focused.externalOrderNumber} /><p className="mt-1 text-sm text-muted-foreground">{sellerShortName(focused.companyName)}</p></div><p className="text-sm font-medium">{logisticsDeadlineLabel(focused, view.now)}</p></div>
+          <div className="mb-5 flex flex-wrap justify-between gap-3 border-b pb-4">
+            <div>
+              <p className="mb-1 text-xs text-muted-foreground">
+                {isPending ? 'PEDIDO EN PREPARACIÓN' : isReady ? 'PEDIDO PARA IMPRIMIR' : 'PEDIDO ENVIADO'}
+              </p>
+              <CopyableOrderNumber value={focused.externalOrderNumber} />
+              <p className="mt-1 text-sm text-muted-foreground">{sellerShortName(focused.companyName)}</p>
+              <StoreDocumentButton order={focused} view={view} />
+            </div>
+            <p className="text-sm font-medium">{logisticsDeadlineLabel(focused, view.now)}</p>
+          </div>
           <div className="space-y-5">{focused.items.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-5 border-b pb-5"><ProductThumb item={item} className="size-36 rounded-lg bg-white sm:size-44" onOpen={setPreview} /><div className="min-w-0 flex-1"><p className="text-lg font-semibold">{item.description}</p>{logisticsItemSku(item) && <p className="my-2 font-mono text-sm text-muted-foreground">{logisticsItemSku(item)}</p>}<QuantityTag item={item} /></div></div>)}</div>
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsDelivered(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(focused)}><Truck />Marcar pedido entregado</Button> : nextStoreStep(focused) ? <StoreStepButton order={focused} size="lg" disabled={locked || !view.canDispatch} /> : canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />{logisticsReadyActionLabel(focused)}</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
         </section>

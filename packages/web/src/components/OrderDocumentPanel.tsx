@@ -45,6 +45,8 @@ type Order = {
     address?: string | null;
   } | null;
 };
+export type OrderDocumentData = Order & { documents: Document[] };
+
 type Action = "emit" | "reissue" | "refresh" | "pdf" | "xml";
 const STATUS: Record<string, string> = {
   ACEPTADO: "Aceptado",
@@ -87,9 +89,10 @@ export default function OrderDocumentPanel({
   const [fiscalOpen, setFiscalOpen] = useState(false);
   const [fiscal, setFiscal] = useState<FiscalForm>(() => fiscalFormFromOrder(order));
   const [fiscalErrors, setFiscalErrors] = useState<FiscalFormErrors>({});
-  const query = useQuery<{ documents: Document[] }>({
+  const query = useQuery<OrderDocumentData>({
     queryKey: ["order-documents", order.id],
     queryFn: () => api.getManagedOrder(order.id),
+    staleTime: 15_000,
     refetchInterval: (q) =>
       q.state.data?.documents.some((d) => d.status === "ENVIANDO")
         ? 3000

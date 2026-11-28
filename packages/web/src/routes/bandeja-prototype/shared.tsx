@@ -3,7 +3,7 @@
 // Descartable: el ganador se reescribe en BandejaLogistica.tsx.
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Check, CheckCircle2, Copy, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
+import { Check, CheckCircle2, Copy, FileText, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
 import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
@@ -23,6 +23,7 @@ import {
   labelPrintTooltip,
   labelWasPrinted,
   isActiveLogisticsDeadline,
+  isStoreApiOrder,
   logisticsDeadlineLabel,
   logisticsElapsedLabel,
   logisticsNextStep,
@@ -135,10 +136,30 @@ export type BandejaView = {
   /** Mensajes de Mercado Libre sin leer por pedido (badge de la fila). */
   unreadMessages: Record<number, number>;
   openConversation: (order: LogisticsOrder) => void;
+  openDocuments?: (order: LogisticsOrder, trigger: HTMLButtonElement) => void;
   emptyCopy: string;
 };
 
 export const URGENCY_ORDER: LogisticsUrgency[] = ['overdue', 'today', 'tomorrow', 'later'];
+
+export function StoreDocumentButton({ order, view }: { order: LogisticsOrder; view: BandejaView }) {
+  const openDocuments = view.openDocuments;
+  if (!openDocuments || !isStoreApiOrder(order)) return null;
+  return (
+    <Button
+      type="button"
+      variant="link"
+      size="xs"
+      className="mt-1 px-0"
+      aria-label={`Comprobantes del pedido ${order.externalOrderNumber}`}
+      aria-haspopup="dialog"
+      onClick={(event) => openDocuments(order, event.currentTarget)}
+    >
+      <FileText aria-hidden="true" />
+      Comprobantes
+    </Button>
+  );
+}
 
 export function groupByUrgency(orders: LogisticsOrder[], now: Date) {
   const groups = new Map<LogisticsUrgency, LogisticsOrder[]>();
@@ -546,7 +567,7 @@ function StageFilterSegments({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <div role="tablist" aria-label="Flujo de pedidos" className="grid min-w-[20rem] flex-1 grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+      <div role="tablist" aria-label="Flujo de pedidos" className="grid w-full flex-1 grid-cols-3 gap-1 rounded-xl bg-muted p-1">
         <StageTabButton
           stage="pending"
           active={view.stage === 'pending'}
@@ -563,6 +584,15 @@ function StageFilterSegments({
           label={model.readyLabel}
           count={view.counts.ready}
           helper={model.readyHelper}
+          tone="ready"
+          stacked
+          onSelect={view.setStage}
+        />
+        <StageTabButton
+          stage="shipped"
+          active={view.stage === 'shipped'}
+          label="Enviados"
+          count={view.counts.shipped}
           tone="ready"
           stacked
           onSelect={view.setStage}
@@ -607,6 +637,15 @@ function StageFilterLine({
             look="line"
             onSelect={view.setStage}
           />
+          <StageTabButton
+            stage="shipped"
+            active={view.stage === 'shipped'}
+            label="Enviados"
+            count={view.counts.shipped}
+            tone="ready"
+            look="line"
+            onSelect={view.setStage}
+          />
         </div>
         <div className="flex items-center gap-2">
           <UpdatedClock view={view} clock={model.clock} />
@@ -630,7 +669,7 @@ function StageFilterQueue({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <div role="tablist" aria-label="Flujo de pedidos" className="flex items-center gap-1 rounded-xl bg-muted p-1">
+      <div role="tablist" aria-label="Flujo de pedidos" className="flex flex-wrap items-center gap-1 rounded-xl bg-muted p-1">
         <StageTabButton
           stage="pending"
           active={view.stage === 'pending'}
@@ -644,6 +683,14 @@ function StageFilterQueue({
           active={view.stage === 'ready'}
           label={model.readyLabel}
           count={view.counts.ready}
+          tone="ready"
+          onSelect={view.setStage}
+        />
+        <StageTabButton
+          stage="shipped"
+          active={view.stage === 'shipped'}
+          label="Enviados"
+          count={view.counts.shipped}
           tone="ready"
           onSelect={view.setStage}
         />
@@ -749,6 +796,7 @@ export function BoardCard({
       <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
         {sellerShortName(order.companyName)}
       </p>
+      <StoreDocumentButton order={order} view={view} />
       <ul className="mt-2 space-y-1.5">
         {order.items.slice(0, 2).map((item) => (
           <li key={item.id} className="flex items-center gap-2">
@@ -759,7 +807,9 @@ export function BoardCard({
         ))}
       </ul>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className={cn('text-[11px] font-medium', meta.textClass)}>{logisticsDeadlineLabel(order, view.now)}</span>
+        <span className={cn('text-[11px] font-medium', meta.textClass)}>
+          {view.stage === 'shipped' ? (order.fulfillmentStatus === 'delivered' ? 'Entregado' : 'Enviado') : logisticsDeadlineLabel(order, view.now)}
+        </span>
         {showRowAction && <ActionButton order={order} view={view} />}
       </div>
       <ProductImageLightbox preview={preview} onClose={() => setPreview(null)} />
