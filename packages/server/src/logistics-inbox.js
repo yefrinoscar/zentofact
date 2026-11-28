@@ -14,6 +14,14 @@ import { ripleyApiUrl } from './ripley-api-url.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre', 'manual']);
+// Canales propios de la tienda: venta manual y pedidos de la tienda web (API).
+// En la bandeja se muestran juntos como "Tienda".
+export const OWN_STORE_CHANNELS = ['manual', 'external'];
+const OWN_STORE_SQL = `ch.code in ('manual', 'external')`;
+
+export function isOwnStoreChannel(code) {
+  return OWN_STORE_CHANNELS.includes(String(code || '').trim().toLowerCase());
+}
 const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
 const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);
@@ -206,7 +214,7 @@ const URGENCY_SQL = {
 };
 
 const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} >= ${LIMA_TODAY_DATE}`;
-const MANUAL_UNDATED_SQL = `ch.code = 'manual' and o.promised_shipping_at is null`;
+const MANUAL_UNDATED_SQL = `${OWN_STORE_SQL} and o.promised_shipping_at is null`;
 const WORKING_QUEUE_SQL = `((${DATED_UPCOMING_SQL}) or (${MANUAL_UNDATED_SQL}))`;
 const LATER_OR_UNDATED_SQL = `((${URGENCY_SQL.later}) or (${MANUAL_UNDATED_SQL}))`;
 const CLOSED_CHANNEL_STATUS_SQL = `'(^|\\|)(shipped|delivered|canceled|cancelled|returned|failed)(\\||$)'`;
@@ -258,7 +266,9 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     values.push(filters.companyId);
     where.push(`o.company_id=$${values.length}`);
   }
-  if (filters.channelCode) {
+  if (filters.channelCode === 'manual') {
+    where.push(OWN_STORE_SQL);
+  } else if (filters.channelCode) {
     values.push(filters.channelCode);
     where.push(`ch.code=$${values.length}`);
   }
@@ -361,7 +371,7 @@ const LABEL_PRINT_COUNT_SQL = `coalesce(
   0
 )`;
 const PRINTABLE_READY_SQL = `(
-  ch.code = 'manual'
+  ${OWN_STORE_SQL}
   or (ch.code = 'falabella' and o.company_id is not null)
   or (
     ch.code = 'mercado_libre'
@@ -858,14 +868,14 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     }
   }
 
-  const manual = orders.filter((order) => order.channelCode === 'manual');
+  const manual = orders.filter((order) => isOwnStoreChannel(order.channelCode));
   if (manual.length) {
     for (const order of manual) await reportProgress(order);
     pdfParts.push(await buildManualLabelSheet(manual));
     labelCount += manual.length;
   }
 
-  const unknown = orders.filter((order) => !CHANNELS.has(order.channelCode));
+  const unknown = orders.filter((order) => !CHANNELS.has(order.channelCode) && !isOwnStoreChannel(order.channelCode));
   for (const order of unknown) {
     await reportProgress(order);
     skipped.push({ id: order.id, reason: `Canal ${order.channelCode} aún no imprime etiqueta.` });
@@ -1074,27 +1084,40 @@ export async function markLogisticsOrderDelivered(input = {}, dependencies = {})
   if (status !== 'pending' && status !== 'preparing' && status !== 'ready_to_ship') {
     throw new Error('Este pedido ya no se puede marcar como entregado.');
   }
-  const persisted = await db.query(
-    `update orders
-     set fulfillment_status = 'delivered',
-         order_status = 'completed',
-         updated_at = now()
-     where id = $1
-       and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
-     returning id, company_id, external_order_id, external_order_number, fulfillment_status, ordered_at`,
-    [orderId],
-  );
-  const order = persisted.rows[0];
-  if (!order) throw new Error('El pedido ya no está disponible.');
-  if (shouldListenStockOrder({ status: 'delivered', orderedAt: order.ordered_at })) {
-    const enqueue = dependencies.enqueue || enqueueStockJob;
-    await enqueue({
-      orderId: Number(order.id),
-      companyId: order.company_id == null ? null : Number(order.company_id),
-      externalOrderId: order.external_order_id,
-      orderNumber: order.external_order_number,
-      source: 'user',
-    }, db);
+  // El cambio de estado y su job de stock se confirman juntos.
+  const ownsClient = typeof db.connect === 'function' && typeof db.totalCount === 'number';
+  const client = ownsClient ? await db.connect() : db;
+  let order;
+  try {
+    if (ownsClient) await client.query('begin');
+    const persisted = await client.query(
+      `update orders
+       set fulfillment_status = 'delivered',
+           order_status = 'completed',
+           updated_at = now()
+       where id = $1
+         and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       returning id, company_id, external_order_id, external_order_number, fulfillment_status, ordered_at`,
+      [orderId],
+    );
+    order = persisted.rows[0];
+    if (!order) throw new Error('El pedido ya no está disponible.');
+    if (shouldListenStockOrder({ status: 'delivered', orderedAt: order.ordered_at })) {
+      const enqueue = dependencies.enqueue || enqueueStockJob;
+      await enqueue({
+        orderId: Number(order.id),
+        companyId: order.company_id == null ? null : Number(order.company_id),
+        externalOrderId: order.external_order_id,
+        orderNumber: order.external_order_number,
+        source: 'user',
+      }, client);
+    }
+    if (ownsClient) await client.query('commit');
+  } catch (error) {
+    if (ownsClient) await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    if (ownsClient) client.release();
   }
   return { ok: true, alreadyDelivered: false, orderId: Number(order.id) };
 }

@@ -132,12 +132,12 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   const dateSql = inboxSql(db, 'group by 1');
   assert.match(listSql, /fulfillment_status = any/);
   assert.match(listSql, /::date >= /);
-  assert.match(listSql, /ch\.code = 'manual'/);
+  assert.match(listSql, /ch\.code in \('manual', 'external'\) and o\.promised_shipping_at is null/);
   assert.match(listSql, /p\.main_sku/);
   assert.match(listSql, /warehouse_address/);
   assert.match(listSql, /falabella_orders fo/);
   assert.match(countSql, /::date >= /);
-  assert.match(countSql, /ch\.code = 'manual'/);
+  assert.match(countSql, /ch\.code in \('manual', 'external'\)/);
   assert.match(countSql, /falabella_orders fo/);
   assert.match(countSql, /ready_unprinted_count/);
   assert.match(countSql, /logistics_label_prints/);
